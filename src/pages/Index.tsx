@@ -1,12 +1,45 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { useState } from 'react';
+import { Sidebar } from '@/components/Sidebar';
+import { Dashboard } from '@/components/Dashboard';
+import { WatchlistPage } from '@/components/WatchlistPage';
+import { TradesPage } from '@/components/TradesPage';
+import { IdeasPage } from '@/components/IdeasPage';
+import { ResearchPage } from '@/components/ResearchPage';
+import { BrokersPage } from '@/components/BrokersPage';
+import { SettingsPage } from '@/components/SettingsPage';
 
 const Index = () => {
+  const [activeTab, setActiveTab] = useState('dashboard');
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'dashboard':
+        return <Dashboard />;
+      case 'watchlist':
+        return <WatchlistPage />;
+      case 'trades':
+        return <TradesPage />;
+      case 'ideas':
+        return <IdeasPage />;
+      case 'research':
+        return <ResearchPage />;
+      case 'brokers':
+        return <BrokersPage />;
+      case 'settings':
+        return <SettingsPage />;
+      default:
+        return <Dashboard />;
+    }
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
-      </div>
+    <div className="flex min-h-screen bg-background">
+      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
+      <main className="flex-1 overflow-y-auto">
+        <div className="p-6 lg:p-8">
+          {renderContent()}
+        </div>
+      </main>
     </div>
   );
 };
