@@ -1,27 +1,50 @@
-import { ExternalLink, Link2, Plus, RefreshCw, Shield, Unlink } from 'lucide-react';
+import { ExternalLink, Link2, Plus, RefreshCw, Shield, Unlink, AlertCircle, Loader2 } from 'lucide-react';
 import { Button } from './ui/button';
-
-const connectedBrokers = [
-  {
-    id: 'td',
-    name: 'TD Ameritrade',
-    status: 'connected',
-    lastSync: '2 minutes ago',
-    accounts: 2,
-    logo: 'TD',
-  },
-];
-
-const availableBrokers = [
-  { id: 'robinhood', name: 'Robinhood', logo: 'RH', color: 'bg-emerald-500' },
-  { id: 'fidelity', name: 'Fidelity', logo: 'FI', color: 'bg-green-600' },
-  { id: 'schwab', name: 'Charles Schwab', logo: 'CS', color: 'bg-blue-600' },
-  { id: 'etrade', name: 'E*TRADE', logo: 'ET', color: 'bg-purple-600' },
-  { id: 'webull', name: 'Webull', logo: 'WB', color: 'bg-orange-500' },
-  { id: 'ibkr', name: 'Interactive Brokers', logo: 'IB', color: 'bg-red-600' },
-];
+import { useIBKRStatus, useIBKRPortfolio } from '../services/ibkr';
+import { useTastytradeLogin, useTastytradeAccounts, useTastytradePositions } from '../services/tastytrade';
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { ConnectTastytradeDialog } from './ConnectTastytradeDialog';
+import { useState } from 'react';
 
 export function BrokersPage() {
+  // IBKR State
+  const { data: status, isLoading: isStatusLoading } = useIBKRStatus();
+  const { data: ibPortfolio, isLoading: isIBPortfolioLoading } = useIBKRPortfolio();
+  const isIBConnected = status?.connected;
+
+  // Tastytrade State
+  const [tastyAuthenticated, setTastyAuthenticated] = useState(false);
+  const [selectedTastyAccount, setSelectedTastyAccount] = useState<string | null>(null);
+
+  const { data: tastyAccounts } = useTastytradeAccounts(tastyAuthenticated);
+  const { data: tastyPositions, isLoading: isTastyPositionsLoading } = useTastytradePositions(selectedTastyAccount);
+
+
+  // Select first account automatically when loaded
+  if (tastyAuthenticated && tastyAccounts && tastyAccounts.length > 0 && !selectedTastyAccount) {
+    setSelectedTastyAccount(tastyAccounts[0].account['account-number']);
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -29,6 +52,137 @@ export function BrokersPage() {
         <h1 className="text-2xl font-bold text-foreground">Broker Connections</h1>
         <p className="text-muted-foreground">Connect your brokerage accounts to sync trades and portfolio data</p>
       </div>
+
+      {/* IBKR Connection Status */}
+      <Card className="glass-card border-primary/20">
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between">
+            <span>Interactive Brokers Connection</span>
+            {isStatusLoading ? (
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            ) : isIBConnected ? (
+              <span className="flex items-center gap-2 text-sm text-green-500 bg-green-500/10 px-3 py-1 rounded-full">
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                Connected
+              </span>
+            ) : (
+              <span className="flex items-center gap-2 text-sm text-red-500 bg-red-500/10 px-3 py-1 rounded-full">
+                <span className="w-2 h-2 rounded-full bg-red-500" />
+                Disconnected
+              </span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!isIBConnected && !isStatusLoading && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Connection Failed</AlertTitle>
+              <AlertDescription>
+                Could not connect to Trader Workstation (TWS) or IB Gateway. Please ensure it is running and API connections are enabled (Port 7497/7496).
+              </AlertDescription>
+            </Alert>
+          )}
+          <p className="text-sm text-muted-foreground">
+            This integration connects to your local TWS instance via a local proxy server.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Tastytrade Connection Card */}
+      <Card className="glass-card border-primary/20">
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between">
+            <span>Tastytrade Connection</span>
+            {tastyAuthenticated ? (
+              <span className="flex items-center gap-2 text-sm text-green-500 bg-green-500/10 px-3 py-1 rounded-full">
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                Connected
+              </span>
+            ) : (
+              <ConnectTastytradeDialog onConnect={() => setTastyAuthenticated(true)} />
+            )}
+          </CardTitle>
+        </CardHeader>
+        {tastyAuthenticated && (
+          <CardContent>
+            <div className="mb-4">
+              <p className="font-medium">Accounts:</p>
+              <div className="flex gap-2 mt-2">
+                {tastyAccounts?.map((item: any) => {
+                  const acc = item.account;
+                  return (
+                    <Button
+                      key={acc['account-number']}
+                      variant={selectedTastyAccount === acc['account-number'] ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setSelectedTastyAccount(acc['account-number'])}
+                    >
+                      {acc.nickname || acc['account-number']}
+                    </Button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {isTastyPositionsLoading ? (
+              <Loader2 className="h-6 w-6 animate-spin" />
+            ) : tastyPositions && tastyPositions.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Symbol</TableHead>
+                    <TableHead className="text-right">Quantity</TableHead>
+                    <TableHead className="text-right">Avg Price</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {tastyPositions.map((pos: any, idx: number) => (
+                    <TableRow key={idx}>
+                      <TableCell>{pos.symbol}</TableCell>
+                      <TableCell className="text-right">{pos.quantity}</TableCell>
+                      <TableCell className="text-right">{pos['average-open-price']}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : (
+              <p className="text-muted-foreground">No positions found in this account.</p>
+            )}
+          </CardContent>
+        )}
+      </Card>
+
+      {/* IBKR Portfolio Table */}
+      {isIBConnected && ibPortfolio && ibPortfolio.length > 0 && (
+        <Card className="glass-card">
+          <CardHeader>
+            <CardTitle>Interactive Brokers Holdings</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Symbol</TableHead>
+                  <TableHead>SecType</TableHead>
+                  <TableHead className="text-right">Position</TableHead>
+                  <TableHead className="text-right">Avg Cost</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {ibPortfolio.map((pos, idx) => (
+                  <TableRow key={`${pos.contract.conId}-${idx}`}>
+                    <TableCell className="font-medium">{pos.contract.symbol}</TableCell>
+                    <TableCell>{pos.contract.secType}</TableCell>
+                    <TableCell className="text-right">{pos.pos}</TableCell>
+                    <TableCell className="text-right">${pos.avgCost.toFixed(2)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Security Notice */}
       <div className="glass-card rounded-xl p-4 border-primary/20 bg-primary/5">
@@ -40,101 +194,6 @@ export function BrokersPage() {
               Your credentials are encrypted and never stored on our servers. We use OAuth 2.0 and read-only access to sync your data securely.
             </p>
           </div>
-        </div>
-      </div>
-
-      {/* Connected Brokers */}
-      <div>
-        <h2 className="text-lg font-semibold text-foreground mb-4">Connected Accounts</h2>
-        
-        {connectedBrokers.length > 0 ? (
-          <div className="space-y-4">
-            {connectedBrokers.map((broker) => (
-              <div key={broker.id} className="glass-card rounded-xl p-5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-xl bg-success/10 flex items-center justify-center">
-                      <span className="text-lg font-bold text-success">{broker.logo}</span>
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-foreground">{broker.name}</h3>
-                      <div className="flex items-center gap-3 text-sm">
-                        <span className="flex items-center gap-1 text-success">
-                          <span className="w-2 h-2 rounded-full bg-success animate-pulse-slow" />
-                          Connected
-                        </span>
-                        <span className="text-muted-foreground">•</span>
-                        <span className="text-muted-foreground">{broker.accounts} accounts</span>
-                        <span className="text-muted-foreground">•</span>
-                        <span className="text-muted-foreground">Synced {broker.lastSync}</span>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" className="gap-2">
-                      <RefreshCw className="w-4 h-4" />
-                      Sync Now
-                    </Button>
-                    <Button variant="ghost" size="sm" className="gap-2 text-destructive hover:text-destructive">
-                      <Unlink className="w-4 h-4" />
-                      Disconnect
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="glass-card rounded-xl p-8 text-center">
-            <Link2 className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="font-semibold text-foreground mb-2">No brokers connected</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              Connect your brokerage account to automatically sync your trades and portfolio
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Available Brokers */}
-      <div>
-        <h2 className="text-lg font-semibold text-foreground mb-4">Available Integrations</h2>
-        
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {availableBrokers.map((broker, index) => (
-            <div
-              key={broker.id}
-              className="glass-card rounded-xl p-5 hover:border-primary/30 transition-all cursor-pointer group animate-slide-up"
-              style={{ animationDelay: `${index * 50}ms` }}
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className={`w-12 h-12 rounded-xl ${broker.color} flex items-center justify-center`}>
-                  <span className="text-lg font-bold text-white">{broker.logo}</span>
-                </div>
-                <ExternalLink className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
-              <h3 className="font-semibold text-foreground mb-1">{broker.name}</h3>
-              <p className="text-sm text-muted-foreground mb-4">
-                Sync trades, positions, and account balances
-              </p>
-              <Button variant="outline" className="w-full gap-2">
-                <Plus className="w-4 h-4" />
-                Connect
-              </Button>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Help Section */}
-      <div className="glass-card rounded-xl p-6">
-        <h3 className="font-semibold text-foreground mb-2">Need help connecting?</h3>
-        <p className="text-sm text-muted-foreground mb-4">
-          Check our documentation for step-by-step guides on connecting each broker, or contact support if you're having issues.
-        </p>
-        <div className="flex gap-3">
-          <Button variant="outline" size="sm">View Documentation</Button>
-          <Button variant="ghost" size="sm">Contact Support</Button>
         </div>
       </div>
     </div>
