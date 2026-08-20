@@ -1,0 +1,9 @@
+openai
+tavily-python
+yfinance
+fredapi
+sec-edgar-downloader
+chromadb
+weasyprint
+jinja2
+python-dotenv

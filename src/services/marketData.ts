@@ -87,176 +87,201 @@ export interface CalculatedFinancials {
     date: string;
 }
 
+
+const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout = 5000) => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        clearTimeout(id);
+        return response;
+    } catch (error) {
+        clearTimeout(id);
+        throw error;
+    }
+};
+
+const fetchFromYahoo = async (symbol: string) => {
+    try {
+        const response = await fetchWithTimeout(`${API_URL}/yahoo/quote/${symbol}`, {}, 5000);
+        if (!response.ok) return null;
+        return await response.json();
+    } catch (e) {
+        console.warn("Yahoo fetch failed:", e);
+        return null;
+    }
+};
+
 const fetchFromFMP = async (endpoint: string, params: Record<string, string> = {}) => {
-    if (!API_KEY) {
-        throw new Error('FMP API Key is missing. Please add VITE_FMP_API_KEY to .env.local');
-    }
-
-    // Check for placeholder key
-    if (API_KEY.includes('YOUR_FMP_API_KEY')) {
-        throw new Error('You are using the placeholder API key. Please generate a real key from financialmodelingprep.com. update .env.local');
-    }
-
-    // Debug log (masked)
-    // console.log(`Fetching FMP ${endpoint} with params ${JSON.stringify(params)} key: ${API_KEY.substring(0, 4)}...`);
+    if (!API_KEY || API_KEY.includes('YOUR_FMP')) return [];
 
     const queryParams = new URLSearchParams({ apikey: API_KEY, ...params });
-    const response = await fetch(`${BASE_URL}${endpoint}?${queryParams}`);
+    const response = await fetchWithTimeout(`${BASE_URL}${endpoint}?${queryParams}`);
 
     if (!response.ok) {
-        let errorDetails = '';
-        try {
-            const errorBody = await response.json();
-            if (errorBody['Error Message']) errorDetails = errorBody['Error Message'];
-            else errorDetails = JSON.stringify(errorBody);
-        } catch (e) {
-            const text = await response.text();
-            if (text) errorDetails = text;
-        }
-
-        if (response.status === 429) throw new Error('API Rate Limit Exceeded. Please try again later.');
-        if (response.status === 401) throw new Error(`Invalid API Key (401). FMP says: ${errorDetails}`);
-        if (response.status === 403) throw new Error(`Access Denied (403) for ${endpoint}. FMP says: ${errorDetails}`);
-
-        throw new Error(`FMP API Error ${response.status}: ${errorDetails || response.statusText || 'Unknown Error'}`);
+        return [];
     }
 
     const data = await response.json();
-    if (data['Error Message']) {
-        throw new Error(data['Error Message']);
-    }
     return data;
 };
 
 // Helper to attempt Tastytrade fetch
 const fetchFromTastytrade = async (symbol: string) => {
     try {
-        const response = await fetch(`${API_URL}/tastytrade/market-data/${symbol}`);
+        const response = await fetchWithTimeout(`${API_URL}/tastytrade/market-data/${symbol}`, {}, 5000);
         if (!response.ok) return null;
         const data = await response.json();
-        // Check structure: Tastytrade wrapper `data: { items: [...] }` or simplified by proxy
-        // The backend proxy returns `data` directly from api.tastyworks.com
-        // Common structure: { data: { items: [...] } } or just { data: ... }
-        return data?.data?.items?.[0] || data?.data; // Flexible accessor
+        const items = data?.data?.items;
+        if (items && items.length > 0) {
+            return items[0];
+        }
+        return data?.data?.description ? data.data : null; // Only accept if it's a direct valid quote object
     } catch (e) {
         console.warn("Tastytrade fetch failed:", e);
         return null;
     }
 };
 
+const quoteCache = new Map<string, { promise: Promise<StockQuote | null>, timestamp: number }>();
+const CACHE_TTL_MS = 60000; // 1 minute cache to avoid rate limits
+
 export const marketDataService = {
     searchSymbols: async (query: string): Promise<StockSearchResult[]> => {
         if (!query) return [];
-        // Search is still best handled by FMP for vast coverage
-        return fetchFromFMP('/search-symbol', { query, limit: '10' });
+        try {
+            const response = await fetchWithTimeout(`${API_URL}/research/search?query=${encodeURIComponent(query)}`, {}, 5000);
+            if (!response.ok) return [];
+            return await response.json();
+        } catch (e) {
+            console.error("Search fetch failed:", e);
+            return [];
+        }
     },
 
     getQuote: async (symbol: string): Promise<StockQuote | null> => {
-        // HYBRID STRATEGY:
-        // 1. Fetch Fundamentals/Profile from FMP (Stable, Static data)
-        // 2. Try fetching Real-time Price from Tastytrade
-        // 3. Merge data, prioritizing Tastytrade for price/volume
+        const isOccSymbol = /^[A-Z\s]{6}\d{6}[CP]\d{8}$/.test(symbol) || /^[A-Z]+\s*\d{6}[CP]\d{8}$/.test(symbol);
 
-        const profilePromise = fetchFromFMP('/profile', { symbol });
-
-        // Auto-login attempt if credentials exist (Lazy Auth)
-        // We rely on backend or user login. 
-        // If we are not logged in, fetchFromTastytrade will likely fail (401 from proxy).
-        let tastyPromise = Promise.resolve(null);
-        if (USE_STREAMING) {
-            tastyPromise = fetchFromTastytrade(symbol);
+        // Check Cache first
+        if (!isOccSymbol && quoteCache.has(symbol)) {
+            const cached = quoteCache.get(symbol)!;
+            if (Date.now() - cached.timestamp < CACHE_TTL_MS) {
+                return cached.promise;
+            }
         }
 
-        const [profileData, tastyData] = await Promise.allSettled([profilePromise, tastyPromise]);
+        const fetchQuoteTask = async (): Promise<StockQuote | null> => {
 
-        const profileList = profileData.status === 'fulfilled' ? profileData.value : null;
-        const profile = profileList && profileList.length > 0 ? profileList[0] : null;
+            let yahooPromise = Promise.resolve(null);
+            let tastyPromise = Promise.resolve(null);
 
-        if (!profile) return null; // Profile is the base requirement
+            if (USE_STREAMING || isOccSymbol) {
+                tastyPromise = fetchFromTastytrade(symbol);
+            }
 
-        const tastyQuote = tastyData.status === 'fulfilled' ? tastyData.value : null;
+            if (!isOccSymbol) {
+                yahooPromise = fetchFromYahoo(symbol);
+            }
 
-        // Extract Tastytrade Data if available
-        let price = profile.price; // Default to FMP
-        let dayLow = 0; // FMP sometimes has this in pool or range
-        let dayHigh = 0;
-        let volume = profile.volAvg; // Default to FMP volAvg
-        let open = 0;
-        let previousClose = 0;
-        let change = profile.changes;
-        let changesPercentage = 0;
-        let source = 'FMP (Delayed)';
+            const [yahooData, tastyData] = await Promise.all([yahooPromise, tastyPromise]);
 
-        if (tastyQuote) {
-            // Map Tastytrade fields (DXLink/REST format varies, common fields below)
-            if (tastyQuote.lastPrice) price = Number(tastyQuote.lastPrice);
-            if (tastyQuote.netChange) change = Number(tastyQuote.netChange);
-            if (tastyQuote.percentChange) changesPercentage = Number(tastyQuote.percentChange);
-            if (tastyQuote.volume) volume = Number(tastyQuote.volume);
-            if (tastyQuote.lowPrice) dayLow = Number(tastyQuote.lowPrice);
-            if (tastyQuote.highPrice) dayHigh = Number(tastyQuote.highPrice);
-            if (tastyQuote.openPrice) open = Number(tastyQuote.openPrice);
-            if (tastyQuote.closePrice) previousClose = Number(tastyQuote.closePrice);
+            console.log("Resolved Quotes for", symbol, "-> Yahoo:", yahooData);
 
-            source = 'Tastytrade (Real-time)';
-        } else {
-            // Fallback calculations using FMP data
-            // FMP Profile 'changes' is the $ change.
-            // We need to calculate percentage if not provided.
-            // Note: FMP Profile doesn't always have 'changesPercentage', we might need to calc it.
-            // or use specific quote endpoint if profile is insufficient, but profile has price and changes.
+            if (isOccSymbol && tastyData) {
+                return mapTastyQuoteToStockQuote(symbol, tastyData);
+            } else if (isOccSymbol && !tastyData) {
+                // Mock Option Data Fallback
+                return {
+                    symbol, name: symbol, price: 5.00, changesPercentage: 0, change: 0, dayLow: 5.00, dayHigh: 5.00, yearHigh: 5.00, yearLow: 5.00, marketCap: 0, priceAvg50: 0, priceAvg200: 0, volume: 0, avgVolume: 0, exchange: 'MOCK', open: 5.00, previousClose: 5.00, eps: 0, pe: 0, earningsAnnouncement: '', sharesOutstanding: 0, timestamp: Date.now() / 1000, source: 'Mock Data (Tasty Offline)'
+                };
+            }
 
-            // Re-calculate open to be safe
-            open = price - change;
-            changesPercentage = open !== 0 ? (change / open) * 100 : 0;
+            if (yahooData && yahooData.currentPrice !== undefined) {
+                const price = typeof yahooData.currentPrice === 'number' ? yahooData.currentPrice : parseFloat(yahooData.currentPrice);
+                const prevClose = yahooData.chartPreviousClose || yahooData.previousClose || price;
+                const change = price - prevClose;
+                const changePct = prevClose !== 0 ? (change / prevClose) * 100 : 0;
 
-            // FMP Profile often has range "low-high"
-            if (profile.range) {
-                const rangeParts = profile.range.split('-');
-                if (rangeParts.length === 2) {
-                    // This is usually 52w range, not day range.
-                    // FMP Profile doesn't strictly have dayHigh/low.
-                    // We will leave dayHigh/Low as 0 or price if not available.
+                console.log("Mapping Yahoo Data for", symbol, price, prevClose);
+
+                return {
+                    symbol: symbol,
+                    name: symbol, // Could augment later
+                    price: price,
+                    changesPercentage: changePct,
+                    change: change,
+                    dayLow: price, // Yahoo v8 basic proxy might not have day range natively, we simulate or accept current
+                    dayHigh: price,
+                    yearHigh: price,
+                    yearLow: price,
+                    marketCap: 0,
+                    priceAvg50: 0,
+                    priceAvg200: 0,
+                    volume: 0,
+                    avgVolume: 0,
+                    exchange: yahooData.exchangeName || 'US',
+                    open: yahooData.regularMarketPrice,
+                    previousClose: prevClose,
+                    eps: 0,
+                    pe: 0,
+                    earningsAnnouncement: '',
+                    sharesOutstanding: 0,
+                    timestamp: yahooData.regularMarketTime || (Date.now() / 1000),
+                    source: 'Yahoo Finance'
+                };
+            }
+
+            // Fallback to FMP
+            if (!isOccSymbol) {
+                try {
+                    const profileData = await fetchFromFMP(`/profile/${symbol}`);
+                    if (profileData && profileData.length > 0) {
+                        const profile = profileData[0];
+                        return {
+                            symbol: profile.symbol,
+                            name: profile.companyName,
+                            price: profile.price,
+                            changesPercentage: profile.changesPercentage || 0,
+                            change: profile.changes || 0,
+                            dayLow: profile.price,
+                            dayHigh: profile.price,
+                            yearHigh: profile.price,
+                            yearLow: profile.price,
+                            marketCap: profile.mktCap || 0,
+                            priceAvg50: 0,
+                            priceAvg200: 0,
+                            volume: profile.volAvg || 0,
+                            avgVolume: profile.volAvg || 0,
+                            exchange: profile.exchangeShortName || 'US',
+                            open: profile.price,
+                            previousClose: profile.price,
+                            eps: 0,
+                            pe: 0,
+                            earningsAnnouncement: '',
+                            sharesOutstanding: 0,
+                            timestamp: Date.now() / 1000,
+                            source: 'FMP (Fallback)'
+                        };
+                    }
+                } catch (e) {
+                    console.warn("FMP Fallback failed:", e);
                 }
             }
-        }
 
-        // Parse 52 week range from FMP if not in Tasty
-        let yearLow = 0;
-        let yearHigh = 0;
-        if (profile.range) {
-            const parts = profile.range.split('-');
-            if (parts.length === 2) {
-                yearLow = parseFloat(parts[0]);
-                yearHigh = parseFloat(parts[1]);
-            }
-        }
-
-        return {
-            symbol: profile.symbol,
-            name: profile.companyName,
-            price: price,
-            changesPercentage: changesPercentage,
-            change: change,
-            dayLow: dayLow || price,
-            dayHigh: dayHigh || price,
-            yearHigh: yearHigh || price,
-            yearLow: yearLow || price,
-            marketCap: profile.mktCap,
-            priceAvg50: 0,
-            priceAvg200: 0,
-            volume: volume,
-            avgVolume: profile.volAvg,
-            exchange: profile.exchangeShortName,
-            open: open,
-            previousClose: previousClose,
-            eps: 0,
-            pe: 0,
-            earningsAnnouncement: '',
-            sharesOutstanding: 0,
-            timestamp: Date.now() / 1000,
-            source: source
+            // Last Resort
+            return null;
         };
+
+        const promise = fetchQuoteTask();
+        if (!isOccSymbol) {
+            quoteCache.set(symbol, { promise, timestamp: Date.now() });
+            promise.then(res => {
+                if (!res) {
+                    quoteCache.delete(symbol);
+                }
+            });
+        }
+        return promise;
     },
 
     getProfile: async (symbol: string): Promise<CompanyProfile | null> => {
@@ -291,3 +316,36 @@ export const marketDataService = {
         }
     }
 };
+
+function mapTastyQuoteToStockQuote(symbol: string, tastyQuote: any): StockQuote {
+    // Market Closed Handling: Use lastPrice, then closePrice (prev day close), then bidPrice as last resort
+    const price = Number(tastyQuote.lastPrice || tastyQuote.closePrice || tastyQuote.bidPrice || 0);
+    const change = Number(tastyQuote.netChange || 0);
+    const changesPercentage = Number(tastyQuote.percentChange || 0);
+
+    return {
+        symbol: symbol,
+        name: tastyQuote.description || symbol, // Use description (e.g. "AAPL Jan 23 '23 $150 Call")
+        price: price,
+        changesPercentage: changesPercentage,
+        change: change,
+        dayLow: Number(tastyQuote.lowPrice || price),
+        dayHigh: Number(tastyQuote.highPrice || price),
+        yearHigh: Number(tastyQuote.high52Weeks || price),
+        yearLow: Number(tastyQuote.low52Weeks || price),
+        marketCap: 0,
+        priceAvg50: 0,
+        priceAvg200: 0,
+        volume: Number(tastyQuote.volume || 0),
+        avgVolume: 0,
+        exchange: tastyQuote.exchangeCode || 'OPRA',
+        open: Number(tastyQuote.openPrice || 0),
+        previousClose: Number(tastyQuote.closePrice || 0),
+        eps: 0,
+        pe: 0,
+        earningsAnnouncement: '',
+        sharesOutstanding: 0,
+        timestamp: Date.now() / 1000,
+        source: 'Tastytrade (Real-time Option)'
+    };
+}

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Research Report - {{ ticker }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 2cm;
+
+            @bottom-right {
+                content: "Page " counter(page);
+                font-family: Arial, sans-serif;
+                font-size: 10pt;
+                color: #888;
+            }
+        }
+
+        body {
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        h1 {
+            color: #1a365d;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 5px;
+        }
+
+        h2 {
+            color: #2b6cb0;
+            margin-top: 30px;
+        }
+
+        .page-break {
+            page-break-before: always;
+        }
+
+        .hero {
+            text-align: center;
+            background-color: #f7fafc;
+            padding: 40px 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+        }
+
+        .hero h1 {
+            font-size: 3em;
+            margin: 0;
+            border: none;
+        }
+
+        .conviction {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 20px 40px;
+
+            background-color: {
+                % if conviction_score>=70 %
+            }
+
+            #48bb78 {
+                % elif conviction_score>=40 %
+            }
+
+            #ecc94b {
+                % else %
+            }
+
+            #f56565 {
+                % endif %
+            }
+
+            ;
+            color: white;
+            font-size: 2em;
+            font-weight: bold;
+            border-radius: 50px;
+        }
+
+        .box {
+            background: #fff;
+            border: 1px solid #e2e8f0;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+        }
+
+        .box h3 {
+            margin-top: 0;
+            color: #2d3748;
+        }
+
+        ul {
+            padding-left: 20px;
+        }
+
+        li {
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- PAGE 1: Executive Slide -->
+    <div class="hero">
+        <h1>{{ ticker }} Research Report</h1>
+        <div class="conviction">Conviction Score: {{ conviction_score }}/100</div>
+    </div>
+
+    <div class="box">
+        <h3>Executive Summary</h3>
+        <ul>
+            {% for bullet in executive_summary %}
+            <li>{{ bullet }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+
+    <div class="box">
+        <h3>Price vs Macro Context</h3>
+        <p>{{ price_and_macro_context }}</p>
+    </div>
+
+    <div class="page-break"></div>
+
+    <!-- PAGE 2: Long-Format Company Profile -->
+    <h1>Company Fundamentals</h1>
+
+    <div class="box">
+        <h3>Deep Dive Profile</h3>
+        <p>{{ company_profile }}</p>
+    </div>
+
+    <div class="box">
+        <h3>SEC Filing Risks & Red Flags</h3>
+        <p>{{ sec_filing_risks }}</p>
+    </div>
+
+    <div class="box">
+        <h3>Recent News & Sentiment</h3>
+        <p>{{ recent_news }}</p>
+    </div>
+
+    <div class="page-break"></div>
+
+    <!-- PAGE 3: Sector & Industry Breakdown -->
+    <h1>Market Context</h1>
+
+    <div class="box">
+        <h3>Sector & Industry Breakdown</h3>
+        <p>{{ sector_breakdown }}</p>
+    </div>
+
+</body>
+
+</html>

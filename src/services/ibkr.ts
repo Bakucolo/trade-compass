@@ -6,17 +6,30 @@ export interface IBKRStatus {
     connected: boolean;
 }
 
-export interface IBKRPosition {
-    account: string;
-    contract: {
-        conId: number;
-        symbol: string;
-        secType: string;
-        exchange: string;
-        currency: string;
+export interface DBHolding {
+    id: string;
+    brokerId: string;
+    brokerSpecificId: string;
+    symbol: string;
+    assetType: string;
+    description: string | null;
+    quantity: number;
+    averageCost: number;
+    currentPrice: number;
+    marketValue: number;
+    dayPnL: number;
+    dayPnLPercent: number;
+    unrealizedPnL: number;
+    unrealizedPnLPercent: number;
+    strikePrice: number | null;
+    expiryDate: string | null;
+    optionType: string | null;
+    underlyingSymbol: string | null;
+    updatedAt: string;
+    broker?: {
+        name: string;
+        status: string;
     };
-    pos: number;
-    avgCost: number;
 }
 
 export const fetchStatus = async (): Promise<IBKRStatus> => {
@@ -27,7 +40,7 @@ export const fetchStatus = async (): Promise<IBKRStatus> => {
     return response.json();
 };
 
-export const fetchPortfolio = async (): Promise<IBKRPosition[]> => {
+export const fetchPortfolio = async (): Promise<DBHolding[]> => {
     const response = await fetch(`${API_BASE}/portfolio`);
     if (!response.ok) {
         throw new Error('Network response was not ok');

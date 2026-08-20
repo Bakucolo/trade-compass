@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:3000/api';
+const API_URL = '/api';
 
 export interface TastytradeUser {
     'external-id': string;
@@ -23,14 +23,55 @@ export const tastytradeAuthService = {
                 throw new Error(data.error || 'Login failed');
             }
 
-            // We don't need to store the token here if the backend proxy handles it for subsequent calls.
-            // But typically we might want to know *if* we are logged in.
-            // For this simple proxy setup, the backend state variable `tastySessionToken` is the source of truth.
-            // We can just return success.
+            // Store session token in localStorage for persistence
+            if (data.sessionToken) {
+                localStorage.setItem('tasty_session_token', data.sessionToken);
+                localStorage.setItem('tasty_user', JSON.stringify(data.user));
+            }
+
             return { success: true, user: data.user };
         } catch (error: any) {
             console.error('Tastytrade login error:', error);
             return { success: false, error: error.message };
+        }
+    },
+
+    logout: () => {
+        localStorage.removeItem('tasty_session_token');
+        localStorage.removeItem('tasty_user');
+    },
+
+    // Restore session from localStorage
+    restoreSession: async (): Promise<{ success: boolean; user?: TastytradeUser }> => {
+        const token = localStorage.getItem('tasty_session_token');
+        const userStr = localStorage.getItem('tasty_user');
+
+        if (!token) return { success: false };
+
+        try {
+            const user = userStr ? JSON.parse(userStr) : undefined;
+
+            // Sync with backend
+            try {
+                const response = await fetch(`${API_URL}/tastytrade/set-session`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionToken: token, user })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Backend session sync failed');
+                }
+            } catch (e) {
+                console.error("Failed to sync session with backend:", e);
+                // If backend sync fails, we must consider the session invalid/lost
+                // because the proxy needs the token to function.
+                return { success: false };
+            }
+
+            return { success: true, user };
+        } catch {
+            return { success: false };
         }
     },
 

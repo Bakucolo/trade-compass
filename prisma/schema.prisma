@@ -1,0 +1,49 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Broker {
+  id           String    @id @default(uuid())
+  name         String    @unique // "Interactive Brokers", "Tastytrade"
+  status       String    // "connected", "disconnected"
+  lastSyncTime DateTime  @default(now())
+  holdings     Holding[]
+}
+
+model Holding {
+  id                String   @id @default(uuid())
+  brokerId          String
+  broker            Broker   @relation(fields: [brokerId], references: [id], onDelete: Cascade)
+  
+  symbol            String
+  assetType         String   // "EQUITY", "OPTION"
+  description       String?
+  
+  // Position Data
+  brokerSpecificId  String   // e.g., conId for IBKR, symbol for Tasty
+  quantity          Float
+  averageCost       Float
+  currentPrice      Float
+  marketValue       Float
+  
+  // PnL
+  dayPnL            Float
+  dayPnLPercent     Float
+  unrealizedPnL     Float
+  unrealizedPnLPercent Float
+  
+  // Option Specifics (Nullable)
+  strikePrice       Float?
+  expiryDate        String?  // YYYYMMDD
+  optionType        String?  // "CALL", "PUT"
+  underlyingSymbol  String?
+  
+  updatedAt         DateTime @updatedAt
+
+  @@unique([brokerId, brokerSpecificId])
+}

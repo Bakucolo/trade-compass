@@ -39,11 +39,11 @@ export const fetchAccounts = async (): Promise<TastytradeAccount[]> => {
     return data.items;
 };
 
-export const fetchPositions = async (accountNumber: string) => {
-    const response = await fetch(`${API_BASE}/positions/${accountNumber}`);
+export const fetchPositions = async (): Promise<any[]> => {
+    const response = await fetch(`${API_BASE}/positions/default`);
     if (!response.ok) throw new Error('Failed to fetch positions');
     const data = await response.json();
-    return data.items;
+    return data.data;
 };
 
 export const useTastytradeLogin = () => {
@@ -60,10 +60,10 @@ export const useTastytradeAccounts = (enabled: boolean) => {
     });
 };
 
-export const useTastytradePositions = (accountNumber: string | null) => {
+export const useTastytradePositions = () => {
     return useQuery({
-        queryKey: ['tastytradePositions', accountNumber],
-        queryFn: () => fetchPositions(accountNumber!),
-        enabled: !!accountNumber,
+        queryKey: ['tastytradePositions'],
+        queryFn: fetchPositions,
+        retry: false,
     });
 };

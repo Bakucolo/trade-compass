@@ -2,7 +2,18 @@ import express from 'express';
 import cors from 'cors';
 import { IBApi, EventName, ErrorCode, Contract } from '@stoqey/ib';
 import * as fs from 'fs';
+import * as dotenv from 'dotenv';
+import YahooFinance from 'yahoo-finance2';
+const yahooFinance = new YahooFinance();
+dotenv.config({ path: '.env.local' });
+dotenv.config();
 
+import { PrismaClient } from '@prisma/client';
+import { fetchTastyPositions } from './services/tastytradeService';
+
+const prisma = new PrismaClient({
+  log: ['info', 'warn', 'error'],
+});
 const app = express();
 const port = 3000;
 
@@ -21,10 +32,16 @@ const IB_PORTS = [7497, 7496, 4001, 4002];
 
 let ib: IBApi;
 let isConnected = false;
-let positions: any[] = [];
-let trades: any[] = [];
+// positions array removed in favor of DB
 
 const connectToIBKR = async () => {
+  // Ensure Broker record exists
+  await prisma.broker.upsert({
+    where: { name: 'Interactive Brokers' },
+    update: { status: 'connecting', lastSyncTime: new Date() },
+    create: { name: 'Interactive Brokers', status: 'connecting', lastSyncTime: new Date() }
+  });
+
   for (const port of IB_PORTS) {
     if (isConnected) break;
     console.log(`Attempting to connect to IBKR on port ${port}...`);
@@ -44,6 +61,12 @@ const connectToIBKR = async () => {
         ib = tempIB;
         setupEventListeners(ib);
         isConnected = true; // Manually set since we might have missed the event
+
+        await prisma.broker.update({
+          where: { name: 'Interactive Brokers' },
+          data: { status: 'connected', lastSyncTime: new Date() }
+        });
+
         ib.reqPositions();
         ib.reqAllOpenOrders();
         return;
@@ -57,21 +80,33 @@ const connectToIBKR = async () => {
 
   if (!isConnected) {
     console.log("Could not connect to any IBKR port. Retrying in 60s...");
+    await prisma.broker.update({
+      where: { name: 'Interactive Brokers' },
+      data: { status: 'disconnected', lastSyncTime: new Date() }
+    });
     setTimeout(connectToIBKR, 60000);
   }
 };
 
 const setupEventListeners = (ibInstance: IBApi) => {
-  ibInstance.on(EventName.connected, () => {
+  ibInstance.on(EventName.connected, async () => {
     console.log('Connected to IBKR');
     isConnected = true;
+    await prisma.broker.update({
+      where: { name: 'Interactive Brokers' },
+      data: { status: 'connected', lastSyncTime: new Date() }
+    });
     ibInstance.reqPositions();
     ibInstance.reqAllOpenOrders();
   });
 
-  ibInstance.on(EventName.disconnected, () => {
+  ibInstance.on(EventName.disconnected, async () => {
     console.log('Disconnected from IBKR');
     isConnected = false;
+    await prisma.broker.update({
+      where: { name: 'Interactive Brokers' },
+      data: { status: 'disconnected', lastSyncTime: new Date() }
+    });
     // Trigger reconnection logic
     setTimeout(connectToIBKR, 5000);
   });
@@ -80,18 +115,59 @@ const setupEventListeners = (ibInstance: IBApi) => {
     console.error(`IBKR Error: ${err.message} (Code: ${code}, ReqId: ${reqId})`);
   });
 
-  ibInstance.on(EventName.position, (account: string, contract: Contract, pos: number, avgCost: number) => {
-    const existingIndex = positions.findIndex(p => p.contract.conId === contract.conId);
-    const positionData = { account, contract, pos, avgCost };
+  ibInstance.on(EventName.position, async (account: string, contract: Contract, pos: number, avgCost: number) => {
+    if (pos === 0) {
+      // Remove position if quantity is 0
+      await prisma.holding.deleteMany({
+        where: {
+          broker: { name: 'Interactive Brokers' },
+          brokerSpecificId: contract.conId?.toString()
+        }
+      });
+    } else {
+      const broker = await prisma.broker.findUnique({ where: { name: 'Interactive Brokers' } });
+      if (!broker) return;
 
-    if (existingIndex !== -1) {
-      if (pos === 0) {
-        positions.splice(existingIndex, 1);
-      } else {
-        positions[existingIndex] = positionData;
-      }
-    } else if (pos !== 0) {
-      positions.push(positionData);
+      const isOption = contract.secType === 'OPT';
+
+      await prisma.holding.upsert({
+        where: {
+          brokerId_brokerSpecificId: {
+            brokerId: broker.id,
+            brokerSpecificId: contract.conId?.toString() || `${contract.symbol}_${contract.secType}`
+          }
+        },
+        update: {
+          quantity: pos,
+          averageCost: avgCost,
+          currentPrice: 0, // IBKR doesn't give price in position update, need market data
+          marketValue: 0,
+          dayPnL: 0,
+          dayPnLPercent: 0,
+          unrealizedPnL: 0,
+          unrealizedPnLPercent: 0,
+          updatedAt: new Date()
+        },
+        create: {
+          brokerId: broker.id,
+          brokerSpecificId: contract.conId?.toString() || `${contract.symbol}_${contract.secType}`,
+          symbol: contract.symbol || 'UNKNOWN',
+          assetType: isOption ? 'OPTION' : 'EQUITY',
+          description: contract.localSymbol,
+          quantity: pos,
+          averageCost: avgCost,
+          currentPrice: 0,
+          marketValue: 0,
+          dayPnL: 0,
+          dayPnLPercent: 0,
+          unrealizedPnL: 0,
+          unrealizedPnLPercent: 0,
+          strikePrice: contract.strike,
+          expiryDate: contract.lastTradeDateOrContractMonth,
+          optionType: contract.right, // "C" or "P"
+          underlyingSymbol: contract.symbol // Approximation
+        }
+      });
     }
   });
 };
@@ -104,20 +180,35 @@ app.get('/api/status', (req, res) => {
   res.json({ connected: isConnected });
 });
 
-app.get('/api/portfolio', (req, res) => {
-  // Trigger a refresh of positions
+app.get('/api/portfolio', async (req, res) => {
+  // Trigger a refresh of positions if connected
   if (isConnected) {
     ib.reqPositions();
   }
-  res.json(positions);
+
+  // Fetch from DB
+  const holdings = await prisma.holding.findMany({
+    include: { broker: true }
+  });
+
+  // Transform to match previous frontend expectation if needed, or send as is
+  // The frontend expects { account, contract, pos, avgCost } shape roughly for IBKR?
+  // Let's inspect frontend expectation. But since user asked for "persistence", returning DB state is key.
+  // We can return the unified DB model. Frontend might need adjustment or we map it back.
+  // Previous IBKR code returned: { account, contract, pos, avgCost }
+  // To minimize frontend breakage, we might want to map it back or update frontend.
+  // For now, let's return the DB holdings, as they likely want the unified view.
+  res.json(holdings);
 });
 
-// Tastytrade Integration (Custom Implementation)
+// Tastytrade Integration (SDK Implementation)
+import TastytradeClient from '@tastytrade/api';
+
 const TASTY_LIVE_URL = 'https://api.tastyworks.com';
 const TASTY_SANDBOX_URL = 'https://api.cert.tastyworks.com';
 
-let tastySessionToken: string | null = null;
-let tastyBaseUrl = TASTY_LIVE_URL;
+let ttClient: TastytradeClient | null = null;
+let tastyUser: any = null;
 
 const logToFile = (message: string) => {
   try {
@@ -127,44 +218,55 @@ const logToFile = (message: string) => {
   }
 };
 
+// Start a new client session
+const initTastyClient = (isSandbox: boolean) => {
+  const config = isSandbox ? TastytradeClient.SandboxConfig : TastytradeClient.ProdConfig;
+  ttClient = new TastytradeClient(config);
+};
+
+// Restore session token from frontend
+app.post('/api/tastytrade/set-session', async (req, res) => {
+  const { sessionToken, user, isSandbox = false } = req.body;
+
+  if (sessionToken) {
+    try {
+      initTastyClient(isSandbox);
+      if (ttClient) {
+        // Manually set the auth token on the client's session
+        ttClient.session.authToken = sessionToken;
+        ttClient.httpClient.accessToken = null as any; // Clear any stale access token if implementation uses one, but session token is usually enough for legacy/hybrid auth or if authToken is the main one. 
+        // Actually, looking at d.ts, session.authToken seems to be the one.
+
+        tastyUser = user || null;
+        console.log('Tastytrade session restored from client. Token set on SDK.');
+        res.json({ success: true });
+      }
+    } catch (e) {
+      console.error("Error initializing client for restore:", e);
+      res.status(500).json({ error: 'Failed to restore session' });
+    }
+  } else {
+    res.status(400).json({ error: 'No session token provided' });
+  }
+});
+
 app.post('/api/tastytrade/login', async (req, res) => {
   const { username, password, isSandbox = false } = req.body;
-  tastyBaseUrl = isSandbox ? TASTY_SANDBOX_URL : TASTY_LIVE_URL;
 
   logToFile(`Login attempt for user: ${username} (Sandbox: ${isSandbox})`);
 
   try {
-    const response = await fetch(`${tastyBaseUrl}/sessions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'TradeCompass/1.0'
-      },
-      body: JSON.stringify({ login: username, password, "remember-me": true })
-    });
+    initTastyClient(isSandbox);
+    if (!ttClient) throw new Error("Failed to initialize Tastytrade SDK");
 
-    const contentType = response.headers.get("content-type");
-    if (contentType && contentType.includes("application/json")) {
-      const data = await response.json();
+    const session = await ttClient.sessionService.login(username, password);
 
-      logToFile(`Login response: ${JSON.stringify(data)}`);
+    logToFile(`Login successful. User: ${session.user.username}`);
 
-      if (!response.ok) {
-        throw new Error(data.error?.message || 'Login failed');
-      }
-      tastySessionToken = data.data['session-token'];
-      res.json({ success: true, user: data.data.user });
-    } else {
-      const text = await response.text();
-      logToFile(`Login non-JSON response: ${text}`);
-      console.error("Tastytrade API returned non-JSON:", text);
+    tastyUser = session.user;
+    const sessionToken = session['session-token'];
 
-      // Try to extract title if HTML
-      const titleMatch = text.match(/<title>(.*?)<\/title>/i);
-      const title = titleMatch ? titleMatch[1] : 'Unknown Error';
-
-      throw new Error(`Tastytrade API returned ${response.status} (${title}). Check server logs.`);
-    }
+    res.json({ success: true, user: session.user, sessionToken });
 
   } catch (error: any) {
     logToFile(`Login error: ${error.message}`);
@@ -174,37 +276,16 @@ app.post('/api/tastytrade/login', async (req, res) => {
 });
 
 app.get('/api/tastytrade/accounts', async (req, res) => {
-  if (!tastySessionToken) return res.status(401).json({ error: 'Not authenticated' });
+  if (!ttClient) return res.status(401).json({ error: 'Not authenticated with SDK' });
   try {
     logToFile('Fetching accounts...');
-    const response = await fetch(`${tastyBaseUrl}/customers/me/accounts`, {
-      headers: {
-        'Authorization': tastySessionToken,
-        'User-Agent': 'TradeCompass/1.0'
-      }
-    });
 
-    const contentType = response.headers.get("content-type");
-    if (contentType && contentType.includes("application/json")) {
-      const data = await response.json();
+    const accounts = await ttClient.accountsAndCustomersService.getCustomerAccounts();
+    // accounts is typically an array of Account objects
 
-      logToFile(`Accounts response data: ${JSON.stringify(data)}`);
+    logToFile(`Accounts fetched: ${accounts.length}`);
+    res.json({ items: accounts });
 
-      if (!response.ok) throw new Error(data.error?.message);
-
-      console.log('Tastytrade Accounts:', JSON.stringify(data, null, 2));
-
-      // Defensive coding: ensure items is an array
-      const items = data.data?.items;
-      res.json({ items: Array.isArray(items) ? items : [] });
-    } else {
-      const text = await response.text();
-      logToFile(`Accounts non-JSON response: ${text}`);
-      console.error("Tastytrade Accounts API returned non-JSON:", text);
-      const titleMatch = text.match(/<title>(.*?)<\/title>/i);
-      const title = titleMatch ? titleMatch[1] : 'Unknown Error';
-      throw new Error(`Tastytrade API returned ${response.status} (${title})`);
-    }
   } catch (error: any) {
     logToFile(`Error fetching accounts: ${error.message}`);
     console.error('Error fetching accounts:', error);
@@ -213,36 +294,77 @@ app.get('/api/tastytrade/accounts', async (req, res) => {
 });
 
 app.get('/api/tastytrade/positions/:accountNumber', async (req, res) => {
-  if (!tastySessionToken) return res.status(401).json({ error: 'Not authenticated' });
   try {
-    const { accountNumber } = req.params;
-    logToFile(`Fetching positions for account ${accountNumber}...`);
+    const params = req.params as Record<string, string>;
+    const accountNumber = params.accountNumber === 'default' ? undefined : params.accountNumber;
+    logToFile(`Fetching positions via OAuth2 Adapter for account ${accountNumber}...`);
 
-    const response = await fetch(`${tastyBaseUrl}/accounts/${accountNumber}/positions`, {
-      headers: {
-        'Authorization': tastySessionToken,
-        'User-Agent': 'TradeCompass/1.0'
+    const unifiedPositionsList = await fetchTastyPositions(accountNumber);
+
+    logToFile(`Positions fetched and unified: ${unifiedPositionsList.length}`);
+
+    // Sync to DB
+    const broker = await prisma.broker.upsert({
+      where: { name: 'Tastytrade' },
+      update: { status: 'connected', lastSyncTime: new Date() },
+      create: { name: 'Tastytrade', status: 'connected', lastSyncTime: new Date() }
+    });
+
+    // Filter out logically closed positions natively before database ingestion
+    const activePositions = unifiedPositionsList.filter(p => p.quantity !== 0);
+
+    for (const p of activePositions) {
+      await prisma.holding.upsert({
+        where: {
+          brokerId_brokerSpecificId: {
+            brokerId: broker.id,
+            brokerSpecificId: p.brokerSpecificId
+          }
+        },
+        update: {
+          quantity: p.quantity,
+          averageCost: p.averageCost,
+          currentPrice: p.currentPrice,
+          marketValue: p.marketValue,
+          dayPnL: p.dayPnL,
+          updatedAt: new Date(),
+          optionType: p.optionType,
+          strikePrice: p.strikePrice
+        },
+        create: {
+          brokerId: broker.id,
+          brokerSpecificId: p.brokerSpecificId,
+          symbol: p.symbol,
+          assetType: p.assetType,
+          description: p.description,
+          quantity: p.quantity,
+          averageCost: p.averageCost,
+          currentPrice: p.currentPrice,
+          marketValue: p.marketValue,
+          dayPnL: p.dayPnL,
+          dayPnLPercent: 0,
+          unrealizedPnL: 0,
+          unrealizedPnLPercent: 0,
+          strikePrice: p.strikePrice,
+          expiryDate: p.expiryDate,
+          optionType: p.optionType,
+          underlyingSymbol: p.underlyingSymbol
+        }
+      });
+    }
+
+    // Clean up stale database positions that have rolled off or closed
+    const activeIds = activePositions.map(p => p.brokerSpecificId);
+    await prisma.holding.deleteMany({
+      where: {
+        brokerId: broker.id,
+        brokerSpecificId: { notIn: activeIds }
       }
     });
 
-    const contentType = response.headers.get("content-type");
-    if (contentType && contentType.includes("application/json")) {
-      const data = await response.json();
-      logToFile(`Positions response data: ${JSON.stringify(data)}`);
+    // Provide sanitized array exclusively to frontend
+    res.json({ items: activePositions });
 
-      if (!response.ok) throw new Error(data.error?.message);
-
-      // Defensive coding
-      const items = data.data?.items;
-      res.json({ items: Array.isArray(items) ? items : [] });
-    } else {
-      const text = await response.text();
-      logToFile(`Positions non-JSON response: ${text}`);
-      console.error("Tastytrade Positions API returned non-JSON:", text);
-      const titleMatch = text.match(/<title>(.*?)<\/title>/i);
-      const title = titleMatch ? titleMatch[1] : 'Unknown Error';
-      throw new Error(`Tastytrade API returned ${response.status} (${title})`);
-    }
   } catch (error: any) {
     logToFile(`Error fetching positions: ${error.message}`);
     console.error('Error fetching positions:', error);
@@ -250,48 +372,58 @@ app.get('/api/tastytrade/positions/:accountNumber', async (req, res) => {
   }
 });
 
-// Market Data Proxy (REST Snapshot)
+// Yahoo Finance Proxy Route
+app.get('/api/yahoo/quote/:symbol', async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    logToFile(`Fetching Yahoo Finance data for ${symbol}...`);
+
+    // Direct REST API bypassing unstable NPM wrapper
+    const response = await fetch(`https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+    });
+
+    const data = await response.json();
+    const result = data.chart?.result?.[0];
+
+    if (!result) throw new Error("Invalid Yahoo generic response");
+
+    const meta = result.meta || {};
+    res.json({
+      symbol: meta.symbol,
+      currentPrice: meta.regularMarketPrice,
+      ...meta
+    });
+  } catch (error: any) {
+    logToFile(`Error fetching Yahoo data: ${error.message}`);
+    console.error('Error fetching Yahoo data:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Market Data Proxy (REST Snapshot) - Using SDK httpClient
 app.get('/api/tastytrade/market-data/:symbol', async (req, res) => {
-  if (!tastySessionToken) return res.status(401).json({ error: 'Not authenticated' });
+  if (!ttClient) return res.status(401).json({ error: 'Not authenticated with SDK' });
   try {
     const { symbol } = req.params;
     logToFile(`Fetching market data for ${symbol}...`);
 
-    // Tastytrade uses specialized endpoints. "by-type" is common for equity quotes.
-    // URL: /market-data/by-type?equity=AAPL
-    // Note: This endpoint might return an array of data objects.
-    const response = await fetch(`${tastyBaseUrl}/market-data/equity-quotes?symbols=${symbol}`, {
-      headers: {
-        'Authorization': tastySessionToken,
-        'User-Agent': 'TradeCompass/1.0'
-      }
-    });
-
-    // If equity-quotes fails (404), try by-type (legacy or different plan)
-    if (response.status === 404) {
-      logToFile(`equity-quotes 404, trying by-type...`);
-      const fallbackResponse = await fetch(`${tastyBaseUrl}/market-data/by-type?equity=${symbol}`, {
-        headers: {
-          'Authorization': tastySessionToken,
-          'User-Agent': 'TradeCompass/1.0'
-        }
-      });
-
-      const data = await fallbackResponse.json();
-      if (!fallbackResponse.ok) throw new Error(data.error?.message || 'Failed to fetch market data');
-      return res.json(data);
-    }
-
-    const contentType = response.headers.get("content-type");
-    if (contentType && contentType.includes("application/json")) {
-      const data = await response.json();
-      // logToFile(`Market Data response: ${JSON.stringify(data)}`); // Verbose
-      if (!response.ok) throw new Error(data.error?.message);
+    try {
+      const data = await ttClient.httpClient.getData(`/market-data/equity-quotes?symbols=${symbol}`);
       res.json(data);
-    } else {
-      const text = await response.text();
-      logToFile(`Market Data non-JSON response: ${text}`);
-      throw new Error(`Tastytrade API returned ${response.status}`);
+    } catch (e: any) {
+      if (e.response && e.response.status === 404) {
+        logToFile(`equity-quotes 404, trying by-type...`);
+        try {
+          const data = await ttClient.httpClient.getData(`/market-data/by-type?equity=${symbol}`);
+          res.json(data);
+        } catch (fallbackErr: any) {
+          const msg = fallbackErr.response?.data?.error?.message || fallbackErr.message;
+          throw new Error(msg);
+        }
+      } else {
+        throw e;
+      }
     }
 
   } catch (error: any) {
@@ -303,22 +435,10 @@ app.get('/api/tastytrade/market-data/:symbol', async (req, res) => {
 
 // Quote Tokens (for DXLink)
 app.get('/api/tastytrade/quote-tokens', async (req, res) => {
-  if (!tastySessionToken) return res.status(401).json({ error: 'Not authenticated' });
+  if (!ttClient) return res.status(401).json({ error: 'Not authenticated with SDK' });
   try {
     logToFile(`Fetching quote tokens...`);
-    const response = await fetch(`${tastyBaseUrl}/api-quote-tokens`, {
-      headers: {
-        'Authorization': tastySessionToken,
-        'User-Agent': 'TradeCompass/1.0'
-      }
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Failed to get quote tokens: ${text}`);
-    }
-
-    const data = await response.json();
+    const data = await ttClient.httpClient.getData('/api-quote-tokens');
     res.json(data);
   } catch (error: any) {
     logToFile(`Error fetching quote tokens: ${error.message}`);
@@ -328,30 +448,339 @@ app.get('/api/tastytrade/quote-tokens', async (req, res) => {
 
 // Instrument Lookup
 app.get('/api/tastytrade/instruments/:symbol', async (req, res) => {
-  if (!tastySessionToken) return res.status(401).json({ error: 'Not authenticated' });
+  if (!ttClient) return res.status(401).json({ error: 'Not authenticated with SDK' });
   try {
     const { symbol } = req.params;
     logToFile(`Looking up instrument ${symbol}...`);
-    // Tastytrade active-equities endpoint to find the instrument
-    const response = await fetch(`${tastyBaseUrl}/instruments/equities?symbol=${symbol}`, {
-      headers: {
-        'Authorization': tastySessionToken,
-        'User-Agent': 'TradeCompass/1.0'
-      }
-    });
 
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error?.message || 'Instrument lookup failed');
+    // SDK has specialized service
+    const data = await ttClient.instrumentsService.getActiveEquities({ symbol });
 
-    // Return the first match
-    const item = data.data?.items?.[0];
+    // SDK returns the full response object usually? Or just the data?
+    // checking service definition... usually returns Promise<any>, likely the response body.
+    // existing code expected data.data.items[0]
+
+    const item = data.data?.items?.[0] || data.items?.[0]; // Handle variations
     res.json(item || null);
+
   } catch (error: any) {
     logToFile(`Error looking up instrument: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
+// ==========================================
+// RESEARCH DOSSIER ENDPOINT (yfinance)
+// ==========================================
+app.get('/api/research/dossier/:ticker', async (req, res) => {
+  try {
+    const { ticker } = req.params;
+    logToFile(`Fetching comprehensive research dossier for ${ticker}...`);
 
-app.listen(port, () => {
+    let quoteSummary: any = null;
+    let searchData: any = null;
+
+    try {
+      // Fetch combined summary data from Yahoo Finance
+      quoteSummary = await yahooFinance.quoteSummary(ticker, {
+        modules: ['summaryProfile', 'defaultKeyStatistics', 'financialData', 'price', 'summaryDetail']
+      });
+    } catch (e: any) {
+      logToFile(`Warning: quoteSummary failed for ${ticker} - ${e.message}`);
+    }
+
+    try {
+      // Fetch news specific to this ticker
+      searchData = await yahooFinance.search(ticker, { newsCount: 5 });
+    } catch (e: any) {
+      logToFile(`Warning: news search failed for ${ticker} - ${e.message}`);
+    }
+
+    if (!quoteSummary && !searchData) {
+      return res.status(404).json({ error: 'Ticker not found or data unavailable.' });
+    }
+
+    const price = quoteSummary?.price;
+    const profile = quoteSummary?.summaryProfile;
+    const stats = quoteSummary?.defaultKeyStatistics;
+    const financials = quoteSummary?.financialData;
+    const summary = quoteSummary?.summaryDetail;
+
+    // Map to required structure with safe fallbacks
+    const dossier = {
+      header: {
+        shortName: price?.shortName || price?.longName || ticker,
+        symbol: price?.symbol || ticker,
+        regularMarketPrice: price?.regularMarketPrice ?? null,
+        regularMarketChange: price?.regularMarketChange ?? null,
+        regularMarketChangePercent: price?.regularMarketChangePercent ?? null,
+        sector: profile?.sector || 'N/A',
+        industry: profile?.industry || 'N/A'
+      },
+      profile: {
+        longBusinessSummary: profile?.longBusinessSummary || 'No recent business summary available for this equity.'
+      },
+      fundamentals: {
+        marketCap: price?.marketCap ?? summary?.marketCap ?? null,
+        trailingPE: summary?.trailingPE ?? null,
+        forwardPE: summary?.forwardPE ?? null,
+        trailingEps: stats?.trailingEps ?? null,
+        forwardEps: stats?.forwardEps ?? null,
+        profitMargins: financials?.profitMargins ?? null,
+        operatingMargins: financials?.operatingMargins ?? null,
+        revenueGrowth: financials?.revenueGrowth ?? null,
+        returnOnEquity: financials?.returnOnEquity ?? null,
+        debtToEquity: financials?.debtToEquity ?? null,
+        enterpriseValue: stats?.enterpriseValue ?? null,
+        priceToSales: summary?.priceToSalesTrailing12Months ?? null
+      },
+      technicals: {
+        fiftyTwoWeekHigh: summary?.fiftyTwoWeekHigh ?? null,
+        fiftyTwoWeekLow: summary?.fiftyTwoWeekLow ?? null,
+        fiftyDayAverage: summary?.fiftyDayAverage ?? null,
+        twoHundredDayAverage: summary?.twoHundredDayAverage ?? null,
+        beta: stats?.beta ?? summary?.beta ?? null,
+        volume: summary?.volume ?? price?.regularMarketVolume ?? null,
+        averageVolume: summary?.averageVolume ?? null,
+        dayLow: price?.regularMarketDayLow ?? null,
+        dayHigh: price?.regularMarketDayHigh ?? null
+      },
+      news: searchData?.news?.map((n: any) => ({
+        title: n.title,
+        publisher: n.publisher,
+        link: n.link,
+        providerPublishTime: n.providerPublishTime
+      })) || []
+    };
+
+    res.json(dossier);
+  } catch (error: any) {
+    logToFile(`Error generating dossier: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// AI Analysis Endpoint (OpenRouter)
+app.get('/api/research/analyze/:ticker', async (req, res) => {
+  try {
+    const { ticker } = req.params;
+    const apiKey = process.env.OPENROUTER_API_KEY;
+
+    if (!apiKey) {
+      return res.status(401).json({ error: 'OpenRouter API key is missing. Please add it to your .env.local file.' });
+    }
+
+    logToFile(`Generating AI Analysis for ${ticker}...`);
+
+    let quoteSummary: any = null;
+    try {
+      quoteSummary = await yahooFinance.quoteSummary(ticker, {
+        modules: ['summaryProfile', 'defaultKeyStatistics', 'financialData', 'price', 'summaryDetail']
+      });
+    } catch (e: any) {
+      logToFile(`Warning: quoteSummary failed for AI on ${ticker} - ${e.message}`);
+    }
+
+    if (!quoteSummary) {
+      return res.status(404).json({ error: 'Data unavailable to perform AI Analysis.' });
+    }
+
+    const price = quoteSummary?.price;
+    const profile = quoteSummary?.summaryProfile;
+    const stats = quoteSummary?.defaultKeyStatistics;
+    const financials = quoteSummary?.financialData;
+    const summary = quoteSummary?.summaryDetail;
+
+    const systemPrompt = `You are an Aggressive Growth Investment Agent. 
+Your main goals are:
+1. Identify companies with strong fundamentals facing temporary challenges.
+2. Prioritize companies with a high Free Cash Flow yield.
+3. Actively debate the 'Value' perspective if the market is overreacting to negative news.
+
+Provide a concise, hard-hitting analysis of the provided company data. 
+
+IMPORTANT: You must return the analysis ONLY as a valid JSON object with the exact following schema:
+{
+  "overview": "Company Overview prose (max 2 paragraphs).",
+  "keyMetrics": {
+    "Market Cap": "value",
+    "Trailing P/E": "value",
+    "Operating Margin": "value",
+    "Return on Equity": "value",
+    "Debt to Equity": "value",
+    "Current Price": "value",
+    "52-Week Range": "value"
+  },
+  "deepDive": "Deep dive into operational efficacy and financials (1-2 paragraphs).",
+  "redFlags": [
+    "Array of critical risks or red flags, especially around Free Cash Flow if it is N/A or low"
+  ]
+}
+Return ONLY valid JSON. No markdown formatting outside the JSON keys, no backticks.
+`;
+
+    const formatMetric = (num: any, isPercent: boolean = false) => {
+      if (num === null || num === undefined) return 'N/A';
+      const val = Number(num);
+      if (isNaN(val)) return 'N/A';
+
+      const absVal = Math.abs(val);
+      if (absVal >= 1e12) return (val / 1e12).toFixed(2) + 'T';
+      if (absVal >= 1e9) return (val / 1e9).toFixed(2) + 'B';
+      if (absVal >= 1e6) return (val / 1e6).toFixed(2) + 'M';
+
+      if (isPercent) return (val * 100).toFixed(2) + '%';
+      return val.toFixed(2);
+    };
+
+    const userPrompt = `Analyze the following company data for ${ticker}:
+Company Profile: ${profile?.longBusinessSummary?.substring(0, 800) || 'N/A'}
+Sector: ${profile?.sector || 'N/A'}
+Industry: ${profile?.industry || 'N/A'}
+Market Cap: ${formatMetric(price?.marketCap ?? summary?.marketCap)}
+Trailing P/E: ${formatMetric(summary?.trailingPE)}
+Free Cash Flow: ${formatMetric(financials?.freeCashflow)}
+Operating Margin: ${formatMetric(financials?.operatingMargins, true)}
+Return on Equity: ${formatMetric(financials?.returnOnEquity, true)}
+Debt to Equity: ${formatMetric(financials?.debtToEquity)}
+Current Price: $${formatMetric(price?.regularMarketPrice)}
+52-Week High: $${formatMetric(summary?.fiftyTwoWeekHigh)}
+52-Week Low: $${formatMetric(summary?.fiftyTwoWeekLow)}`;
+
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-4o-mini", // Aggressive model choice per prompt instructions (can be adjusted)
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`OpenRouter API error: ${response.status} ${errText}`);
+    }
+
+    const data = await response.json();
+    const analysis = data.choices?.[0]?.message?.content || "No analysis generated.";
+
+    res.json({ analysis });
+
+  } catch (error: any) {
+    logToFile(`Error generating AI analysis: ${error.message}`);
+    console.error('Error generating AI analysis:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Autonomous Agent Endpoint
+app.get('/api/research/autonomous/:ticker', async (req, res) => {
+  try {
+    const { ticker } = req.params;
+    logToFile(`Spawning autonomous python agent for ${ticker}...`);
+
+    const { spawn } = require('child_process');
+    const pythonProcess = spawn('python', ['agent_research/main.py', ticker], { cwd: process.cwd() });
+
+    let pdfPath = '';
+
+    pythonProcess.stdout.on('data', (data: Buffer) => {
+      const output = data.toString();
+      console.log(`[Python Agent] ${output.trim()}`);
+
+      const match = output.match(/FINAL_PDF_PATH:(.*)/);
+      if (match && match[1]) {
+        pdfPath = match[1].trim();
+      }
+    });
+
+    pythonProcess.stderr.on('data', (data: Buffer) => {
+      console.error(`[Python Agent ERR] ${data.toString().trim()}`);
+    });
+
+    pythonProcess.on('close', (code: number) => {
+      if (code !== 0) {
+        logToFile(`Python agent exited with code ${code}`);
+        return res.status(500).json({ error: 'Agent execution failed.' });
+      }
+      if (pdfPath) {
+        res.download(pdfPath);
+      } else {
+        res.status(500).json({ error: 'PDF was not generated.' });
+      }
+    });
+
+  } catch (error: any) {
+    logToFile(`Error spawning python agent: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Generic Symbol Search API
+app.get('/api/research/search', async (req, res) => {
+  try {
+    const { query } = req.query;
+    if (!query) return res.json([]);
+    logToFile(`Searching Yahoo Finance for ${query}...`);
+
+    // Attempt search, limit to 10 quotes, 0 news
+    const searchData = await yahooFinance.search(query as string, { newsCount: 0, quotesCount: 10 }) as any;
+    const quotes = searchData.quotes || [];
+
+    const results = quotes
+      // Filter out weird internal symbols and indices unless requested
+      .filter((q: any) => q.quoteType === 'EQUITY' || q.quoteType === 'ETF' || q.quoteType === 'INDEX' || q.quoteType === 'MUTUALFUND')
+      .map((q: any) => ({
+        symbol: q.symbol,
+        name: q.shortname || q.longname || q.symbol,
+        currency: 'USD',
+        stockExchange: q.exchange || 'N/A',
+        exchangeShortName: q.exchDisp || q.exchange || 'N/A'
+      }));
+
+    res.json(results);
+  } catch (error: any) {
+    logToFile(`Error searching ticker: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+const server = app.listen(port, () => {
   console.log(`Proxy server listening at http://localhost:${port}`);
 });
+
+// Graceful shutdown
+const shutdown = async () => {
+  console.log('Shutting down server...');
+
+  server.close(() => {
+    console.log('HTTP server closed.');
+  });
+
+  if (isConnected && ib) {
+    try {
+      console.log('Disconnecting from IBKR...');
+      ib.disconnect();
+    } catch (e) {
+      console.error('Error disconnecting IBKR:', e);
+    }
+  }
+
+  try {
+    await prisma.$disconnect();
+    console.log('Database disconnected.');
+  } catch (e) {
+    console.error('Error disconnecting database:', e);
+  }
+
+  process.exit(0);
+};
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
