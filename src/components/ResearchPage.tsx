@@ -27,10 +27,16 @@ function useDebounceValue<T>(value: T, delay: number): T {
   return debouncedValue;
 }
 
-export function ResearchPage() {
+export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
   const [searchQuery, setSearchQuery] = useState('');
   const debouncedSearch = useDebounceValue(searchQuery, 500);
-  const [selectedSymbol, setSelectedSymbol] = useState('AAPL');
+  const [selectedSymbol, setSelectedSymbol] = useState(initialSymbol || 'AAPL');
+
+  useEffect(() => {
+    if (initialSymbol) {
+      setSelectedSymbol(initialSymbol);
+    }
+  }, [initialSymbol]);
 
   // Real-time Streaming State
   const [streamingData, setStreamingData] = useState<Partial<StreamerData>>({});
@@ -206,17 +212,66 @@ export function ResearchPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="relative mb-4 group">
+              <div className="relative mb-3 group">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
                 <Input
-                  placeholder="Ticker (e.g. MSFT, TSLA)"
+                  placeholder="Ticker (e.g. MSFT, TSLA) - Press Enter"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10 bg-accent/50 border-border/50 focus:border-primary/50 transition-all shadow-inner"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const trimmed = searchQuery.trim().toUpperCase();
+                      if (trimmed) {
+                        if (searchResults && searchResults.length > 0) {
+                          setSelectedSymbol(searchResults[0].symbol);
+                        } else {
+                          setSelectedSymbol(trimmed);
+                        }
+                      }
+                    }
+                  }}
+                  className="pl-10 pr-10 bg-accent/50 border-border/50 focus:border-primary/50 transition-all shadow-inner font-mono uppercase"
                 />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const trimmed = searchQuery.trim().toUpperCase();
+                      if (trimmed) {
+                        if (searchResults && searchResults.length > 0) {
+                          setSelectedSymbol(searchResults[0].symbol);
+                        } else {
+                          setSelectedSymbol(trimmed);
+                        }
+                      }
+                    }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded font-semibold hover:opacity-90 transition-opacity"
+                  >
+                    Go
+                  </button>
+                )}
               </div>
 
-              <div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin pr-2">
+              {/* Quick Select Popular Tickers */}
+              <div className="flex flex-wrap gap-1.5 mb-4">
+                {['AAPL', 'NVDA', 'TSLA', 'MSFT', 'AMZN', 'PLTR'].map((ticker) => (
+                  <button
+                    key={ticker}
+                    type="button"
+                    onClick={() => setSelectedSymbol(ticker)}
+                    className={cn(
+                      "text-[11px] px-2 py-0.5 rounded-md font-mono font-medium transition-colors border",
+                      selectedSymbol === ticker
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-muted/40 hover:bg-muted text-muted-foreground border-border/40 hover:text-foreground"
+                    )}
+                  >
+                    {ticker}
+                  </button>
+                ))}
+              </div>
+
+              <div className="space-y-2 max-h-[380px] overflow-y-auto scrollbar-thin pr-2">
                 {isSearchLoading ? (
                   <div className="flex justify-center p-4"><Loader2 className="animate-spin text-primary" /></div>
                 ) : isSearchError ? (
@@ -252,7 +307,7 @@ export function ResearchPage() {
                   </div>
                 ) : (
                   <div className="text-center text-muted-foreground p-4 text-sm italic">
-                    Type characters to begin searching...
+                    Type characters or select a ticker above...
                   </div>
                 )}
               </div>

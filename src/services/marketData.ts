@@ -148,15 +148,59 @@ const CACHE_TTL_MS = 60000; // 1 minute cache to avoid rate limits
 
 export const marketDataService = {
     searchSymbols: async (query: string): Promise<StockSearchResult[]> => {
-        if (!query) return [];
+        const trimmed = (query || '').trim();
+        if (!trimmed) return [];
+
         try {
-            const response = await fetchWithTimeout(`${API_URL}/research/search?query=${encodeURIComponent(query)}`, {}, 5000);
-            if (!response.ok) return [];
-            return await response.json();
+            const response = await fetchWithTimeout(`${API_URL}/research/search?query=${encodeURIComponent(trimmed)}`, {}, 8000);
+            if (response.ok) {
+                const data = await response.json();
+                if (Array.isArray(data) && data.length > 0) {
+                    return data;
+                }
+            }
         } catch (e) {
-            console.error("Search fetch failed:", e);
-            return [];
+            console.warn("Backend search failed, trying client-side fallback:", e);
         }
+
+        // Direct Finnhub fallback from client side
+        const finnhubKey = import.meta.env.VITE_FINNHUB_API_KEY;
+        if (finnhubKey) {
+            try {
+                const fhRes = await fetchWithTimeout(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(trimmed)}&token=${finnhubKey}`, {}, 5000);
+                if (fhRes.ok) {
+                    const data = await fhRes.json();
+                    if (data?.result && Array.isArray(data.result) && data.result.length > 0) {
+                        return data.result
+                            .filter((r: any) => r && r.symbol && !r.symbol.includes('.'))
+                            .slice(0, 10)
+                            .map((r: any) => ({
+                                symbol: r.symbol,
+                                name: r.description || r.displaySymbol || r.symbol,
+                                currency: 'USD',
+                                stockExchange: r.type || 'US',
+                                exchangeShortName: r.type || 'US'
+                            }));
+                    }
+                }
+            } catch (fhErr) {
+                console.warn("Client Finnhub search fallback error:", fhErr);
+            }
+        }
+
+        // Direct ticker synthesis fallback (e.g. user typed AAPL or NVDA)
+        if (/^[A-Za-z0-9\.\-\=]{1,10}$/.test(trimmed)) {
+            const sym = trimmed.toUpperCase();
+            return [{
+                symbol: sym,
+                name: sym,
+                currency: 'USD',
+                stockExchange: 'US',
+                exchangeShortName: 'US'
+            }];
+        }
+
+        return [];
     },
 
     getQuote: async (symbol: string): Promise<StockQuote | null> => {

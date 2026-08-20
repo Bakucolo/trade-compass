@@ -10,19 +10,25 @@ import { SettingsPage } from '@/components/SettingsPage';
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [researchTicker, setResearchTicker] = useState('AAPL');
+
+  const handleNavigateToResearch = (symbol: string) => {
+    setResearchTicker(symbol);
+    setActiveTab('research');
+  };
 
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard':
         return <Dashboard />;
       case 'watchlist':
-        return <WatchlistPage />;
+        return <WatchlistPage onNavigateToResearch={handleNavigateToResearch} />;
       case 'trades':
         return <TradesPage />;
       case 'ideas':
         return <IdeasPage />;
       case 'research':
-        return <ResearchPage />;
+        return <ResearchPage initialSymbol={researchTicker} />;
       case 'brokers':
         return <BrokersPage />;
       case 'settings':

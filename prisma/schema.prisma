@@ -47,3 +47,22 @@ model Holding {
 
   @@unique([brokerId, brokerSpecificId])
 }
+
+model Watchlist {
+  id        String          @id @default(uuid())
+  name      String
+  isDefault Boolean         @default(false)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  items     WatchlistItem[]
+}
+
+model WatchlistItem {
+  id          String    @id @default(uuid())
+  watchlistId String
+  watchlist   Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+  symbol      String
+  addedAt     DateTime  @default(now())
+
+  @@unique([watchlistId, symbol])
+}

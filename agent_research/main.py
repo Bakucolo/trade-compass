@@ -7,7 +7,9 @@ from openai import OpenAI
 from tools import TOOL_SCHEMAS, TOOL_DISPATCH, get_chroma_client
 from pdf_generator import generate_pdf
 
-# Load env variables (assumes .env exists in the parent or current directory)
+# Load env variables (assumes .env.local or .env exists in current or parent directory)
+load_dotenv('.env.local')
+load_dotenv('.env')
 load_dotenv()
 
 # System prompt forcing structured JSON output and rigorous research steps
@@ -37,13 +39,18 @@ YOUR FINAL OUTPUT MUST BE IN PURE JSON (no markdown wrapping) WITH THIS EXACT ST
 def main(ticker: str):
     print(f"Starting generic research agent process for {ticker}...")
     
+    api_key = os.getenv("OPENROUTER_API_KEY", os.getenv("OPENAI_API_KEY", ""))
+    if not api_key:
+        print("Error: OPENROUTER_API_KEY is not set in environment or .env files.")
+        sys.exit(1)
+
     # Configure OpenAI Client (pointing to OpenRouter as requested)
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
-        api_key=os.getenv("OPENROUTER_API_KEY", os.getenv("OPENAI_API_KEY", ""))
+        api_key=api_key
     )
     
-    model = "meta-llama/llama-3.3-70b-instruct:free"
+    model = os.getenv("OPENROUTER_RESEARCH_MODEL", "openai/gpt-4o-mini")
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},

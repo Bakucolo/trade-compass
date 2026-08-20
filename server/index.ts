@@ -2,11 +2,20 @@ import express from 'express';
 import cors from 'cors';
 import { IBApi, EventName, ErrorCode, Contract } from '@stoqey/ib';
 import * as fs from 'fs';
+import { spawn } from 'child_process';
 import * as dotenv from 'dotenv';
 import YahooFinance from 'yahoo-finance2';
-const yahooFinance = new YahooFinance();
+const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 dotenv.config({ path: '.env.local' });
 dotenv.config();
+
+// Global process error handlers to prevent unexpected server terminations
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception thrown:', err);
+});
 
 import { PrismaClient } from '@prisma/client';
 import { fetchTastyPositions } from './services/tastytradeService';
@@ -14,6 +23,11 @@ import { fetchTastyPositions } from './services/tastytradeService';
 const prisma = new PrismaClient({
   log: ['info', 'warn', 'error'],
 });
+
+// Configure SQLite for high concurrency / WAL mode
+prisma.$queryRawUnsafe(`PRAGMA journal_mode = WAL;`)
+  .then(() => prisma.$queryRawUnsafe(`PRAGMA busy_timeout = 10000;`))
+  .catch(err => console.error('Failed to set SQLite PRAGMA:', err));
 const app = express();
 const port = 3000;
 
@@ -115,60 +129,68 @@ const setupEventListeners = (ibInstance: IBApi) => {
     console.error(`IBKR Error: ${err.message} (Code: ${code}, ReqId: ${reqId})`);
   });
 
-  ibInstance.on(EventName.position, async (account: string, contract: Contract, pos: number, avgCost: number) => {
-    if (pos === 0) {
-      // Remove position if quantity is 0
-      await prisma.holding.deleteMany({
-        where: {
-          broker: { name: 'Interactive Brokers' },
-          brokerSpecificId: contract.conId?.toString()
-        }
-      });
-    } else {
-      const broker = await prisma.broker.findUnique({ where: { name: 'Interactive Brokers' } });
-      if (!broker) return;
+  let positionWriteQueue = Promise.resolve();
+  const queuePositionUpdate = (task: () => Promise<void>) => {
+    positionWriteQueue = positionWriteQueue.then(task).catch(err => {
+      console.error('Queued position update error:', err);
+    });
+    return positionWriteQueue;
+  };
 
-      const isOption = contract.secType === 'OPT';
+  ibInstance.on(EventName.position, (account: string, contract: Contract, pos: number, avgCost: number) => {
+    queuePositionUpdate(async () => {
+      try {
+        if (pos === 0) {
+          // Remove position if quantity is 0
+          await prisma.holding.deleteMany({
+            where: {
+              broker: { name: 'Interactive Brokers' },
+              brokerSpecificId: contract.conId?.toString()
+            }
+          });
+        } else {
+          const broker = await prisma.broker.findUnique({ where: { name: 'Interactive Brokers' } });
+          if (!broker) return;
 
-      await prisma.holding.upsert({
-        where: {
-          brokerId_brokerSpecificId: {
-            brokerId: broker.id,
-            brokerSpecificId: contract.conId?.toString() || `${contract.symbol}_${contract.secType}`
-          }
-        },
-        update: {
-          quantity: pos,
-          averageCost: avgCost,
-          currentPrice: 0, // IBKR doesn't give price in position update, need market data
-          marketValue: 0,
-          dayPnL: 0,
-          dayPnLPercent: 0,
-          unrealizedPnL: 0,
-          unrealizedPnLPercent: 0,
-          updatedAt: new Date()
-        },
-        create: {
-          brokerId: broker.id,
-          brokerSpecificId: contract.conId?.toString() || `${contract.symbol}_${contract.secType}`,
-          symbol: contract.symbol || 'UNKNOWN',
-          assetType: isOption ? 'OPTION' : 'EQUITY',
-          description: contract.localSymbol,
-          quantity: pos,
-          averageCost: avgCost,
-          currentPrice: 0,
-          marketValue: 0,
-          dayPnL: 0,
-          dayPnLPercent: 0,
-          unrealizedPnL: 0,
-          unrealizedPnLPercent: 0,
-          strikePrice: contract.strike,
-          expiryDate: contract.lastTradeDateOrContractMonth,
-          optionType: contract.right, // "C" or "P"
-          underlyingSymbol: contract.symbol // Approximation
+          const isOption = contract.secType === 'OPT';
+
+          await prisma.holding.upsert({
+            where: {
+              brokerId_brokerSpecificId: {
+                brokerId: broker.id,
+                brokerSpecificId: contract.conId?.toString() || `${contract.symbol}_${contract.secType}`
+              }
+            },
+            update: {
+              quantity: pos,
+              averageCost: avgCost,
+              updatedAt: new Date()
+            },
+            create: {
+              brokerId: broker.id,
+              brokerSpecificId: contract.conId?.toString() || `${contract.symbol}_${contract.secType}`,
+              symbol: contract.symbol || 'UNKNOWN',
+              assetType: isOption ? 'OPTION' : 'EQUITY',
+              description: contract.localSymbol,
+              quantity: pos,
+              averageCost: avgCost,
+              currentPrice: 0,
+              marketValue: 0,
+              dayPnL: 0,
+              dayPnLPercent: 0,
+              unrealizedPnL: 0,
+              unrealizedPnLPercent: 0,
+              strikePrice: contract.strike,
+              expiryDate: contract.lastTradeDateOrContractMonth,
+              optionType: contract.right, // "C" or "P"
+              underlyingSymbol: contract.symbol // Approximation
+            }
+          });
         }
-      });
-    }
+      } catch (err: any) {
+        console.error('Error in IBKR position processing:', err?.message || err);
+      }
+    });
   });
 };
 
@@ -685,8 +707,15 @@ app.get('/api/research/autonomous/:ticker', async (req, res) => {
     const { ticker } = req.params;
     logToFile(`Spawning autonomous python agent for ${ticker}...`);
 
-    const { spawn } = require('child_process');
-    const pythonProcess = spawn('python', ['agent_research/main.py', ticker], { cwd: process.cwd() });
+    const pythonCmd = process.platform === 'win32' ? 'py' : 'python3';
+    const pythonArgs = process.platform === 'win32'
+      ? ['-3.12', 'agent_research/main.py', ticker]
+      : ['agent_research/main.py', ticker];
+
+    const pythonProcess = spawn(pythonCmd, pythonArgs, {
+      cwd: process.cwd(),
+      env: { ...process.env }
+    });
 
     let pdfPath = '';
 
@@ -722,31 +751,340 @@ app.get('/api/research/autonomous/:ticker', async (req, res) => {
   }
 });
 
-// Generic Symbol Search API
+// Generic Symbol Search API (Yahoo Finance + Finnhub fallback + Direct ticker synthesis)
 app.get('/api/research/search', async (req, res) => {
+  const query = (req.query.query as string || '').trim();
+  if (!query) return res.json([]);
+  logToFile(`Searching ticker for query: "${query}"`);
+
+  let results: any[] = [];
+
+  // 1. Try Yahoo Finance with a 4s timeout
   try {
-    const { query } = req.query;
-    if (!query) return res.json([]);
-    logToFile(`Searching Yahoo Finance for ${query}...`);
+    const searchPromise = yahooFinance.search(query, { newsCount: 0, quotesCount: 10 }) as Promise<any>;
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Yahoo search timeout')), 4000));
+    const searchData: any = await Promise.race([searchPromise, timeoutPromise]);
+    const quotes = searchData?.quotes || [];
 
-    // Attempt search, limit to 10 quotes, 0 news
-    const searchData = await yahooFinance.search(query as string, { newsCount: 0, quotesCount: 10 }) as any;
-    const quotes = searchData.quotes || [];
-
-    const results = quotes
-      // Filter out weird internal symbols and indices unless requested
-      .filter((q: any) => q.quoteType === 'EQUITY' || q.quoteType === 'ETF' || q.quoteType === 'INDEX' || q.quoteType === 'MUTUALFUND')
+    results = quotes
+      .filter((q: any) => q && q.symbol && typeof q.symbol === 'string')
       .map((q: any) => ({
         symbol: q.symbol,
-        name: q.shortname || q.longname || q.symbol,
+        name: q.shortname || q.longname || q.name || q.symbol,
         currency: 'USD',
-        stockExchange: q.exchange || 'N/A',
+        stockExchange: q.exchange || q.exchDisp || 'N/A',
         exchangeShortName: q.exchDisp || q.exchange || 'N/A'
       }));
+  } catch (err: any) {
+    logToFile(`Yahoo search error for "${query}": ${err?.message || err}`);
+  }
 
-    res.json(results);
+  // 2. If Yahoo Finance returned 0 results or failed, try Finnhub fallback
+  if (results.length === 0) {
+    const finnhubKey = process.env.VITE_FINNHUB_API_KEY || process.env.FINNHUB_API_KEY;
+    if (finnhubKey) {
+      try {
+        logToFile(`Trying Finnhub search fallback for "${query}"...`);
+        const fhRes = await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(query)}&token=${finnhubKey}`);
+        if (fhRes.ok) {
+          const data: any = await fhRes.json();
+          if (data?.result && Array.isArray(data.result)) {
+            results = data.result
+              .filter((r: any) => r && r.symbol && !r.symbol.includes('.'))
+              .slice(0, 10)
+              .map((r: any) => ({
+                symbol: r.symbol,
+                name: r.description || r.displaySymbol || r.symbol,
+                currency: 'USD',
+                stockExchange: r.type || 'US',
+                exchangeShortName: r.type || 'US'
+              }));
+          }
+        }
+      } catch (fhErr: any) {
+        logToFile(`Finnhub search error for "${query}": ${fhErr?.message || fhErr}`);
+      }
+    }
+  }
+
+  // 3. If still empty, but query looks like a valid ticker symbol (e.g. "AAPL", "MSFT", "BTC-USD")
+  if (results.length === 0 && /^[A-Za-z0-9\.\-\=]{1,10}$/.test(query)) {
+    const cleanSym = query.toUpperCase();
+    results = [{
+      symbol: cleanSym,
+      name: cleanSym,
+      currency: 'USD',
+      stockExchange: 'US',
+      exchangeShortName: 'US'
+    }];
+  }
+
+  res.json(results);
+});
+
+// Helper to fetch enriched fundamental data for a single symbol
+async function fetchEnrichedSymbolData(symbol: string) {
+  const cleanSymbol = symbol.trim().toUpperCase();
+  try {
+    const summary = await yahooFinance.quoteSummary(cleanSymbol, {
+      modules: ['price', 'summaryProfile', 'defaultKeyStatistics', 'financialData', 'summaryDetail']
+    });
+
+    const price = summary?.price;
+    const profile = summary?.summaryProfile;
+    const stats = summary?.defaultKeyStatistics;
+    const financials = summary?.financialData;
+    const detail = summary?.summaryDetail;
+
+    return {
+      symbol: cleanSymbol,
+      name: price?.shortName || price?.longName || cleanSymbol,
+      price: price?.regularMarketPrice ?? 0,
+      change: price?.regularMarketChange ?? 0,
+      changePercent: price?.regularMarketChangePercent ?? 0,
+      sector: profile?.sector || 'General',
+      industry: profile?.industry || 'N/A',
+      marketCap: price?.marketCap ?? detail?.marketCap ?? null,
+      pe: detail?.trailingPE ?? detail?.forwardPE ?? null,
+      ps: detail?.priceToSalesTrailing12Months ?? null,
+      eps: stats?.trailingEps ?? stats?.forwardEps ?? null,
+      operatingMargin: financials?.operatingMargins ?? null,
+      roe: financials?.returnOnEquity ?? null,
+      debtToEquity: financials?.debtToEquity ?? null,
+      fiftyTwoWeekHigh: detail?.fiftyTwoWeekHigh ?? null,
+      fiftyTwoWeekLow: detail?.fiftyTwoWeekLow ?? null,
+      volume: detail?.volume ?? price?.regularMarketVolume ?? null,
+      error: null
+    };
+  } catch (err: any) {
+    logToFile(`Enrichment failed for ${cleanSymbol}: ${err.message}`);
+    return {
+      symbol: cleanSymbol,
+      name: cleanSymbol,
+      price: 0,
+      change: 0,
+      changePercent: 0,
+      sector: 'N/A',
+      industry: 'N/A',
+      marketCap: null,
+      pe: null,
+      ps: null,
+      eps: null,
+      operatingMargin: null,
+      roe: null,
+      debtToEquity: null,
+      fiftyTwoWeekHigh: null,
+      fiftyTwoWeekLow: null,
+      volume: null,
+      error: err.message
+    };
+  }
+}
+
+// GET /api/watchlists - Fetch all watchlists (create default if empty)
+app.get('/api/watchlists', async (req, res) => {
+  try {
+    let watchlists = await prisma.watchlist.findMany({
+      include: {
+        items: {
+          orderBy: { addedAt: 'asc' }
+        }
+      },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    if (watchlists.length === 0) {
+      // Seed a default watchlist
+      const defaultWatchlist = await prisma.watchlist.create({
+        data: {
+          name: 'Main Watchlist',
+          isDefault: true,
+          items: {
+            create: [
+              { symbol: 'AAPL' },
+              { symbol: 'NVDA' },
+              { symbol: 'MSFT' },
+              { symbol: 'TSLA' },
+              { symbol: 'AMZN' },
+              { symbol: 'ORA' }
+            ]
+          }
+        },
+        include: {
+          items: true
+        }
+      });
+      watchlists = [defaultWatchlist];
+    }
+
+    res.json(watchlists);
   } catch (error: any) {
-    logToFile(`Error searching ticker: ${error.message}`);
+    logToFile(`Error fetching watchlists: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/watchlists - Create a new watchlist
+app.post('/api/watchlists', async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return res.status(400).json({ error: 'Watchlist name is required.' });
+    }
+
+    const newWatchlist = await prisma.watchlist.create({
+      data: {
+        name: name.trim(),
+        isDefault: false
+      },
+      include: {
+        items: true
+      }
+    });
+
+    res.status(201).json(newWatchlist);
+  } catch (error: any) {
+    logToFile(`Error creating watchlist: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/watchlists/:id - Rename a watchlist
+app.put('/api/watchlists/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return res.status(400).json({ error: 'Watchlist name is required.' });
+    }
+
+    const updated = await prisma.watchlist.update({
+      where: { id },
+      data: { name: name.trim() },
+      include: { items: true }
+    });
+
+    res.json(updated);
+  } catch (error: any) {
+    logToFile(`Error updating watchlist: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/watchlists/:id - Delete a watchlist
+app.delete('/api/watchlists/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await prisma.watchlist.delete({
+      where: { id }
+    });
+    res.json({ success: true, message: 'Watchlist deleted successfully.' });
+  } catch (error: any) {
+    logToFile(`Error deleting watchlist: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/watchlists/:id/symbols - Add symbol to watchlist
+app.post('/api/watchlists/:id/symbols', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { symbol } = req.body;
+    if (!symbol || typeof symbol !== 'string' || symbol.trim().length === 0) {
+      return res.status(400).json({ error: 'Symbol is required.' });
+    }
+
+    const cleanSymbol = symbol.trim().toUpperCase();
+
+    // Check if already in watchlist
+    const existing = await prisma.watchlistItem.findUnique({
+      where: {
+        watchlistId_symbol: {
+          watchlistId: id,
+          symbol: cleanSymbol
+        }
+      }
+    });
+
+    if (existing) {
+      return res.json({ success: true, item: existing, message: 'Symbol already in watchlist.' });
+    }
+
+    const item = await prisma.watchlistItem.create({
+      data: {
+        watchlistId: id,
+        symbol: cleanSymbol
+      }
+    });
+
+    res.status(201).json({ success: true, item });
+  } catch (error: any) {
+    logToFile(`Error adding symbol to watchlist: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/watchlists/:id/symbols/:symbol - Remove symbol from watchlist
+app.delete('/api/watchlists/:id/symbols/:symbol', async (req, res) => {
+  try {
+    const { id, symbol } = req.params;
+    const cleanSymbol = symbol.trim().toUpperCase();
+
+    await prisma.watchlistItem.deleteMany({
+      where: {
+        watchlistId: id,
+        symbol: cleanSymbol
+      }
+    });
+
+    res.json({ success: true, message: 'Symbol removed from watchlist.' });
+  } catch (error: any) {
+    logToFile(`Error removing symbol from watchlist: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/watchlists/:id/data - Fetch enriched real-time and fundamental data for all symbols
+app.get('/api/watchlists/:id/data', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const watchlist = await prisma.watchlist.findUnique({
+      where: { id },
+      include: {
+        items: {
+          orderBy: { addedAt: 'asc' }
+        }
+      }
+    });
+
+    if (!watchlist) {
+      return res.status(404).json({ error: 'Watchlist not found.' });
+    }
+
+    // Fetch data for all symbols in parallel
+    const enrichedItems = await Promise.all(
+      watchlist.items.map(async (item) => {
+        const enriched = await fetchEnrichedSymbolData(item.symbol);
+        return {
+          id: item.id,
+          watchlistId: item.watchlistId,
+          addedAt: item.addedAt,
+          ...enriched
+        };
+      })
+    );
+
+    res.json({
+      watchlist: {
+        id: watchlist.id,
+        name: watchlist.name,
+        isDefault: watchlist.isDefault,
+        createdAt: watchlist.createdAt
+      },
+      items: enrichedItems
+    });
+  } catch (error: any) {
+    logToFile(`Error fetching watchlist data: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
