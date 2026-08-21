@@ -1,21 +1,30 @@
 import { useState, useEffect, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import {
   BarChart3, Building2, DollarSign, Percent, Search,
   TrendingDown, TrendingUp, Loader2, Activity,
   Newspaper, LineChart, PieChart, ActivitySquare,
-  Globe, Clock, Sparkles, AlertTriangle, FileText, Download
+  Globe, Clock, Sparkles, AlertTriangle, FileText, Download,
+  SlidersHorizontal, Settings2
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { marketDataService, USE_STREAMING } from '../services/marketData';
 import { useResearchDossier, useAIAnalysis } from '../services/researchData';
 import { tastyStreamer, StreamerData } from '../services/tastytradeStreamer';
+import { useReportPrompts } from '../services/promptService';
+import { PromptManagerModal } from './PromptManagerModal';
+import { useStockNote } from '@/services/noteService';
+import { StockNoteModal } from './StockNoteModal';
+import { AutonomousReport, reportService, useAutonomousReports } from '@/services/reportService';
+import { AutonomousReportsList } from './AutonomousReportsList';
+import { AutonomousReportViewerModal } from './AutonomousReportViewerModal';
 import ReactMarkdown from 'react-markdown';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { toast } from 'sonner';
 
 // Simple debounce hook implementation
 function useDebounceValue<T>(value: T, delay: number): T {
@@ -28,9 +37,25 @@ function useDebounceValue<T>(value: T, delay: number): T {
 }
 
 export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
+  const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
   const debouncedSearch = useDebounceValue(searchQuery, 500);
   const [selectedSymbol, setSelectedSymbol] = useState(initialSymbol || 'AAPL');
+  const [activeDataTab, setActiveDataTab] = useState('overview');
+
+  // Report Prompts State
+  const { data: reportPrompts = [] } = useReportPrompts();
+  const [selectedPromptSlug, setSelectedPromptSlug] = useState<string>('company_research');
+  const [isPromptModalOpen, setIsPromptModalOpen] = useState(false);
+
+  // Saved Autonomous Reports Query
+  const { data: savedReports = [] } = useAutonomousReports(selectedSymbol);
+  const [viewerReport, setViewerReport] = useState<AutonomousReport | null>(null);
+  const [isViewerOpen, setIsViewerOpen] = useState(false);
+
+  // Stock Notes State
+  const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+  const { data: currentStockNote } = useStockNote(selectedSymbol);
 
   useEffect(() => {
     if (initialSymbol) {
@@ -149,24 +174,24 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
   }
 
   const handleAgentGeneration = async () => {
-    if (!selectedSymbol) return;
+    if (!selectedSymbol || isAgentLoading) return;
     setIsAgentLoading(true);
     try {
-      const res = await fetch(`/api/research/autonomous/${selectedSymbol}`);
-      if (!res.ok) throw new Error("Failed to generate report");
+      const activeTemplate = reportPrompts.find(p => p.slug === selectedPromptSlug) || reportPrompts[0];
+      const promptId = activeTemplate ? activeTemplate.id : undefined;
+      const result = await reportService.generateReport(selectedSymbol, selectedPromptSlug, promptId);
 
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `research_report_${selectedSymbol}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (error) {
+      toast.success(`Autonomous report generated for ${selectedSymbol}!`);
+      await queryClient.invalidateQueries({ queryKey: ['autonomousReports', selectedSymbol] });
+      await queryClient.invalidateQueries({ queryKey: ['allAutonomousReports'] });
+
+      if (result?.report) {
+        setViewerReport(result.report);
+        setIsViewerOpen(true);
+      }
+    } catch (error: any) {
       console.error(error);
-      alert("Failed to generate PDF Report");
+      toast.error(`Failed to generate report: ${error.message || 'Please check your Gemini / OpenRouter API key in Settings.'}`);
     } finally {
       setIsAgentLoading(false);
     }
@@ -186,16 +211,90 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
           </p>
         </div>
 
-        <div>
+        {/* Action Controls: Report Type Selector + Customize Prompts + Reports Button + Generate Button */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Report Type Selector */}
+          <div className="flex items-center gap-1.5 bg-card/80 border border-border/80 rounded-xl px-3 py-1.5 shadow-sm">
+            <FileText className="w-4 h-4 text-purple-400 shrink-0" />
+            <select
+              value={selectedPromptSlug}
+              onChange={(e) => setSelectedPromptSlug(e.target.value)}
+              className="bg-transparent text-xs font-semibold text-foreground focus:outline-none cursor-pointer pr-1"
+            >
+              {reportPrompts.map((p) => (
+                <option key={p.id} value={p.slug} className="bg-popover text-popover-foreground">
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Manage Prompts Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsPromptModalOpen(true)}
+            className="text-xs gap-1.5 h-9 border-border/80 hover:bg-accent/40"
+            title="Manage and customize report prompt instructions"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
+            <span className="hidden sm:inline">Customize Prompts</span>
+          </Button>
+
+          {/* View Saved Reports Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setActiveDataTab('reports')}
+            className={cn(
+              "text-xs gap-1.5 h-9 border-border/80 transition-all",
+              savedReports.length > 0
+                ? "bg-purple-500/15 text-purple-300 border-purple-500/30 hover:bg-purple-500/25 shadow-[0_0_8px_rgba(168,85,247,0.2)]"
+                : "hover:bg-accent/40 text-muted-foreground hover:text-foreground"
+            )}
+            title={`View ${savedReports.length} saved autonomous reports for ${selectedSymbol}`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+            <span className="font-semibold">
+              {savedReports.length > 0 ? `Reports (${savedReports.length})` : 'AI Reports'}
+            </span>
+          </Button>
+
+          {/* Stock Notes Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsNoteModalOpen(true)}
+            className={cn(
+              "text-xs gap-1.5 h-9 border-border/80 transition-all",
+              currentStockNote
+                ? currentStockNote.sentiment === 'BULLISH'
+                  ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25 shadow-[0_0_8px_rgba(160,185,129,0.2)]"
+                  : currentStockNote.sentiment === 'BEARISH'
+                  ? "bg-rose-500/15 text-rose-400 border-rose-500/30 hover:bg-rose-500/25 shadow-[0_0_8px_rgba(244,63,94,0.2)]"
+                  : "bg-primary/15 text-primary border-primary/30 hover:bg-primary/25 shadow-[0_0_8px_rgba(99,102,241,0.2)]"
+                : "hover:bg-accent/40 text-muted-foreground hover:text-foreground"
+            )}
+            title={
+              currentStockNote
+                ? `Notes on ${selectedSymbol} (${currentStockNote.sentiment || 'Notes'})`
+                : `Write notes for ${selectedSymbol}`
+            }
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span className="font-semibold">{currentStockNote ? `${selectedSymbol} Notes` : 'Notes'}</span>
+          </Button>
+
+          {/* Generate Report Button */}
           <Button
             onClick={handleAgentGeneration}
             disabled={isAgentLoading || !selectedSymbol}
-            className="flex items-center gap-2 bg-gradient-to-r from-primary/80 to-primary hover:from-primary hover:to-primary text-primary-foreground shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all font-semibold"
+            className="h-9 flex items-center gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/40 transition-all font-semibold text-xs px-4"
           >
             {isAgentLoading ? (
-              <><Loader2 className="w-4 h-4 animate-spin" /> Compiling Autonomous Deep-Dive PDF...</>
+              <><Loader2 className="w-4 h-4 animate-spin" /> Compiling AI Report...</>
             ) : (
-              <><FileText className="w-4 h-4" /> Generate Autonomous Report</>
+              <><Sparkles className="w-4 h-4 text-amber-300" /> Generate Report</>
             )}
           </Button>
         </div>
@@ -400,14 +499,23 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
               </Card>
 
               {/* Data Tabs */}
-              <Tabs defaultValue="overview" className="w-full">
-                <TabsList className="grid w-full grid-cols-5 h-12 items-center bg-background/50 p-1 border border-border/50 backdrop-blur-md rounded-xl">
-                  <TabsTrigger value="overview" className="rounded-lg py-2 data-[state=active]:bg-primary/20 data-[state=active]:text-primary transition-all">Overview</TabsTrigger>
-                  <TabsTrigger value="fundamentals" className="rounded-lg py-2 data-[state=active]:bg-primary/20 data-[state=active]:text-primary transition-all">Fundamentals</TabsTrigger>
-                  <TabsTrigger value="financials" className="rounded-lg py-2 data-[state=active]:bg-primary/20 data-[state=active]:text-primary transition-all">Financials</TabsTrigger>
-                  <TabsTrigger value="news" className="rounded-lg py-2 data-[state=active]:bg-primary/20 data-[state=active]:text-primary transition-all">News & Press</TabsTrigger>
-                  <TabsTrigger value="ai-analysis" className="rounded-lg py-2 data-[state=active]:bg-primary/20 data-[state=active]:text-primary transition-all flex items-center gap-2">
-                    <Sparkles className="w-4 h-4" /> AI Analysis
+              <Tabs value={activeDataTab} onValueChange={setActiveDataTab} className="w-full">
+                <TabsList className="grid w-full grid-cols-3 sm:grid-cols-6 h-auto sm:h-12 items-center bg-background/50 p-1 border border-border/50 backdrop-blur-md rounded-xl gap-1">
+                  <TabsTrigger value="overview" className="rounded-lg py-2 data-[state=active]:bg-primary/20 data-[state=active]:text-primary transition-all text-xs font-semibold">Overview</TabsTrigger>
+                  <TabsTrigger value="fundamentals" className="rounded-lg py-2 data-[state=active]:bg-primary/20 data-[state=active]:text-primary transition-all text-xs font-semibold">Fundamentals</TabsTrigger>
+                  <TabsTrigger value="financials" className="rounded-lg py-2 data-[state=active]:bg-primary/20 data-[state=active]:text-primary transition-all text-xs font-semibold">Financials</TabsTrigger>
+                  <TabsTrigger value="news" className="rounded-lg py-2 data-[state=active]:bg-primary/20 data-[state=active]:text-primary transition-all text-xs font-semibold">News & Press</TabsTrigger>
+                  <TabsTrigger value="ai-analysis" className="rounded-lg py-2 data-[state=active]:bg-primary/20 data-[state=active]:text-primary transition-all flex items-center justify-center gap-1.5 text-xs font-semibold">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-300" /> AI Summary
+                  </TabsTrigger>
+                  <TabsTrigger value="reports" className="rounded-lg py-2 data-[state=active]:bg-purple-500/20 data-[state=active]:text-purple-300 transition-all flex items-center justify-center gap-1.5 text-xs font-semibold">
+                    <FileText className="w-3.5 h-3.5 text-purple-400" />
+                    <span>AI Reports</span>
+                    {savedReports.length > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full bg-purple-500/25 text-purple-300 text-[10px] font-mono font-bold">
+                        {savedReports.length}
+                      </span>
+                    )}
                   </TabsTrigger>
                 </TabsList>
 
@@ -714,6 +822,11 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
                     </CardContent>
                   </Card>
                 </TabsContent>
+
+                {/* AUTONOMOUS REPORTS TAB */}
+                <TabsContent value="reports" className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                  <AutonomousReportsList symbol={selectedSymbol} />
+                </TabsContent>
               </Tabs>
             </>
           ) : (
@@ -727,6 +840,38 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
           )}
         </div>
       </div>
+
+      {/* Prompt Manager Modal */}
+      <PromptManagerModal
+        open={isPromptModalOpen}
+        onOpenChange={setIsPromptModalOpen}
+        onSelectPrompt={(t) => setSelectedPromptSlug(t.slug)}
+      />
+
+      {/* Stock Note Modal */}
+      <StockNoteModal
+        isOpen={isNoteModalOpen}
+        onClose={() => setIsNoteModalOpen(false)}
+        symbol={selectedSymbol}
+        stockName={quote?.name || dossier?.header?.shortName}
+        currentPrice={currentPrice || quote?.price}
+      />
+
+      {/* Autonomous Report Viewer Modal */}
+      <AutonomousReportViewerModal
+        report={viewerReport}
+        isOpen={isViewerOpen}
+        onClose={() => {
+          setIsViewerOpen(false);
+          setViewerReport(null);
+        }}
+        onDeleteSuccess={() => {
+          queryClient.invalidateQueries({ queryKey: ['autonomousReports', selectedSymbol] });
+          queryClient.invalidateQueries({ queryKey: ['allAutonomousReports'] });
+        }}
+      />
     </div>
   );
 }
+
+

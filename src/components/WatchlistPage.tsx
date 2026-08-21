@@ -27,7 +27,8 @@ import {
   Clock,
   Activity,
   Globe,
-  LineChart
+  LineChart,
+  Bell
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -53,6 +54,17 @@ import {
 } from '@/services/watchlistService';
 import { marketDataService } from '@/services/marketData';
 import { useResearchDossier, useAIAnalysis } from '@/services/researchData';
+import { useAlerts } from '@/services/alertService';
+import { useReportPrompts } from '@/services/promptService';
+import { useStockNotesMap } from '@/services/noteService';
+import { AutonomousReport, reportService, useAutonomousReports } from '@/services/reportService';
+import { AutonomousReportsList } from './AutonomousReportsList';
+import { AutonomousReportViewerModal } from './AutonomousReportViewerModal';
+import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { PriceAlertModal } from './PriceAlertModal';
+import { StockNoteModal } from './StockNoteModal';
+import ReactMarkdown from 'react-markdown';
 
 type SortField =
   | 'symbol'
@@ -109,9 +121,26 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
   const [sortField, setSortField] = useState<SortField>('symbol');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
+  // Price Alerts Query & Modal State
+  const { data: allAlerts = [] } = useAlerts();
+  const [isAlertModalOpen, setIsAlertModalOpen] = useState(false);
+  const [alertModalStock, setAlertModalStock] = useState<{ symbol: string; price: number; name: string } | null>(null);
+
+  // Stock Notes State & Map
+  const { notesMap } = useStockNotesMap();
+  const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+  const [noteModalStock, setNoteModalStock] = useState<{ symbol: string; price?: number; name?: string } | null>(null);
+
   // Selected Stock for Research Side Drawer
   const [drawerSymbol, setDrawerSymbol] = useState<string | null>(null);
+  const [drawerTab, setDrawerTab] = useState('overview');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const { data: reportPrompts = [] } = useReportPrompts();
+  const [drawerReportSlug, setDrawerReportSlug] = useState('company_research');
+  const { data: drawerSavedReports = [] } = useAutonomousReports(drawerSymbol || undefined);
+  const [drawerReportModalReport, setDrawerReportModalReport] = useState<AutonomousReport | null>(null);
+  const [isDrawerReportModalOpen, setIsDrawerReportModalOpen] = useState(false);
+  const queryClient = useQueryClient();
 
   // Watchlist Modal / Form States
   const [isCreatingWatchlist, setIsCreatingWatchlist] = useState(false);
@@ -238,27 +267,24 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
 
   // Generate Autonomous PDF Report from inside the drawer
   const handleGenerateAutonomousReport = async (symbol: string) => {
-    if (!symbol) return;
+    if (!symbol || isGeneratingPdf) return;
     setIsGeneratingPdf(true);
     try {
-      const res = await fetch(`/api/research/autonomous/${symbol}`);
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to generate report');
-      }
+      const activeTemplate = reportPrompts.find(p => p.slug === drawerReportSlug) || reportPrompts[0];
+      const promptId = activeTemplate ? activeTemplate.id : undefined;
+      const result = await reportService.generateReport(symbol, drawerReportSlug, promptId);
 
-      const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `research_report_${symbol}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
+      toast.success(`Autonomous report generated for ${symbol}!`);
+      await queryClient.invalidateQueries({ queryKey: ['autonomousReports', symbol] });
+      await queryClient.invalidateQueries({ queryKey: ['allAutonomousReports'] });
+
+      if (result?.report) {
+        setDrawerReportModalReport(result.report);
+        setIsDrawerReportModalOpen(true);
+      }
     } catch (error: any) {
       console.error(error);
-      alert(`Failed to generate PDF Report: ${error.message || 'Unknown error'}`);
+      toast.error(`Failed to generate report: ${error.message || 'Please check your Gemini / OpenRouter API key in Settings.'}`);
     } finally {
       setIsGeneratingPdf(false);
     }
@@ -775,6 +801,10 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
               ) : (
                 processedItems.map((item, index) => {
                   const isPositive = item.change >= 0;
+                  const activeAlert = allAlerts.find(
+                    (a) => a.symbol.toUpperCase() === item.symbol.toUpperCase() && a.status === 'ACTIVE'
+                  );
+                  const stockNote = notesMap[item.symbol.toUpperCase()];
 
                   return (
                     <tr
@@ -792,8 +822,30 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
                             </span>
                           </div>
                           <div>
-                            <div className="font-bold text-foreground group-hover:text-primary transition-colors flex items-center gap-1.5">
+                            <div className="font-bold text-foreground group-hover:text-primary transition-colors flex items-center gap-1.5 flex-wrap">
                               <span className="font-mono text-base">{item.symbol}</span>
+                              {stockNote && (
+                                <Badge
+                                  variant="outline"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setNoteModalStock({ symbol: item.symbol, name: item.name, price: item.price });
+                                    setIsNoteModalOpen(true);
+                                  }}
+                                  className={cn(
+                                    "text-[10px] px-1.5 py-0 cursor-pointer transition-all flex items-center gap-1",
+                                    stockNote.sentiment === 'BULLISH'
+                                      ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25 shadow-[0_0_8px_rgba(16,185,129,0.15)]"
+                                      : stockNote.sentiment === 'BEARISH'
+                                      ? "bg-rose-500/15 text-rose-400 border-rose-500/30 hover:bg-rose-500/25 shadow-[0_0_8px_rgba(244,63,94,0.15)]"
+                                      : "bg-primary/15 text-primary border-primary/30 hover:bg-primary/25 shadow-[0_0_8px_rgba(99,102,241,0.15)]"
+                                  )}
+                                  title={`Note: ${stockNote.content.slice(0, 120)}...`}
+                                >
+                                  <FileText className="w-2.5 h-2.5" />
+                                  {stockNote.sentiment || 'Notes'}
+                                </Badge>
+                              )}
                               <Badge variant="outline" className="text-[10px] px-1 py-0 bg-primary/10 text-primary border-primary/30 opacity-0 group-hover:opacity-100 transition-opacity">
                                 View Dossier
                               </Badge>
@@ -908,6 +960,58 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
                       {/* Actions */}
                       <td className="p-4 text-center">
                         <div className="flex items-center justify-center gap-1.5">
+                          {/* Stock Notes Button */}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className={cn(
+                              "h-8 w-8 transition-colors",
+                              stockNote
+                                ? stockNote.sentiment === 'BULLISH'
+                                  ? "text-emerald-400 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 shadow-[0_0_8px_rgba(16,185,129,0.2)]"
+                                  : stockNote.sentiment === 'BEARISH'
+                                  ? "text-rose-400 bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 shadow-[0_0_8px_rgba(244,63,94,0.2)]"
+                                  : "text-primary bg-primary/15 hover:bg-primary/25 border border-primary/30 shadow-[0_0_8px_rgba(99,102,241,0.2)]"
+                                : "text-muted-foreground hover:text-primary hover:bg-primary/10"
+                            )}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setNoteModalStock({ symbol: item.symbol, price: item.price, name: item.name });
+                              setIsNoteModalOpen(true);
+                            }}
+                            title={
+                              stockNote
+                                ? `Notes on ${item.symbol} (${stockNote.sentiment || 'Notes'})`
+                                : `Write Notes for ${item.symbol}`
+                            }
+                          >
+                            <FileText className="w-4 h-4" />
+                          </Button>
+
+                          {/* Price Alert Button */}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className={cn(
+                              "h-8 w-8 transition-colors",
+                              activeAlert
+                                ? "text-amber-400 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 shadow-[0_0_8px_rgba(245,158,11,0.2)]"
+                                : "text-muted-foreground hover:text-amber-400 hover:bg-amber-500/10"
+                            )}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAlertModalStock({ symbol: item.symbol, price: item.price, name: item.name });
+                              setIsAlertModalOpen(true);
+                            }}
+                            title={
+                              activeAlert
+                                ? `Active Alert: Target $${activeAlert.targetPrice.toFixed(2)} (${activeAlert.condition})`
+                                : 'Set Price Alert'
+                            }
+                          >
+                            <Bell className={cn("w-4 h-4", activeAlert && "fill-amber-400/30")} />
+                          </Button>
+
                           <Button
                             variant="ghost"
                             size="icon"
@@ -1013,37 +1117,62 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
                         </div>
                       </div>
 
-                      {/* Autonomous PDF Report Button */}
-                      <Button
-                        variant="glow"
-                        size="sm"
-                        onClick={() => handleGenerateAutonomousReport(drawerSymbol)}
-                        disabled={isGeneratingPdf}
-                        className="gap-2 bg-gradient-to-r from-primary to-purple-600 text-white font-semibold shadow-lg shrink-0"
-                      >
-                        {isGeneratingPdf ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            Synthesizing Agent Report...
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="w-4 h-4" />
-                            Autonomous PDF Dossier
-                          </>
-                        )}
-                      </Button>
+                      {/* Report Type Selector & Autonomous PDF Report Button */}
+                      <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                        <select
+                          value={drawerReportSlug}
+                          onChange={(e) => setDrawerReportSlug(e.target.value)}
+                          className="bg-card/80 border border-border/80 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-foreground focus:outline-none cursor-pointer h-9 shrink-0 max-w-[160px]"
+                        >
+                          {reportPrompts.map((p) => (
+                            <option key={p.id} value={p.slug} className="bg-popover text-popover-foreground">
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+
+                        <Button
+                          variant="glow"
+                          size="sm"
+                          onClick={() => handleGenerateAutonomousReport(drawerSymbol)}
+                          disabled={isGeneratingPdf}
+                          className="gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold shadow-lg shrink-0 h-9 text-xs"
+                        >
+                          {isGeneratingPdf ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Synthesizing Report...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                              Generate Report
+                            </>
+                          )}
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
 
                   {/* Drawer Tabs */}
-                  <Tabs defaultValue="overview" className="w-full">
-                    <TabsList className="grid w-full grid-cols-4 h-10 items-center bg-card/60 p-1 border border-border/50 rounded-xl">
-                      <TabsTrigger value="overview" className="text-xs rounded-lg py-1.5 data-[state=active]:bg-primary/20 data-[state=active]:text-primary">Overview</TabsTrigger>
-                      <TabsTrigger value="fundamentals" className="text-xs rounded-lg py-1.5 data-[state=active]:bg-primary/20 data-[state=active]:text-primary">Fundamentals</TabsTrigger>
-                      <TabsTrigger value="news" className="text-xs rounded-lg py-1.5 data-[state=active]:bg-primary/20 data-[state=active]:text-primary">News</TabsTrigger>
-                      <TabsTrigger value="ai" className="text-xs rounded-lg py-1.5 data-[state=active]:bg-primary/20 data-[state=active]:text-primary flex items-center gap-1">
+                  <Tabs value={drawerTab} onValueChange={setDrawerTab} className="w-full">
+                    <TabsList className="grid w-full grid-cols-3 sm:grid-cols-6 h-auto sm:h-10 items-center bg-card/60 p-1 border border-border/50 rounded-xl gap-1">
+                      <TabsTrigger value="overview" className="text-xs rounded-lg py-1.5 data-[state=active]:bg-primary/20 data-[state=active]:text-primary font-semibold">Overview</TabsTrigger>
+                      <TabsTrigger value="fundamentals" className="text-xs rounded-lg py-1.5 data-[state=active]:bg-primary/20 data-[state=active]:text-primary font-semibold">Fundamentals</TabsTrigger>
+                      <TabsTrigger value="news" className="text-xs rounded-lg py-1.5 data-[state=active]:bg-primary/20 data-[state=active]:text-primary font-semibold">News</TabsTrigger>
+                      <TabsTrigger value="ai" className="text-xs rounded-lg py-1.5 data-[state=active]:bg-primary/20 data-[state=active]:text-primary flex items-center justify-center gap-1 font-semibold">
                         <Sparkles className="w-3 h-3 text-purple-400" /> AI
+                      </TabsTrigger>
+                      <TabsTrigger value="reports" className="text-xs rounded-lg py-1.5 data-[state=active]:bg-purple-500/20 data-[state=active]:text-purple-300 flex items-center justify-center gap-1 font-semibold">
+                        <FileText className="w-3 h-3 text-purple-400" /> Reports
+                        {drawerSavedReports.length > 0 && (
+                          <span className="ml-1 px-1 py-0.2 rounded-full bg-purple-500/20 text-purple-300 text-[9px] font-mono font-bold">
+                            {drawerSavedReports.length}
+                          </span>
+                        )}
+                      </TabsTrigger>
+                      <TabsTrigger value="notes" className="text-xs rounded-lg py-1.5 data-[state=active]:bg-primary/20 data-[state=active]:text-primary flex items-center justify-center gap-1 font-semibold">
+                        <FileText className="w-3 h-3 text-primary" /> Notes
                       </TabsTrigger>
                     </TabsList>
 
@@ -1212,8 +1341,121 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
                       ) : (
                         <Card className="bg-card/40 border-border/60 p-4 text-center">
                           <Sparkles className="w-6 h-6 text-purple-400 mx-auto mb-2" />
-                          <p className="text-xs text-muted-foreground">Click "Autonomous PDF Dossier" above to generate a full research report.</p>
+                          <p className="text-xs text-muted-foreground">Click "Generate Report" above to compile deep-dive AI analysis.</p>
                         </Card>
+                      )}
+                    </TabsContent>
+
+                    {/* Notes & Thesis Tab Content */}
+                    <TabsContent value="notes" className="space-y-4 pt-2">
+                        {(() => {
+                          const note = drawerSymbol ? notesMap[drawerSymbol.toUpperCase()] : null;
+                          return (
+                            <Card className="bg-card/70 border-border/60 p-5 space-y-4 shadow-md">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                                    <FileText className="w-4 h-4" />
+                                  </div>
+                                  <div>
+                                    <h4 className="font-bold text-sm text-foreground">
+                                      Investment Notes & Thesis for {drawerSymbol}
+                                    </h4>
+                                    <p className="text-[11px] text-muted-foreground">
+                                      {note?.updatedAt
+                                        ? `Last updated on ${new Date(note.updatedAt).toLocaleDateString()}`
+                                        : 'No notes saved yet'}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <Button
+                                  variant="glow"
+                                  size="sm"
+                                  className="h-8 px-3 text-xs bg-primary text-primary-foreground gap-1.5"
+                                  onClick={() => {
+                                    if (drawerSymbol) {
+                                      setNoteModalStock({
+                                        symbol: drawerSymbol,
+                                        name: drawerQuote?.shortName,
+                                        price: drawerQuote?.regularMarketPrice,
+                                      });
+                                      setIsNoteModalOpen(true);
+                                    }
+                                  }}
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                  {note ? 'Edit Notes' : 'Write Note'}
+                                </Button>
+                              </div>
+
+                              {note ? (
+                                <div className="space-y-3">
+                                  {/* Badges */}
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    {note.sentiment && (
+                                      <Badge
+                                        variant="outline"
+                                        className={cn(
+                                          "text-xs px-2 py-0.5 font-semibold",
+                                          note.sentiment === 'BULLISH'
+                                            ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/40"
+                                            : note.sentiment === 'BEARISH'
+                                            ? "bg-rose-500/20 text-rose-400 border-rose-500/40"
+                                            : "bg-blue-500/20 text-blue-400 border-blue-500/40"
+                                        )}
+                                      >
+                                        {note.sentiment === 'BULLISH' && <TrendingUp className="w-3 h-3 mr-1 inline" />}
+                                        {note.sentiment === 'BEARISH' && <TrendingDown className="w-3 h-3 mr-1 inline" />}
+                                        {note.sentiment}
+                                      </Badge>
+                                    )}
+                                    {note.tags &&
+                                      note.tags.split(',').map((t, idx) => (
+                                        <Badge key={idx} variant="secondary" className="text-xs px-2 py-0.5 bg-primary/10 text-primary">
+                                          {t.trim()}
+                                        </Badge>
+                                      ))}
+                                  </div>
+
+                                  {/* Note Content Rendered in Markdown */}
+                                  <div className="p-4 rounded-xl bg-background/60 border border-border/60 prose prose-invert prose-sm max-w-none">
+                                    <ReactMarkdown>{note.content}</ReactMarkdown>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="py-8 text-center bg-background/30 rounded-xl border border-dashed border-border/60 space-y-2">
+                                  <p className="text-xs text-muted-foreground">
+                                    Keep track of your conviction, catalysts, price targets, and trade plan for {drawerSymbol}.
+                                  </p>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 text-xs"
+                                    onClick={() => {
+                                      if (drawerSymbol) {
+                                        setNoteModalStock({
+                                          symbol: drawerSymbol,
+                                          name: drawerQuote?.shortName,
+                                          price: drawerQuote?.regularMarketPrice,
+                                        });
+                                        setIsNoteModalOpen(true);
+                                      }
+                                    }}
+                                  >
+                                    <Plus className="w-3.5 h-3.5 mr-1" /> Add First Note
+                                  </Button>
+                                </div>
+                              )}
+                            </Card>
+                          );
+                        })()}
+                    </TabsContent>
+
+                    {/* AI REPORTS */}
+                    <TabsContent value="reports" className="mt-4 space-y-4">
+                      {drawerSymbol && (
+                        <AutonomousReportsList symbol={drawerSymbol} compact={true} />
                       )}
                     </TabsContent>
                   </Tabs>
@@ -1223,8 +1465,43 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
               )}
             </>
           )}
-        </SheetContent>
-      </Sheet>
-    </div>
-  );
-}
+            </SheetContent>
+          </Sheet>
+
+          {/* Price Alert Modal */}
+          <PriceAlertModal
+            open={isAlertModalOpen}
+            onOpenChange={setIsAlertModalOpen}
+            initialSymbol={alertModalStock?.symbol || ''}
+            initialPrice={alertModalStock?.price || 0}
+            initialStockName={alertModalStock?.name || ''}
+          />
+
+          {/* Stock Note Modal */}
+          <StockNoteModal
+            isOpen={isNoteModalOpen}
+            onClose={() => setIsNoteModalOpen(false)}
+            symbol={noteModalStock?.symbol || ''}
+            stockName={noteModalStock?.name}
+            currentPrice={noteModalStock?.price}
+          />
+
+          {/* Autonomous Report Viewer Modal */}
+          <AutonomousReportViewerModal
+            report={drawerReportModalReport}
+            isOpen={isDrawerReportModalOpen}
+            onClose={() => {
+              setIsDrawerReportModalOpen(false);
+              setDrawerReportModalReport(null);
+            }}
+            onDeleteSuccess={() => {
+              if (drawerSymbol) {
+                queryClient.invalidateQueries({ queryKey: ['autonomousReports', drawerSymbol] });
+              }
+              queryClient.invalidateQueries({ queryKey: ['allAutonomousReports'] });
+            }}
+          />
+        </div>
+      );
+    }
+

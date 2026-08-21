@@ -234,10 +234,7 @@ export const marketDataService = {
             if (isOccSymbol && tastyData) {
                 return mapTastyQuoteToStockQuote(symbol, tastyData);
             } else if (isOccSymbol && !tastyData) {
-                // Mock Option Data Fallback
-                return {
-                    symbol, name: symbol, price: 5.00, changesPercentage: 0, change: 0, dayLow: 5.00, dayHigh: 5.00, yearHigh: 5.00, yearLow: 5.00, marketCap: 0, priceAvg50: 0, priceAvg200: 0, volume: 0, avgVolume: 0, exchange: 'MOCK', open: 5.00, previousClose: 5.00, eps: 0, pe: 0, earningsAnnouncement: '', sharesOutstanding: 0, timestamp: Date.now() / 1000, source: 'Mock Data (Tasty Offline)'
-                };
+                return null;
             }
 
             if (yahooData && yahooData.currentPrice !== undefined) {

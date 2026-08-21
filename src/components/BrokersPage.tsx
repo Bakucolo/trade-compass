@@ -2,18 +2,23 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useIBKRStatus, useIBKRPortfolio } from '../services/ibkr';
 import { useTastytradePositions } from '../services/tastytrade';
+import { usePortfolioBalances } from '../services/portfolioBalanceService';
 import { marketDataService, StockQuote } from '../services/marketData';
 import { convertIbkrToOcc } from '../utils/optionUtils';
 import { PortfolioSummary } from './portfolio/PortfolioSummary';
 import { HoldingsTable } from './portfolio/HoldingsTable';
+import { PortfolioAuditModal } from './portfolio/PortfolioAuditModal';
 import { UnifiedPosition } from './portfolio/types';
 
 import { Button } from './ui/button';
-import { RefreshCw, Plus, Settings } from 'lucide-react';
+import { RefreshCw, Plus, Settings, Wallet, Layers, ShieldAlert, Sparkles } from 'lucide-react';
 import { useToast } from './ui/use-toast';
 
 export function BrokersPage() {
   const { toast } = useToast();
+
+  // --- Real-time Broker Balances & Buying Power ---
+  const { data: balancesData } = usePortfolioBalances();
 
   // --- IBKR State ---
   const { data: ibStatus } = useIBKRStatus();
@@ -31,16 +36,20 @@ export function BrokersPage() {
     try {
       const saved = localStorage.getItem('finance_liveQuotes');
       if (saved) {
-        return new Map(JSON.parse(saved));
+        const parsed: [string, StockQuote][] = JSON.parse(saved);
+        // Filter out legacy mock data
+        const cleanEntries = parsed.filter(([_, q]) => q && q.source !== 'Mock Data (Tasty Offline)' && q.exchange !== 'MOCK');
+        return new Map(cleanEntries);
       }
     } catch (e) { }
     return new Map();
   });
 
   // Privacy Mode (Persisted)
-  const [isPrivacyMode, setIsPrivacyMode] = useState(() => {
+  const [isPrivacyMode, setIsPrivacyMode] = useState<boolean>(() => {
     return localStorage.getItem('isPrivacyMode') !== 'false'; // Default true
   });
+  const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
 
   const togglePrivacyMode = () => {
     setIsPrivacyMode(prev => {
@@ -102,25 +111,8 @@ export function BrokersPage() {
         unifiedSymbol = p.brokerSpecificId;
       }
 
-      // Check for live quote override
-      const quote = liveQuotes.get(unifiedSymbol);
-      const currentPrice = quote?.price || p.currentPrice || 0;
-
       const multiplier = isOption ? 100 : 1;
-
-      const marketValue = currentPrice * p.quantity * multiplier;
       const costBasis = p.averageCost * p.quantity * multiplier;
-
-      const unrealizedPL = marketValue - costBasis;
-      const unrealizedPLPercent = costBasis !== 0 ? (unrealizedPL / Math.abs(costBasis)) * 100 : 0;
-
-      // Day P/L from quote if available, else DB
-      const dayChangePerShare = quote?.change || 0;
-      // If we have a live quote, calculate Day PL dynamicially. 
-      // Note: This relies on quote.change being correct. 
-      // If no live quote, fall back to DB p.dayPnL
-      const dayChange = quote ? (dayChangePerShare * p.quantity * multiplier) : p.dayPnL;
-      const dayChangePercent = quote ? (quote.changesPercentage || 0) : p.dayPnLPercent;
 
       const derivedUnderlyingSymbol = p.underlyingSymbol || (isOption ? p.symbol : undefined);
       const underlyingQuote = derivedUnderlyingSymbol ? liveQuotes.get(derivedUnderlyingSymbol) : undefined;
@@ -133,6 +125,65 @@ export function BrokersPage() {
           underlyingPrice = stockHolding.currentPrice;
         }
       }
+
+      // Priority 1: Official broker DB values (audited market value and unrealized PnL)
+      let currentPrice = p.currentPrice > 0 ? p.currentPrice : (p.quantity !== 0 && p.marketValue ? Math.abs(p.marketValue / (p.quantity * multiplier)) : p.averageCost);
+      let marketValue = p.marketValue || 0;
+      let unrealizedPL = p.unrealizedPnL || 0;
+      let unrealizedPLPercent = p.unrealizedPnLPercent || 0;
+
+      // If we have live quote and position has no DB marketValue, or for live USD stock updating:
+      const quote = liveQuotes.get(unifiedSymbol);
+      const isUSD = !p.currency || p.currency === 'USD';
+
+      if (p.marketValue !== 0 || p.unrealizedPnL !== 0) {
+        // Use verified broker values from database
+        marketValue = p.marketValue;
+        unrealizedPL = p.unrealizedPnL;
+        // Accurate cost basis: |marketValue - unrealizedPL|
+        const costBasisAccurate = Math.abs(marketValue - unrealizedPL);
+        unrealizedPLPercent = p.unrealizedPnLPercent !== 0 && Math.abs(p.unrealizedPnLPercent) > 1
+          ? p.unrealizedPnLPercent
+          : (costBasisAccurate > 0 ? (unrealizedPL / costBasisAccurate) * 100 : 0);
+        
+        if (quote && quote.price > 0 && isUSD && !isOption) {
+          // For US stocks, can reflect latest live price tick
+          currentPrice = quote.price;
+        } else if (p.currentPrice > 0) {
+          currentPrice = p.currentPrice;
+        }
+      } else if (quote && quote.price > 0 && isUSD) {
+        currentPrice = quote.price;
+        marketValue = currentPrice * p.quantity * multiplier;
+        unrealizedPL = marketValue - costBasis;
+        unrealizedPLPercent = costBasis !== 0 ? (unrealizedPL / Math.abs(costBasis)) * 100 : 0;
+      } else if (p.currentPrice > 0) {
+        currentPrice = p.currentPrice;
+        marketValue = currentPrice * p.quantity * multiplier;
+        unrealizedPL = marketValue - costBasis;
+        unrealizedPLPercent = costBasis !== 0 ? (unrealizedPL / Math.abs(costBasis)) * 100 : 0;
+      } else {
+        // Intrinsic estimate fallback if underlying price is known and option is ITM
+        if (isOption && underlyingPrice && p.strikePrice) {
+          const isCall = p.optionType === 'C' || p.optionType === 'Call';
+          const intrinsic = isCall ? Math.max(0, underlyingPrice - p.strikePrice) : Math.max(0, p.strikePrice - underlyingPrice);
+          if (intrinsic > 0) {
+            currentPrice = Math.max(p.averageCost || 0, intrinsic);
+          } else {
+            currentPrice = p.averageCost || 0;
+          }
+        } else {
+          currentPrice = p.averageCost || 0;
+        }
+        marketValue = currentPrice * p.quantity * multiplier;
+        unrealizedPL = marketValue - costBasis;
+        unrealizedPLPercent = costBasis !== 0 ? (unrealizedPL / Math.abs(costBasis)) * 100 : 0;
+      }
+
+      // Day P/L from quote if available, else DB
+      const dayChangePerShare = quote?.change || 0;
+      const dayChange = (quote && isUSD) ? (dayChangePerShare * p.quantity * multiplier) : (p.dayPnL || 0);
+      const dayChangePercent = (quote && isUSD) ? (quote.changesPercentage || 0) : (p.dayPnLPercent || 0);
 
       tempPositions.push({
         id: p.id,
@@ -152,6 +203,7 @@ export function BrokersPage() {
         expiry: p.expiryDate || undefined,
         underlyingSymbol: p.underlyingSymbol || undefined,
         underlyingPrice: underlyingPrice,
+        currency: p.currency || 'USD',
       });
     }
     return tempPositions;
@@ -271,9 +323,18 @@ export function BrokersPage() {
           <p className="text-muted-foreground">Real-time cross-brokerage analysis</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => setIsAuditModalOpen(true)}
+            className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs shadow-md gap-1.5"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            AI Portfolio Analyser
+          </Button>
 
-          <Button variant="outline" size="sm" onClick={refreshPrices} disabled={isAggregating}>
-            <RefreshCw className={`w-4 h-4 mr-2 ${isAggregating ? 'animate-spin' : ''}`} />
+          <Button variant="outline" size="sm" onClick={refreshPrices} disabled={isAggregating} className="text-xs">
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isAggregating ? 'animate-spin' : ''}`} />
             Sync
           </Button>
         </div>
@@ -281,21 +342,23 @@ export function BrokersPage() {
 
       {/* Portfolio Summary Cards */}
       <PortfolioSummary
-        netLiquidValue={totals.netLiquidValue}
-        dailyPL={totals.dailyPL}
+        netLiquidValue={balancesData?.total?.netLiquidatingValue && balancesData.total.netLiquidatingValue > 0 ? balancesData.total.netLiquidatingValue : totals.netLiquidValue}
+        dailyPL={balancesData?.total?.dayPnL !== undefined && balancesData.total.dayPnL !== 0 ? balancesData.total.dayPnL : totals.dailyPL}
         dailyPLPercent={portfolioDailyPercent || 0}
-        unrealizedPL={totals.unrealizedPL}
-        buyingPower={totals.buyingPower}
+        unrealizedPL={balancesData?.total?.unrealizedPnL !== undefined && balancesData.total.unrealizedPnL !== 0 ? balancesData.total.unrealizedPnL : totals.unrealizedPL}
+        buyingPower={balancesData?.total?.buyingPower ?? totals.buyingPower}
         connectedSources={{
           ibkr: isIBConnected,
-          tastytrade: true
+          tastytrade: balancesData?.brokers?.tastytrade?.status === 'connected' || balancesData?.brokers?.tastytrade?.status === 'active' || true
         }}
         isPrivacyMode={isPrivacyMode}
         onTogglePrivacy={togglePrivacyMode}
         accountBreakdown={{
-          ibkr: totals.ibkrTotal,
-          tastytrade: totals.tastyTotal
+          ibkr: balancesData?.brokers?.ibkr?.netLiquidatingValue || totals.ibkrTotal,
+          tastytrade: balancesData?.brokers?.tastytrade?.netLiquidatingValue || totals.tastyTotal
         }}
+        brokerBalances={balancesData?.brokers}
+        portfolioData={balancesData}
       />
 
       {/* Main Holdings Table */}
@@ -305,6 +368,18 @@ export function BrokersPage() {
         onRefresh={refreshPrices}
         isPrivacyMode={isPrivacyMode}
       />
+
+      {/* AI Portfolio Tactical Audit & Risk Modal */}
+      {isAuditModalOpen && (
+        <PortfolioAuditModal
+          isOpen={isAuditModalOpen}
+          onClose={() => setIsAuditModalOpen(false)}
+          positions={unifiedPositions}
+          balancesData={balancesData}
+          totals={totals}
+          isPrivacyMode={isPrivacyMode}
+        />
+      )}
 
       <div className="text-xs text-muted-foreground text-center pt-4">
         Last Updated: {lastUpdated.toLocaleTimeString()}

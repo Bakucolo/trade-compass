@@ -5,6 +5,7 @@ import { WatchlistPage } from '@/components/WatchlistPage';
 import { TradesPage } from '@/components/TradesPage';
 import { IdeasPage } from '@/components/IdeasPage';
 import { ResearchPage } from '@/components/ResearchPage';
+import { AlertsPage } from '@/components/AlertsPage';
 import { BrokersPage } from '@/components/BrokersPage';
 import { SettingsPage } from '@/components/SettingsPage';
 
@@ -20,15 +21,18 @@ const Index = () => {
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard':
-        return <Dashboard />;
+        return <Dashboard onNavigateToResearch={handleNavigateToResearch} />;
       case 'watchlist':
         return <WatchlistPage onNavigateToResearch={handleNavigateToResearch} />;
+      case 'alerts':
+        return <AlertsPage onNavigateToResearch={handleNavigateToResearch} />;
       case 'trades':
         return <TradesPage />;
       case 'ideas':
-        return <IdeasPage />;
+        return <IdeasPage onNavigateToResearch={handleNavigateToResearch} />;
       case 'research':
         return <ResearchPage initialSymbol={researchTicker} />;
+      case 'portfolio':
       case 'brokers':
         return <BrokersPage />;
       case 'settings':

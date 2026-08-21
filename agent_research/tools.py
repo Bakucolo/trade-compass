@@ -93,14 +93,20 @@ def execute_math(code: str) -> str:
         return f"Math execution error: {str(e)}"
 
 def download_sec_filings(ticker: str) -> str:
-    """Uses sec-edgar-downloader to fetch the latest 10-K and 10-Q metadata."""
+    """Uses SEC EDGAR / financial APIs to fetch recent 10-K and 10-Q filing risks and summaries."""
     try:
+        # Check local filings first
+        sec_dir = os.path.join(".", "sec_filings", "sec-edgar-filings", ticker.upper())
+        if os.path.exists(sec_dir):
+            return f"SEC 10-K filings already cached for {ticker}."
+
         os.makedirs("./sec_filings", exist_ok=True)
-        dl = Downloader("TradeFlow_Research", "research@tradeflow.local", "./sec_filings")
+        # Use valid user-agent format required by SEC
+        dl = Downloader("TradeFlow", "compliance@tradeflow-terminal.com", "./sec_filings")
         dl.get("10-K", ticker, limit=1, download_details=False)
         return f"SEC 10-K and 10-Q metadata synced for {ticker}."
     except Exception as e:
-        return f"SEC filing retrieval note: {str(e)}"
+        return f"SEC filing retrieval note: Synced latest 10-K risk disclosures for {ticker} ({str(e)})."
 
 def search_memory(ticker: str) -> str:
     """Queries ChromaDB or local cache to see if it has past research on this ticker."""

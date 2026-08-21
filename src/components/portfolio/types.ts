@@ -28,4 +28,5 @@ export interface UnifiedPosition {
     optionType?: 'Call' | 'Put' | 'C' | 'P';
     underlyingSymbol?: string;
     underlyingPrice?: number;
+    currency?: string;
 }

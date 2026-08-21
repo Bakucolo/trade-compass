@@ -3,33 +3,15 @@ from jinja2 import Environment, FileSystemLoader
 
 def generate_pdf(data: dict, output_filename: str):
     """
-    Renders an HTML template with Jinja2 using provided LLM JSON data,
-    and converts the HTML to a PDF using WeasyPrint or ReportLab fallback.
+    Renders research data to an institutional-grade PDF report using ReportLab
+    with Executive Scorecard, structured financial tables, risk callouts, and typography.
     """
-    # Setup Jinja environment
-    template_dir = os.path.join(os.path.dirname(__file__), 'templates')
-    env = Environment(loader=FileSystemLoader(template_dir))
-    template = env.get_template('report.html')
-
-    # Render HTML string
-    html_out = template.render(**data)
-
-    # Output paths
     output_path = os.path.join(os.path.dirname(__file__), output_filename)
-    
-    # 1. Try WeasyPrint
-    try:
-        from weasyprint import HTML
-        HTML(string=html_out).write_pdf(output_path)
-        print(f"Generated PDF with WeasyPrint successfully at: {output_path}")
-        return output_path
-    except Exception as e:
-        print(f"WeasyPrint unavailable/failed ({e}), falling back to ReportLab...")
+    report_title = data.get('report_title', f"{data.get('ticker', 'ASSET')} Research Report")
 
-    # 2. Try ReportLab
     try:
         from reportlab.lib.pagesizes import A4
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, KeepTogether
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib import colors
 
@@ -44,144 +26,213 @@ def generate_pdf(data: dict, output_filename: str):
 
         styles = getSampleStyleSheet()
         
-        # Custom styles
         title_style = ParagraphStyle(
             'DocTitle',
             parent=styles['Normal'],
             fontName='Helvetica-Bold',
-            fontSize=22,
-            leading=26,
-            textColor=colors.HexColor('#1a365d'),
+            fontSize=18,
+            leading=22,
+            textColor=colors.HexColor('#0f172a'),
             alignment=1,
-            spaceAfter=12
+            spaceAfter=4
+        )
+
+        subtitle_style = ParagraphStyle(
+            'DocSubtitle',
+            parent=styles['Normal'],
+            fontName='Helvetica',
+            fontSize=9.5,
+            leading=13,
+            textColor=colors.HexColor('#64748b'),
+            alignment=1,
+            spaceAfter=10
         )
 
         h1_style = ParagraphStyle(
             'SectionH1',
             parent=styles['Heading1'],
             fontName='Helvetica-Bold',
-            fontSize=15,
-            leading=19,
-            textColor=colors.HexColor('#1a365d'),
-            spaceBefore=10,
-            spaceAfter=6
-        )
-
-        h3_style = ParagraphStyle(
-            'SectionH3',
-            parent=styles['Heading3'],
-            fontName='Helvetica-Bold',
             fontSize=12,
             leading=16,
-            textColor=colors.HexColor('#2b6cb0'),
-            spaceBefore=8,
-            spaceAfter=4
+            textColor=colors.HexColor('#1e293b'),
+            spaceBefore=10,
+            spaceAfter=5
+        )
+
+        h2_style = ParagraphStyle(
+            'SectionH2',
+            parent=styles['Heading2'],
+            fontName='Helvetica-Bold',
+            fontSize=10,
+            leading=14,
+            textColor=colors.HexColor('#334155'),
+            spaceBefore=6,
+            spaceAfter=3
         )
 
         body_style = ParagraphStyle(
             'Body',
             parent=styles['Normal'],
             fontName='Helvetica',
-            fontSize=10,
-            leading=14,
-            textColor=colors.HexColor('#333333'),
-            spaceAfter=6
+            fontSize=9,
+            leading=13,
+            textColor=colors.HexColor('#334155'),
+            spaceAfter=5
         )
 
         bullet_style = ParagraphStyle(
             'Bullet',
             parent=body_style,
-            leftIndent=15,
-            spaceAfter=4
+            leftIndent=12,
+            spaceAfter=2.5
         )
 
-        score = data.get('conviction_score', 50)
+        table_header_style = ParagraphStyle(
+            'TableHeader',
+            parent=styles['Normal'],
+            fontName='Helvetica-Bold',
+            fontSize=8.5,
+            leading=11,
+            textColor=colors.HexColor('#0f172a')
+        )
+
+        table_cell_style = ParagraphStyle(
+            'TableCell',
+            parent=styles['Normal'],
+            fontName='Helvetica',
+            fontSize=8.5,
+            leading=11,
+            textColor=colors.HexColor('#334155')
+        )
+
+        score = data.get('conviction_score', 75)
         if isinstance(score, (int, float)):
             if score >= 70:
-                score_color = '#48bb78'
+                score_color = '#10b981'
             elif score >= 40:
-                score_color = '#ecc94b'
+                score_color = '#f59e0b'
             else:
-                score_color = '#f56565'
+                score_color = '#ef4444'
         else:
-            score_color = '#48bb78'
+            score_color = '#10b981'
 
         score_style = ParagraphStyle(
             'Score',
             parent=styles['Normal'],
             fontName='Helvetica-Bold',
-            fontSize=14,
-            leading=18,
+            fontSize=11,
+            leading=15,
             textColor=colors.white,
             alignment=1
         )
 
         story = []
-
         ticker = data.get('ticker', 'ASSET')
-        story.append(Paragraph(f"{ticker} Research Report", title_style))
+        story.append(Paragraph(f"{report_title}", title_style))
+        story.append(Paragraph(f"Autonomous Equity Research Dossier for {ticker} • Generated on {data.get('date', 'Today')}", subtitle_style))
 
-        # Badge
-        badge_cell = Paragraph(f"Conviction Score: {score}/100", score_style)
+        # Top Badge
+        badge_cell = Paragraph(f"Analyst Conviction Score: {score}/100", score_style)
         badge_table = Table([[badge_cell]], colWidths=[240])
         badge_table.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,-1), colors.HexColor(score_color)),
             ('ALIGN', (0,0), (-1,-1), 'CENTER'),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('TOPPADDING', (0,0), (-1,-1), 6),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ('TOPPADDING', (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
         ]))
         badge_wrapper = Table([[badge_table]], colWidths=['100%'])
         badge_wrapper.setStyle(TableStyle([('ALIGN', (0,0), (-1,-1), 'CENTER')]))
         story.append(badge_wrapper)
-        story.append(Spacer(1, 12))
+        story.append(Spacer(1, 8))
 
         # Executive Summary
-        story.append(Paragraph("Executive Summary", h3_style))
         exec_summary = data.get('executive_summary', [])
-        if isinstance(exec_summary, list):
-            for b in exec_summary:
-                story.append(Paragraph(f"• {b}", bullet_style))
-        else:
-            story.append(Paragraph(str(exec_summary), body_style))
-        story.append(Spacer(1, 8))
+        if exec_summary:
+            story.append(Paragraph("Executive Summary & Key Takeaways", h1_style))
+            if isinstance(exec_summary, list):
+                for b in exec_summary:
+                    story.append(Paragraph(f"• {b}", bullet_style))
+            else:
+                story.append(Paragraph(str(exec_summary), body_style))
+            story.append(Spacer(1, 6))
 
-        # Price vs Macro
-        story.append(Paragraph("Price vs Macro Context", h3_style))
-        story.append(Paragraph(data.get('price_and_macro_context', 'N/A'), body_style))
-        story.append(Spacer(1, 10))
+        # Recursive renderer helper for structured dicts / lists in PDF
+        def render_element(val, current_depth=0):
+            elements = []
+            if val is None:
+                return elements
 
-        # Divider & Company Profile
-        story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#e2e8f0'), spaceBefore=5, spaceAfter=10))
-        story.append(Paragraph("Company Fundamentals", h1_style))
-        story.append(Paragraph("Deep Dive Profile", h3_style))
-        story.append(Paragraph(data.get('company_profile', 'N/A'), body_style))
-        story.append(Spacer(1, 8))
+            if isinstance(val, (str, int, float, bool)):
+                elements.append(Paragraph(str(val), body_style))
+                return elements
 
-        # SEC Risks
-        story.append(Paragraph("SEC Filing Risks & Red Flags", h3_style))
-        story.append(Paragraph(data.get('sec_filing_risks', 'N/A'), body_style))
-        story.append(Spacer(1, 8))
+            if isinstance(val, list):
+                for item in val:
+                    if isinstance(item, (str, int, float, bool)):
+                        elements.append(Paragraph(f"• {item}", bullet_style))
+                    elif isinstance(item, dict):
+                        elements.extend(render_element(item, current_depth + 1))
+                return elements
 
-        # Recent News
-        story.append(Paragraph("Recent News & Sentiment", h3_style))
-        story.append(Paragraph(data.get('recent_news', 'N/A'), body_style))
-        story.append(Spacer(1, 10))
+            if isinstance(val, dict):
+                # Check if it's a simple key-value table
+                is_simple = all(isinstance(v, (str, int, float, bool)) or v is None for v in val.values())
+                if is_simple and len(val) > 1 and current_depth > 0:
+                    table_data = []
+                    for k, v in val.items():
+                        k_clean = k.replace('_', ' ').title()
+                        table_data.append([
+                            Paragraph(f"<b>{k_clean}</b>", table_header_style),
+                            Paragraph(str(v) if v is not None else 'N/A', table_cell_style)
+                        ])
+                    t = Table(table_data, colWidths=[180, 320])
+                    t.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8fafc')),
+                        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
+                        ('TOPPADDING', (0,0), (-1,-1), 3),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+                        ('LEFTPADDING', (0,0), (-1,-1), 6),
+                        ('RIGHTPADDING', (0,0), (-1,-1), 6),
+                    ]))
+                    elements.append(Spacer(1, 2))
+                    elements.append(t)
+                    elements.append(Spacer(1, 4))
+                    return elements
 
-        # Sector Breakdown
-        story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#e2e8f0'), spaceBefore=5, spaceAfter=10))
-        story.append(Paragraph("Market Context", h1_style))
-        story.append(Paragraph("Sector & Industry Breakdown", h3_style))
-        story.append(Paragraph(data.get('sector_breakdown', 'N/A'), body_style))
+                # Nested sub-sections
+                for k, v in val.items():
+                    sub_title = k.replace('_', ' ').title()
+                    elements.append(Paragraph(sub_title, h2_style if current_depth > 0 else h1_style))
+                    elements.extend(render_element(v, current_depth + 1))
+                return elements
+
+            elements.append(Paragraph(str(val), body_style))
+            return elements
+
+        # Unpack report body if nested
+        root_data = data.get('report', data)
+        standard_keys = {'ticker', 'conviction_score', 'executive_summary', 'report_title', 'date', 'sections', 'scorecard'}
+
+        # Render all sections
+        for key, val in root_data.items():
+            if key in standard_keys or val is None:
+                continue
+
+            sec_title = key.replace('_', ' ').title()
+            story.append(HRFlowable(width="100%", thickness=0.8, color=colors.HexColor('#cbd5e1'), spaceBefore=8, spaceAfter=6))
+            story.append(Paragraph(sec_title, h1_style))
+            story.extend(render_element(val, current_depth=1))
+            story.append(Spacer(1, 4))
 
         doc.build(story)
         print(f"Generated PDF with ReportLab successfully at: {output_path}")
         return output_path
-    except Exception as e2:
-        print(f"ReportLab failed ({e2}), falling back to HTML output...")
-
-    # 3. HTML fallback
-    html_path = output_path.replace('.pdf', '.html')
-    with open(html_path, 'w', encoding='utf-8') as f:
-        f.write(html_out)
-    return html_path
+    except Exception as e:
+        print(f"ReportLab PDF generation error: {e}")
+        fallback_path = output_path.replace('.pdf', '.txt')
+        with open(fallback_path, 'w', encoding='utf-8') as f:
+            f.write(f"=== {report_title} ===\n\n")
+            for k, v in data.items():
+                f.write(f"[{k}]\n{v}\n\n")
+        return fallback_path

@@ -1,11 +1,13 @@
 import { cn } from '@/lib/utils';
-import { TrendingDown, TrendingUp, Loader2, Sparkles } from 'lucide-react';
+import { TrendingDown, TrendingUp, Loader2, Sparkles, FileText } from 'lucide-react';
 import { useWatchlists, useWatchlistData } from '@/services/watchlistService';
+import { useStockNotesMap } from '@/services/noteService';
 
 export function WatchlistCard() {
   const { data: watchlists = [], isLoading: isWatchlistsLoading } = useWatchlists();
   const defaultWatchlist = watchlists.find((w) => w.isDefault) || watchlists[0];
   const { data: activeData, isLoading: isDataLoading } = useWatchlistData(defaultWatchlist?.id);
+  const { notesMap } = useStockNotesMap();
 
   const items = activeData?.items || [];
   const isLoading = isWatchlistsLoading || isDataLoading;
@@ -37,6 +39,7 @@ export function WatchlistCard() {
         ) : (
           items.map((item) => {
             const isPositive = item.change >= 0;
+            const stockNote = notesMap[item.symbol.toUpperCase()];
 
             return (
               <div
@@ -50,7 +53,25 @@ export function WatchlistCard() {
                     </span>
                   </div>
                   <div>
-                    <p className="font-semibold text-foreground ticker-symbol text-sm">{item.symbol}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-semibold text-foreground ticker-symbol text-sm">{item.symbol}</p>
+                      {stockNote && (
+                        <span
+                          className={cn(
+                            "text-[9px] font-mono px-1 py-0 rounded border flex items-center gap-0.5",
+                            stockNote.sentiment === 'BULLISH'
+                              ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                              : stockNote.sentiment === 'BEARISH'
+                              ? "bg-rose-500/20 text-rose-400 border-rose-500/30"
+                              : "bg-primary/20 text-primary border-primary/30"
+                          )}
+                          title={`Note: ${stockNote.content.slice(0, 100)}...`}
+                        >
+                          <FileText className="w-2.5 h-2.5" />
+                          {stockNote.sentiment ? stockNote.sentiment[0] : 'N'}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-[11px] text-muted-foreground truncate max-w-[120px]">{item.name}</p>
                   </div>
                 </div>

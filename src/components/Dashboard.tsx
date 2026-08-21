@@ -5,7 +5,11 @@ import { WatchlistCard } from './WatchlistCard';
 import { RecentTrades } from './RecentTrades';
 import { IdeasCard } from './IdeasCard';
 
-export function Dashboard() {
+interface DashboardProps {
+  onNavigateToResearch?: (symbol: string) => void;
+}
+
+export function Dashboard({ onNavigateToResearch }: DashboardProps) {
   return (
     <div className="space-y-6">
       {/* Stats Row */}
@@ -49,9 +53,10 @@ export function Dashboard() {
         </div>
         <div className="space-y-6">
           <WatchlistCard />
-          <IdeasCard />
+          <IdeasCard onNavigateToResearch={onNavigateToResearch} />
         </div>
       </div>
     </div>
   );
 }
+

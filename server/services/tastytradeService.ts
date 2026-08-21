@@ -90,3 +90,71 @@ export const fetchTastyPositions = async (accountNumber?: string): Promise<Unifi
         throw error;
     }
 };
+
+export const fetchTastyBalances = async (accountNumber?: string): Promise<any | null> => {
+    const accNumber = accountNumber || process.env.TASTY_ACCOUNT_NUMBER;
+
+    if (!accNumber) {
+        return null;
+    }
+
+    try {
+        const token = await getTastyAccessToken();
+        const response = await fetch(`${TASTY_API_URL}/accounts/${accNumber}/balances`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Accept': 'application/json',
+                'User-Agent': 'Antigravity/1.0'
+            }
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.warn(`Tastytrade balances fetch returned non-200: ${response.status} - ${errorText}`);
+            return null;
+        }
+
+        const data: any = await response.json();
+        return data?.data || null;
+    } catch (error) {
+        console.warn("Error fetching Tastytrade Balances via OAuth2:", error);
+        return null;
+    }
+};
+
+export const fetchTastyAccountInfo = async (accountNumber?: string): Promise<any | null> => {
+    const accNumber = accountNumber || process.env.TASTY_ACCOUNT_NUMBER;
+
+    if (!accNumber) {
+        return null;
+    }
+
+    try {
+        const token = await getTastyAccessToken();
+        const response = await fetch(`${TASTY_API_URL}/customers/me/accounts`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Accept': 'application/json',
+                'User-Agent': 'Antigravity/1.0'
+            }
+        });
+
+        if (!response.ok) {
+            return null;
+        }
+
+        const data: any = await response.json();
+        const items = data?.data?.items || [];
+        const match = items.find((item: any) => {
+            const acct = item.account || item;
+            return acct['account-number'] === accNumber;
+        });
+        return match ? (match.account || match) : null;
+    } catch (error) {
+        console.warn("Error fetching Tastytrade Account Info via OAuth2:", error);
+        return null;
+    }
+};
+

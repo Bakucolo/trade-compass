@@ -41,10 +41,37 @@ export class TastytradeAdapter {
 
         const directionMultiplier = pos['quantity-direction'] === 'Short' ? -1 : 1;
         let qty = Number(pos.quantity) * directionMultiplier;
-        // If the quantity is already negative, we don't need to multiply it by -1 again, 
-        // but the tastytrade API usually returns positive quantity with a quantity-direction.
         if (pos.quantity < 0 && directionMultiplier === -1) {
             qty = pos.quantity; // it's already negative
+        }
+
+        const avgOpenPrice = Number(pos['average-open-price'] || pos.averageOpenPrice || 0);
+        let mktPrice = Number(
+            pos['mark-price'] ||
+            pos.markPrice ||
+            pos['mark'] ||
+            pos.mark ||
+            pos['close-price'] ||
+            pos.closePrice ||
+            pos['current-market-price'] ||
+            pos.currentMarketPrice ||
+            pos['last-price'] ||
+            pos.lastPrice ||
+            0
+        );
+
+        let mktVal = Number(pos.value || pos.marketValue || 0);
+        const multiplier = isOption ? 100 : 1;
+
+        // If mktPrice is 0 but marketValue is available, derive mktPrice from marketValue
+        if (mktPrice === 0 && mktVal !== 0 && qty !== 0) {
+            mktPrice = Math.abs(mktVal / (qty * multiplier));
+        } else if (mktPrice === 0 && avgOpenPrice > 0) {
+            mktPrice = avgOpenPrice;
+        }
+
+        if (mktVal === 0 && mktPrice > 0 && qty !== 0) {
+            mktVal = mktPrice * qty * multiplier;
         }
 
         return {
@@ -53,9 +80,9 @@ export class TastytradeAdapter {
             assetType: isOption ? 'OPTION' : 'EQUITY',
             description: pos.description || null,
             quantity: qty,
-            averageCost: Number(pos['average-open-price'] || pos.averageOpenPrice || 0),
-            currentPrice: Number(pos['current-market-price'] || pos['last-price'] || pos.currentMarketPrice || pos.lastPrice || 0),
-            marketValue: Number(pos.value || pos.marketValue || 0),
+            averageCost: avgOpenPrice,
+            currentPrice: mktPrice,
+            marketValue: mktVal,
             dayPnL: Number(pos['day-pnl'] || pos.dayPnl || 0),
             strikePrice: isOption ? strikePrice : undefined,
             expiryDate: pos['expires-at'] || pos.expiresAt || undefined,

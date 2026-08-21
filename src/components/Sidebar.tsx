@@ -9,19 +9,25 @@ import {
   Link2,
   TrendingUp,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Bell,
+  Wallet
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAlerts } from '@/services/alertService';
 
 interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
   id: string;
+  badge?: number;
 }
 
 const navItems: NavItem[] = [
   { icon: LayoutDashboard, label: 'Dashboard', id: 'dashboard' },
+  { icon: Wallet, label: 'Portfolio', id: 'portfolio' },
   { icon: LineChart, label: 'Watchlist', id: 'watchlist' },
+  { icon: Bell, label: 'Alerts', id: 'alerts' },
   { icon: History, label: 'Trades', id: 'trades' },
   { icon: Lightbulb, label: 'Ideas', id: 'ideas' },
   { icon: TrendingUp, label: 'Research', id: 'research' },
@@ -36,6 +42,9 @@ interface SidebarProps {
 
 export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const { data: alerts = [] } = useAlerts();
+  const triggeredCount = alerts.filter((a) => a.status === 'TRIGGERED').length;
+  const activeCount = alerts.filter((a) => a.status === 'ACTIVE').length;
 
   return (
     <aside 
@@ -73,14 +82,26 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
               key={item.id}
               onClick={() => onTabChange(item.id)}
               className={cn(
-                "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200",
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative",
                 isActive 
                   ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-[0_0_15px_hsl(var(--sidebar-primary)/0.3)]" 
                   : "text-sidebar-foreground hover:bg-sidebar-accent"
               )}
             >
               <Icon className="w-5 h-5 flex-shrink-0" />
-              {!collapsed && <span className="text-sm font-medium">{item.label}</span>}
+              {!collapsed && <span className="text-sm font-medium flex-1 text-left">{item.label}</span>}
+              {!collapsed && item.id === 'alerts' && (triggeredCount > 0 || activeCount > 0) && (
+                <span
+                  className={cn(
+                    "text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold",
+                    triggeredCount > 0
+                      ? "bg-amber-500/25 text-amber-300 border border-amber-500/40 animate-pulse"
+                      : "bg-primary/20 text-primary"
+                  )}
+                >
+                  {triggeredCount > 0 ? `${triggeredCount}!` : activeCount}
+                </span>
+              )}
             </button>
           );
         })}

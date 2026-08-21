@@ -1,155 +1,334 @@
 import os
 import sys
 import json
+import sqlite3
+from datetime import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from tools import TOOL_SCHEMAS, TOOL_DISPATCH, get_chroma_client
+from tools import TOOL_SCHEMAS, TOOL_DISPATCH, get_live_price, get_macro_data
 from pdf_generator import generate_pdf
 
-# Load env variables (assumes .env.local or .env exists in current or parent directory)
+# Load env variables (.env.local, .env)
 load_dotenv('.env.local')
 load_dotenv('.env')
 load_dotenv()
 
-# System prompt forcing structured JSON output and rigorous research steps
-SYSTEM_PROMPT = """You are a Senior autonomous financial research agent. Your task is to research a given stock/topic and provide a final JSON report.
-Follow the ReAct loop (Reason, Act, Observe). You have tools available. USE THEM.
+# Built-in Default Prompts
+DEFAULT_PROMPTS = {
+    "company_research": {
+        "title": "Company In-Depth Research Report",
+        "system": """You are an elite Wall Street Equity Research Analyst. Your task is to perform an exhaustive, high-conviction fundamental research report for the given ticker.
+Follow the ReAct loop (Reason, Act, Observe). Use available tools to gather real-time data, macro context, SEC filings, and news.
 
-STEPS:
-1. Search ChromaDB memory for past context using `search_memory`.
-2. Extract macroeconomic state using `get_macro_data`.
-3. Fetch SEC filings and Live Prices (`download_sec_filings`, `get_live_price`).
-4. Perform deep web research (`search_web`).
-5. Use Math (`execute_math`) to calculate a Conviction Score (1-100) based on your formula.
-
-YOUR FINAL OUTPUT MUST BE IN PURE JSON (no markdown wrapping) WITH THIS EXACT STRUCTURE:
+YOUR FINAL OUTPUT MUST BE IN PURE JSON (no markdown fences outside JSON) WITH THIS EXACT STRUCTURE:
 {
   "ticker": "<TICKER>",
+  "report_title": "Company In-Depth Research Report: <TICKER>",
   "conviction_score": <NUMBER 1-100>,
-  "executive_summary": ["Bullet 1", "Bullet 2", "Bullet 3"],
-  "price_and_macro_context": "<String context>",
-  "company_profile": "<Long deep dive text>",
-  "sec_filing_risks": "<String>",
-  "recent_news": "<String>",
-  "sector_breakdown": "<String>"
+  "executive_summary": ["Key thesis point 1", "Key thesis point 2", "Key thesis point 3", "Key valuation target"],
+  "business_model_and_moat": "<Detailed analysis of core business lines, revenue drivers, pricing power, and competitive moat>",
+  "financial_and_valuation_analysis": "<Deep dive into margins, revenue growth, ROE, debt health, and multiple comparison>",
+  "sec_filings_and_risk_factors": "<Key risks and red flags identified from 10-K/10-Q filings>",
+  "macro_and_industry_tailwinds": "<Industry trends, macro environment, interest rates, and regulatory factors>",
+  "catalysts_and_price_target": "<Next 12-month catalysts, earnings expectations, and strategic price target recommendation>"
 }
 """
+    },
+    "management": {
+        "title": "Executive Leadership & Governance Report",
+        "system": """You are an activist investor and governance analyst. Your task is to evaluate the executive leadership, capital allocation track record, insider ownership, and corporate governance for the given ticker.
+Follow the ReAct loop. Use your tools to gather company leadership info, SEC insider filings, executive compensation, and strategic capital allocation history.
 
-def main(ticker: str):
-    print(f"Starting generic research agent process for {ticker}...")
-    
-    api_key = os.getenv("OPENROUTER_API_KEY", os.getenv("OPENAI_API_KEY", ""))
-    if not api_key:
-        print("Error: OPENROUTER_API_KEY is not set in environment or .env files.")
+YOUR FINAL OUTPUT MUST BE IN PURE JSON (no markdown fences outside JSON) WITH THIS EXACT STRUCTURE:
+{
+  "ticker": "<TICKER>",
+  "report_title": "Executive Leadership & Governance Report: <TICKER>",
+  "conviction_score": <NUMBER 1-100>,
+  "executive_summary": ["Leadership assessment 1", "Capital allocation rating 2", "Governance risk 3"],
+  "executive_leadership_profiles": "<Assessment of CEO, CFO, and key management background, tenure, and strategic vision>",
+  "capital_allocation_track_record": "<Analysis of ROIC, R&D reinvestment, M&A history, share repurchases, and dividend safety>",
+  "insider_ownership_and_alignment": "<Insider ownership stakes, recent insider buy/sell transactions, and incentive alignment>",
+  "governance_and_board_oversight": "<Board independence, shareholder rights, executive compensation structure, and controversies>",
+  "leadership_verdict": "<Final conviction on management's ability to create long-term shareholder value>"
+}
+"""
+    },
+    "earnings": {
+        "title": "Latest Earnings & Quarterly Performance Report",
+        "system": """You are a senior hedge fund analyst analyzing the most recent quarterly earnings results and forward guidance for the given ticker.
+Follow the ReAct loop. Use your tools to inspect latest earnings release, revenue/EPS beats or misses, segment breakdown, management guidance, and conference call takeaways.
+
+YOUR FINAL OUTPUT MUST BE IN PURE JSON (no markdown fences outside JSON) WITH THIS EXACT STRUCTURE:
+{
+  "ticker": "<TICKER>",
+  "report_title": "Quarterly Earnings & Guidance Report: <TICKER>",
+  "conviction_score": <NUMBER 1-100>,
+  "executive_summary": ["Quarterly headline result", "Guidance update", "Market reaction driver", "Revised target stance"],
+  "quarterly_financial_results": "<Revenue, EPS, gross margins, and operating income vs consensus expectations>",
+  "segment_and_regional_breakdown": "<Performance across major business units, product lines, and geographical markets>",
+  "management_guidance_and_outlook": "<Next quarter and full-year outlook, capex expectations, and revised targets>",
+  "earnings_call_takeaways": "<Key commentary from CEO/CFO, tone on demand, supply chain, and competitive pressures>",
+  "earnings_reaction_and_target": "<Post-earnings valuation impact and revised investment stance>"
+}
+"""
+    }
+}
+
+def load_prompt_from_db(slug_or_id: str):
+    """Fetches custom or default prompt template directly from tradeflow.db SQLite database."""
+    if not slug_or_id:
+        return None, None
+    try:
+        candidate_paths = [
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "prisma", "tradeflow.db"),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tradeflow.db"),
+            os.path.join(os.getcwd(), "prisma", "tradeflow.db"),
+            os.path.join(os.getcwd(), "tradeflow.db"),
+            "prisma/tradeflow.db",
+            "tradeflow.db",
+            "../tradeflow.db"
+        ]
+        db_path = next((p for p in candidate_paths if os.path.exists(p)), None)
+        if db_path:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT systemPrompt, name FROM ReportPromptTemplate WHERE id = ? OR slug = ? LIMIT 1", (slug_or_id, slug_or_id))
+            row = cursor.fetchone()
+            conn.close()
+            if row and row[0]:
+                return row[0].strip(), row[1].strip()
+    except Exception as e:
+        print(f"Notice: SQLite prompt lookup error: {e}")
+    return None, None
+
+def clean_json_string(text: str) -> str:
+    """Strips markdown codeblocks and extracts valid JSON substring."""
+    cleaned = text.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned.replace("```json", "", 1)
+    elif cleaned.startswith("```"):
+        cleaned = cleaned.replace("```", "", 1)
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    cleaned = cleaned.strip()
+
+    # If extra text precedes or follows JSON, slice between first { and last }
+    first_brace = cleaned.find("{")
+    last_brace = cleaned.rfind("}")
+    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+        cleaned = cleaned[first_brace:last_brace + 1]
+
+    return cleaned
+
+def main(ticker: str, report_type: str = "company_research", prompt_id_or_custom: str = None):
+    print(f"Starting research process for {ticker} [Type: {report_type}]...")
+
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", os.getenv("OPENAI_API_KEY", "")).strip()
+    gemini_key = os.getenv("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY", "")).strip()
+
+    # Prioritize OpenRouter if available (reliable, higher limits) or fallback to Gemini
+    if openrouter_key:
+        print("Using OpenRouter API (gpt-4o-mini)...")
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=openrouter_key
+        )
+        model = os.getenv("OPENROUTER_RESEARCH_MODEL", "openai/gpt-4o-mini")
+        provider = "openrouter"
+    elif gemini_key:
+        print("Using Google AI Studio (Gemini) API...")
+        client = OpenAI(
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            api_key=gemini_key
+        )
+        model = os.getenv("GEMINI_RESEARCH_MODEL", "gemini-2.0-flash")
+        provider = "gemini"
+    else:
+        print("Error: No API key found. Please set OPENROUTER_API_KEY or GEMINI_API_KEY in .env.local")
         sys.exit(1)
 
-    # Configure OpenAI Client (pointing to OpenRouter as requested)
-    client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=api_key
-    )
-    
-    model = os.getenv("OPENROUTER_RESEARCH_MODEL", "openai/gpt-4o-mini")
+    # Select Prompt
+    system_prompt = None
+    report_title = None
+
+    if prompt_id_or_custom:
+        db_prompt, db_title = load_prompt_from_db(prompt_id_or_custom)
+        if db_prompt:
+            system_prompt = db_prompt
+            report_title = f"{db_title}: {ticker}"
+        elif len(prompt_id_or_custom) > 50:
+            system_prompt = prompt_id_or_custom.strip()
+            report_title = f"{ticker} Custom Research Report"
+
+    if not system_prompt and report_type:
+        db_prompt, db_title = load_prompt_from_db(report_type)
+        if db_prompt:
+            system_prompt = db_prompt
+            report_title = f"{db_title}: {ticker}"
+
+    if not system_prompt:
+        if report_type in DEFAULT_PROMPTS:
+            system_prompt = DEFAULT_PROMPTS[report_type]["system"]
+            report_title = f"{DEFAULT_PROMPTS[report_type]['title']}: {ticker}"
+        else:
+            system_prompt = DEFAULT_PROMPTS["company_research"]["system"]
+            report_title = f"Company In-Depth Research Report: {ticker}"
+
+    # Pre-fetch live price and macro data to ground the model immediately
+    live_price_data = get_live_price(ticker)
+    macro_data = get_macro_data()
+
+    initial_user_message = f"""Please generate a complete, rigorous research report for symbol: {ticker} (Date: {datetime.now().strftime('%B %d, %Y')}).
+
+Initial Live Market Context:
+- Live Price & Metrics: {live_price_data}
+- Macro Context: {macro_data}
+
+Conduct any additional necessary web searches or filings reviews, and then provide your complete research report in the required strict JSON schema."""
 
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"Please generate a complete financial research report for: {ticker}."}
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": initial_user_message}
     ]
 
-    max_steps = 15
+    max_steps = 8
     step_count = 0
+    total_tool_calls = 0
     final_json = None
 
     while step_count < max_steps:
         step_count += 1
         print(f"--- ReAct Step {step_count} ---")
-        
-        # 1. Ask LLM to reason or call tool
+
+        # After 2-3 tool iterations, instruct the model to finalize the report in JSON
+        force_finalize = (step_count >= 4 or total_tool_calls >= 4)
+        tool_choice = "none" if force_finalize else "auto"
+
+        if force_finalize:
+            messages.append({
+                "role": "user",
+                "content": "You now have all necessary research data. Synthesize your final conclusions and output ONLY the complete JSON object adhering strictly to the required schema."
+            })
+
+        response = None
         try:
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                tools=TOOL_SCHEMAS,
-                tool_choice="auto",
+                tools=None if force_finalize else TOOL_SCHEMAS,
+                tool_choice=tool_choice if not force_finalize else None,
                 temperature=0.2
             )
-        except Exception as e:
-            print(f"LLM API Error: {str(e)}")
+        except Exception as err:
+            print(f"Primary provider error with {model}: {err}")
+            # If Gemini failed with 429 and OpenRouter key is available, switch to OpenRouter
+            if provider == "gemini" and openrouter_key:
+                print("Switching permanently to OpenRouter (openai/gpt-4o-mini)...")
+                client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=openrouter_key)
+                model = "openai/gpt-4o-mini"
+                provider = "openrouter"
+                try:
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        tools=None if force_finalize else TOOL_SCHEMAS,
+                        tool_choice=tool_choice if not force_finalize else None,
+                        temperature=0.2
+                    )
+                except Exception as or_err:
+                    print(f"OpenRouter fallback error: {or_err}")
+            elif provider == "openrouter" and gemini_key:
+                print("Switching to Gemini fallback...")
+                client = OpenAI(base_url="https://generativelanguage.googleapis.com/v1beta/openai/", api_key=gemini_key)
+                model = "gemini-2.0-flash"
+                provider = "gemini"
+                try:
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        tools=None if force_finalize else TOOL_SCHEMAS,
+                        temperature=0.2
+                    )
+                except Exception as gem_err:
+                    print(f"Gemini fallback error: {gem_err}")
+
+        if not response:
+            print("Failed to get response from any LLM provider. Exiting.")
             sys.exit(1)
 
         message = response.choices[0].message
-        
-        # If the model called a tool
-        if message.tool_calls:
-            # We must append the assistant's message with the tool calls
+
+        # Tool calls handling
+        if message.tool_calls and not force_finalize:
             messages.append(message)
-            
+            total_tool_calls += len(message.tool_calls)
+
             for tool_call in message.tool_calls:
                 tool_name = tool_call.function.name
-                tool_args = json.loads(tool_call.function.arguments)
+                try:
+                    tool_args = json.loads(tool_call.function.arguments)
+                except Exception:
+                    tool_args = {}
                 print(f"-> Calling tool: {tool_name}({tool_args})")
-                
-                # Execute the tool
+
                 if tool_name in TOOL_DISPATCH:
-                    tool_result = TOOL_DISPATCH[tool_name](**tool_args)
+                    try:
+                        tool_result = TOOL_DISPATCH[tool_name](**tool_args)
+                    except Exception as err:
+                        tool_result = f"Error executing {tool_name}: {err}"
                 else:
                     tool_result = f"Error: Tool {tool_name} not found."
-                    
-                # Append tool result to messages
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": str(tool_result)
+                    "content": str(tool_result)[:3000] # Cap output size to prevent token blowout
                 })
         else:
-            # The model returned text (hopefully our final JSON)
-            print("-> LLM returned final text without tool calls.")
-            raw_text = message.content.strip()
-            # Try to strip markdown JSON block
-            if raw_text.startswith("```json"):
-                raw_text = raw_text.replace("```json", "", 1)
-                if raw_text.endswith("```"):
-                    raw_text = raw_text[:-3]
-            raw_text = raw_text.strip()
-            
+            # Model returned text
+            raw_text = message.content or ""
+            print(f"-> LLM returned text (length: {len(raw_text)}). Parsing JSON...")
+            cleaned = clean_json_string(raw_text)
+
             try:
-                final_json = json.loads(raw_text)
+                final_json = json.loads(cleaned)
                 break
-            except json.JSONDecodeError:
-                print("Failed to decode JSON. Retrying by enforcing JSON.")
-                messages.append({"role": "assistant", "content": message.content})
-                messages.append({"role": "user", "content": "Your previous output was not valid JSON. Please return strictly valid JSON matching the schema."})
+            except json.JSONDecodeError as decode_err:
+                print(f"JSON decode failed ({decode_err}). Requesting correction...")
+                messages.append({"role": "assistant", "content": raw_text})
+                messages.append({
+                    "role": "user",
+                    "content": "Your previous response was not valid JSON. Please re-format your response as pure, valid JSON with no markdown wrapping or preamble."
+                })
 
     if not final_json:
         print("Agent failed to produce the final structured JSON within steps limit.")
         sys.exit(1)
 
-    print("Successfully generated Structured Data. Committing to memory and generating PDF...")
-    
-    # Commit to ChromaDB memory
-    chroma_client = get_chroma_client()
-    collection = chroma_client.get_or_create_collection("research_memory")
-    doc_id = f"{ticker}_report_{step_count}"
-    # Upsert the JSON as memory
-    collection.upsert(
-        documents=[json.dumps(final_json)],
-        metadatas=[{"ticker": ticker}],
-        ids=[doc_id]
-    )
+    print("Successfully generated Structured Data. Generating PDF...")
+    final_json["ticker"] = ticker
+    if "report_title" not in final_json:
+        final_json["report_title"] = report_title
+    final_json["date"] = datetime.now().strftime("%B %d, %Y")
 
     # Generate PDF
-    pdf_filename = f"research_report_{ticker}.pdf"
+    pdf_filename = f"research_report_{ticker}_{report_type}.pdf"
     pdf_path = generate_pdf(final_json, pdf_filename)
-    
-    # We output the absolute path so the node backend can grab it
-    print(f"FINAL_PDF_PATH:{os.path.abspath(pdf_path)}")
+    abs_pdf_path = os.path.abspath(pdf_path)
+
+
+    print(f"FINAL_REPORT_JSON:{json.dumps(final_json)}")
+    print(f"FINAL_PDF_PATH:{abs_pdf_path}")
     print("Done.")
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python main.py <TICKER>")
+        print("Usage: python main.py <TICKER> [REPORT_TYPE] [CUSTOM_SYSTEM_PROMPT]")
         sys.exit(1)
-    
+
     target_ticker = sys.argv[1].upper()
-    main(target_ticker)
+    target_report_type = sys.argv[2] if len(sys.argv) > 2 else "company_research"
+    target_custom_prompt = sys.argv[3] if len(sys.argv) > 3 else None
+
+    main(target_ticker, target_report_type, target_custom_prompt)

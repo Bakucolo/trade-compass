@@ -43,6 +43,8 @@ model Holding {
   optionType        String?  // "CALL", "PUT"
   underlyingSymbol  String?
   
+  currency          String?  @default("USD")
+  
   updatedAt         DateTime @updatedAt
 
   @@unique([brokerId, brokerSpecificId])
@@ -66,3 +68,99 @@ model WatchlistItem {
 
   @@unique([watchlistId, symbol])
 }
+
+model PriceAlert {
+  id             String    @id @default(uuid())
+  symbol         String
+  targetPrice    Float
+  condition      String    // "ABOVE" | "BELOW"
+  status         String    @default("ACTIVE") // "ACTIVE" | "TRIGGERED" | "CANCELLED"
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  triggeredAt    DateTime?
+  triggeredPrice Float?
+}
+
+model ReportPromptTemplate {
+  id           String   @id @default(uuid())
+  name         String   // e.g. "Company Research Report", "Management Report", "Latest Earnings Report"
+  slug         String   @unique
+  description  String
+  category     String   @default("RESEARCH")
+  systemPrompt String
+  userPrompt   String
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model StockNote {
+  id        String   @id @default(uuid())
+  symbol    String   @unique
+  content   String
+  tags      String?
+  sentiment String?  // "BULLISH" | "BEARISH" | "NEUTRAL"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model TradeIdea {
+  id              String    @id @default(uuid())
+  title           String
+  symbol          String    // e.g. "NVDA", "AAPL", "MACRO"
+  type            String    // "BULLISH" | "BEARISH" | "NEUTRAL"
+  timeframe       String?   // "SHORT_TERM" | "SWING" | "LONG_TERM"
+  entryPrice      Float?
+  targetPrice     Float?
+  stopLoss        Float?
+  content         String    // Markdown formatted thesis, catalysts, and exit strategy
+  tags            String?   // comma-separated tags
+  status          String    @default("ACTIVE") // "ACTIVE" | "WATCHING" | "PLAYED_OUT" | "ARCHIVED"
+  confidenceScore Int?      // 1 to 100
+  source          String    @default("MANUAL") // "MANUAL" | "AI_AGENT"
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model AutonomousReport {
+  id               String   @id @default(uuid())
+  symbol           String   // e.g. "AAPL"
+  reportType       String   // e.g. "company_research", "management", "earnings", or custom slug
+  title            String   // e.g. "Company In-Depth Research Report: AAPL"
+  convictionScore  Int?     // 1 to 100
+  summary          String?  // Short summary or stringified executive bullet points
+  contentJson      String   // Full raw structured JSON payload from the AI agent
+  pdfPath          String?  // Local file path or relative path to generated PDF
+  promptTemplateId String?  // Optional reference to ReportPromptTemplate
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([symbol])
+  @@index([createdAt])
+}
+
+model PortfolioAuditReport {
+  id                  String   @id @default(uuid())
+  title               String   // e.g. "Portfolio Tactical Audit & Risk Assessment"
+  healthScore         Int      // 0 to 100 (Overall Portfolio Resilience Score)
+  riskLevel           String   // "CRITICAL_RISK" | "HIGH_RISK" | "BALANCED" | "OPTIMAL"
+  totalNetLiq         Float    // Net Liquidation snapshot
+  totalBuyingPower    Float    // Buying Power snapshot
+  totalDayPnL         Float    // Today's PnL snapshot
+  totalUnrealizedPnL  Float    // Open PnL snapshot
+  positionsCount      Int      // Total positions audited
+  executiveSummary    String   // Multi-paragraph executive summary
+  macroAssessment     String?  // Macro & market regime context
+  allocationAnalysis  String?  // Concentration and cash allocation
+  greeksExposure      String?  // Total portfolio delta, theta rate, gamma risk
+  actionablePlaybooks String   // JSON stringified list of prioritized actions
+  criticalAlerts      String?  // JSON stringified urgent flags / tested strikes
+  rawAuditJson        String   // Full raw structured JSON from the agent
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
+
