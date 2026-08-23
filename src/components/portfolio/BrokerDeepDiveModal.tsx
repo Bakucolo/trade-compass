@@ -22,15 +22,18 @@ import {
   Scale,
   Calendar,
   TrendingUp,
-  Activity
+  Activity,
+  Globe2,
+  Coins,
+  DollarSign
 } from 'lucide-react';
-import { BrokerAccountBalance } from '@/services/portfolioBalanceService';
+import { BrokerAccountBalance, IBKRCombinedBalance, IBKRAccountDetails, CurrencyBalance } from '@/services/portfolioBalanceService';
 import { cn } from '@/lib/utils';
 
 interface BrokerDeepDiveModalProps {
   isOpen: boolean;
   onClose: () => void;
-  broker: BrokerAccountBalance | null;
+  broker: BrokerAccountBalance | IBKRCombinedBalance | IBKRAccountDetails | null;
   brokerKey: 'ibkr' | 'tastytrade';
   isPrivacyMode?: boolean;
 }
@@ -50,6 +53,8 @@ export function BrokerDeepDiveModal({
   const isIBKR = brokerKey === 'ibkr';
   const rawMetrics = broker.rawMetrics || {};
   const rawKeys = Object.keys(rawMetrics).sort();
+  const currenciesMap: Record<string, CurrencyBalance> = (broker as any).currencies || {};
+  const currencyEntries = Object.entries(currenciesMap).filter(([_, c]) => c.netLiqUSD > 0 || c.cashUSD > 0 || c.holdingsCount > 0);
 
   const filteredKeys = rawKeys.filter((key) =>
     key.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -65,6 +70,18 @@ export function BrokerDeepDiveModal({
   const formatCurr = (val?: number) => {
     if (val === undefined || isNaN(val)) return '$0.00';
     return `$${val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const formatNativeCurr = (val: number, currency: string, decimals = 2) => {
+    const symbols: Record<string, string> = {
+      USD: '$',
+      CAD: 'CA$',
+      EUR: '€',
+      GBP: '£',
+      AUD: 'A$',
+    };
+    const sym = symbols[currency.toUpperCase()] || `${currency} `;
+    return `${sym}${val.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
   };
 
   const formatPct = (val?: number) => {
@@ -113,18 +130,25 @@ export function BrokerDeepDiveModal({
                   )}
                 </DialogTitle>
                 <DialogDescription className="text-xs text-muted-foreground mt-0.5">
-                  Deep-dive financial telemetry, margin requirements, liquidity breakdown, and raw broker feeds.
+                  Deep-dive financial telemetry, multi-currency ledger, margin requirements, and raw broker feeds.
                 </DialogDescription>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3 self-end sm:self-center">
+              <div className="text-right font-mono">
+                <span className="text-[10px] text-muted-foreground block uppercase font-bold">Net Liquidation (USD)</span>
+                <span className={cn("text-lg font-black text-foreground", isPrivacyMode && "blur-sm")}>
+                  {formatCurr(broker.netLiquidatingValue)}
+                </span>
+              </div>
               <Badge
+                variant="outline"
                 className={cn(
-                  "text-xs font-semibold px-2.5 py-1",
+                  "text-xs px-2.5 py-1",
                   broker.status === 'connected' || broker.status === 'active'
-                    ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
-                    : "bg-zinc-500/15 text-zinc-400 border-zinc-500/30"
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                    : "border-zinc-500/40 bg-zinc-500/10 text-zinc-400"
                 )}
               >
                 <span className={cn(
@@ -140,7 +164,7 @@ export function BrokerDeepDiveModal({
         {/* Modal Body with Tabs */}
         <Tabs defaultValue="margin" className="flex-1 flex flex-col min-h-0">
           <div className="px-6 pt-3 border-b border-border/30 bg-muted/20">
-            <TabsList className="bg-background/50 border border-border/40 p-1 w-full sm:w-auto grid grid-cols-4 sm:flex gap-1">
+            <TabsList className="bg-background/50 border border-border/40 p-1 w-full sm:w-auto grid grid-cols-5 sm:flex gap-1">
               <TabsTrigger value="margin" className="text-xs data-[state=active]:bg-primary/20">
                 <ShieldAlert className="w-3.5 h-3.5 mr-1.5 text-amber-400" />
                 Margin & Risk
@@ -148,6 +172,10 @@ export function BrokerDeepDiveModal({
               <TabsTrigger value="liquidity" className="text-xs data-[state=active]:bg-primary/20">
                 <Zap className="w-3.5 h-3.5 mr-1.5 text-cyan-400" />
                 Buying Power
+              </TabsTrigger>
+              <TabsTrigger value="currencies" className="text-xs data-[state=active]:bg-primary/20">
+                <Globe2 className="w-3.5 h-3.5 mr-1.5 text-amber-400" />
+                Currencies & FX ({currencyEntries.length})
               </TabsTrigger>
               <TabsTrigger value="assets" className="text-xs data-[state=active]:bg-primary/20">
                 <Layers className="w-3.5 h-3.5 mr-1.5 text-purple-400" />
@@ -390,7 +418,71 @@ export function BrokerDeepDiveModal({
               </div>
             </TabsContent>
 
-            {/* 3. ASSETS & P&L TAB */}
+            {/* 3. MULTI-CURRENCY & FX TAB */}
+            <TabsContent value="currencies" className="m-0 space-y-4">
+              <div className="p-4 rounded-xl border border-amber-500/30 bg-card/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <span className="text-xs font-bold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+                      <Globe2 className="w-4 h-4 text-amber-400" /> Multi-Currency Ledger & FX Conversion
+                    </span>
+                    <p className="text-[11px] text-muted-foreground">
+                      Real-time native cash and security balances converted to unified USD.
+                    </p>
+                  </div>
+                  <Badge variant="outline" className="text-xs border-amber-500/40 text-amber-300 font-mono">
+                    Base: {broker.currency || 'USD'}
+                  </Badge>
+                </div>
+
+                {currencyEntries.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-muted-foreground border border-dashed border-border/40 rounded-xl">
+                    All holdings and balances in this account are settled in standard USD.
+                  </div>
+                ) : (
+                  <div className="border border-border/40 rounded-xl overflow-hidden bg-card/20 divide-y divide-border/20 text-xs">
+                    <div className="p-2.5 px-3 bg-muted/40 grid grid-cols-6 font-semibold text-[11px] text-muted-foreground">
+                      <span>Currency</span>
+                      <span>Holdings</span>
+                      <span className="text-right">Native Value</span>
+                      <span className="text-right">Native Cash</span>
+                      <span className="text-right">FX Rate to USD</span>
+                      <span className="text-right">USD Equivalent</span>
+                    </div>
+                    {currencyEntries.map(([curr, c]) => (
+                      <div key={curr} className="p-3 px-3 grid grid-cols-6 items-center font-mono hover:bg-card/50 transition-colors text-[11px]">
+                        <div className="flex items-center gap-1.5">
+                          <Badge variant="outline" className="text-[10px] font-bold px-1.5 py-0 border-amber-500/40 text-amber-300">
+                            {curr}
+                          </Badge>
+                        </div>
+                        <span className="text-muted-foreground">{c.holdingsCount} assets</span>
+                        <span className="text-right text-foreground font-bold">{formatNativeCurr(c.positionsMarketValue, curr)}</span>
+                        <span className="text-right text-emerald-400">{formatNativeCurr(c.cash, curr)}</span>
+                        <span className="text-right text-muted-foreground">
+                          {c.fxRateToUSD === 1 ? '1.000 (1:1)' : `${c.fxRateToUSD.toFixed(3)}`}
+                        </span>
+                        <span className={cn("text-right text-cyan-300 font-bold", isPrivacyMode && "blur-xs")}>
+                          {formatCurr(c.netLiqUSD)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-border/40 bg-card/20 text-xs text-muted-foreground space-y-1">
+                <div className="flex items-center gap-1.5 text-foreground font-semibold">
+                  <Coins className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Currency Exposure Summary</span>
+                </div>
+                <p className="text-[11px]">
+                  All foreign-denominated holdings (CAD, EUR, GBP, AUD) are valued in their respective primary exchanges and dynamically unified into USD totals across your TradeFlow portfolio metrics.
+                </p>
+              </div>
+            </TabsContent>
+
+            {/* 4. ASSETS & P&L TAB */}
             <TabsContent value="assets" className="m-0 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Options Exposure */}

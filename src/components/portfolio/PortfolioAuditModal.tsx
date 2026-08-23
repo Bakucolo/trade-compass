@@ -45,7 +45,10 @@ import {
   PieChart,
   History,
   CheckCircle2,
-  Calendar
+  Calendar,
+  Bot,
+  Terminal,
+  Cpu
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -53,7 +56,7 @@ import { toast } from 'sonner';
 interface PortfolioAuditModalProps {
   isOpen: boolean;
   onClose: () => void;
-  positions: UnifiedPosition[];
+  positions?: UnifiedPosition[];
   balancesData?: PortfolioBalancesData;
   totals?: {
     netLiquidValue: number;
@@ -67,7 +70,7 @@ interface PortfolioAuditModalProps {
 export function PortfolioAuditModal({
   isOpen,
   onClose,
-  positions,
+  positions = [],
   balancesData,
   totals,
   isPrivacyMode = false
@@ -125,7 +128,8 @@ export function PortfolioAuditModal({
   };
 
   const handleCopyPlaybook = async (item: ActionablePlaybookItem) => {
-    const text = `[Priority ${item.priority}: ${item.title}]\nSymbol: ${item.symbol}\nRationale: ${item.rationale}\nSteps:\n${item.executionSteps.map(s => `- ${s}`).join('\n')}\nExpected Impact: ${item.expectedImpact}`;
+    const stepsText = (item.executionSteps || []).map(s => `- ${s}`).join('\n');
+    const text = `[Priority ${item.priority}: ${item.title}]\nSymbol: ${item.symbol}\nRationale: ${item.rationale}\nSteps:\n${stepsText}\nExpected Impact: ${item.expectedImpact}`;
     await navigator.clipboard.writeText(text);
     setCopiedPlaybookId(item.priority);
     toast.success(`Copied "${item.title}" playbook to clipboard!`);
@@ -191,7 +195,7 @@ export function PortfolioAuditModal({
                   Autonomous Risk Engine
                 </Badge>
                 <Badge variant="outline" className="text-xs font-mono text-muted-foreground">
-                  {positions.length} Positions Audited
+                  {(positions || []).length} Positions Audited
                 </Badge>
                 {activeReport?.createdAt && (
                   <Badge variant="secondary" className="text-[10px] text-muted-foreground flex items-center gap-1 font-mono">
@@ -258,35 +262,59 @@ export function PortfolioAuditModal({
 
           </div>
 
-          {/* Top KPI Banner */}
+          {/* Top KPI Banner & Agent Provenance */}
           {activeReport && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-3 border-t border-border/40 font-mono text-xs">
-              <div className="bg-card/50 p-2.5 rounded-xl border border-border/40">
-                <span className="text-[10px] font-sans font-bold uppercase tracking-wider text-muted-foreground block">Net Liquidation</span>
-                <strong className={cn("text-base font-black text-foreground mt-0.5 block", isPrivacyMode && "blur-sm")}>
-                  {formatCurr(activeReport.totalNetLiq)}
-                </strong>
+            <div className="space-y-3 mt-4 pt-3 border-t border-border/40">
+              {/* Prominent Agent Creator Banner */}
+              <div className="flex items-center justify-between gap-3 px-3.5 py-2 rounded-xl bg-purple-950/30 border border-purple-500/40 text-xs shadow-sm flex-wrap">
+                <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                  <div className="flex items-center gap-1.5 text-purple-300 font-bold">
+                    <Bot className="w-4 h-4 text-purple-400 shrink-0" />
+                    <span>Report Created By Agent:</span>
+                  </div>
+                  <Badge className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-mono text-[10px] py-0 px-2 shadow-sm font-bold">
+                    AI Portfolio Tactical Analyser
+                  </Badge>
+                  <span className="text-muted-foreground">•</span>
+                  <span className="text-muted-foreground">Engine:</span>
+                  <span className="text-foreground font-medium">Chief Risk Officer (CRO) Multi-Broker Engine</span>
+                  <span className="text-muted-foreground">•</span>
+                  <span className="text-muted-foreground">Model:</span>
+                  <span className="text-cyan-300 font-mono font-semibold">GPT-4o-mini / Gemini-1.5-Flash</span>
+                </div>
+                <div className="text-[10px] text-muted-foreground font-mono">
+                  Autonomous Run
+                </div>
               </div>
 
-              <div className="bg-card/50 p-2.5 rounded-xl border border-amber-500/30">
-                <span className="text-[10px] font-sans font-bold uppercase tracking-wider text-amber-400 block">Total Buying Power</span>
-                <strong className={cn("text-base font-black text-amber-300 mt-0.5 block", isPrivacyMode && "blur-sm")}>
-                  {formatCurr(activeReport.totalBuyingPower)}
-                </strong>
-              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono text-xs">
+                <div className="bg-card/50 p-2.5 rounded-xl border border-border/40">
+                  <span className="text-[10px] font-sans font-bold uppercase tracking-wider text-muted-foreground block">Net Liquidation</span>
+                  <strong className={cn("text-base font-black text-foreground mt-0.5 block", isPrivacyMode && "blur-sm")}>
+                    {formatCurr(activeReport.totalNetLiq)}
+                  </strong>
+                </div>
 
-              <div className="bg-card/50 p-2.5 rounded-xl border border-border/40">
-                <span className="text-[10px] font-sans font-bold uppercase tracking-wider text-muted-foreground block">Today's P&L</span>
-                <strong className={cn("text-base font-black mt-0.5 block", activeReport.totalDayPnL >= 0 ? "text-emerald-400" : "text-rose-400", isPrivacyMode && "blur-sm")}>
-                  {activeReport.totalDayPnL >= 0 ? '+' : ''}{formatCurr(activeReport.totalDayPnL)}
-                </strong>
-              </div>
+                <div className="bg-card/50 p-2.5 rounded-xl border border-amber-500/30">
+                  <span className="text-[10px] font-sans font-bold uppercase tracking-wider text-amber-400 block">Total Buying Power</span>
+                  <strong className={cn("text-base font-black text-amber-300 mt-0.5 block", isPrivacyMode && "blur-sm")}>
+                    {formatCurr(activeReport.totalBuyingPower)}
+                  </strong>
+                </div>
 
-              <div className="bg-card/50 p-2.5 rounded-xl border border-border/40">
-                <span className="text-[10px] font-sans font-bold uppercase tracking-wider text-muted-foreground block">Open Unrealized P&L</span>
-                <strong className={cn("text-base font-black mt-0.5 block", activeReport.totalUnrealizedPnL >= 0 ? "text-purple-300" : "text-rose-400", isPrivacyMode && "blur-sm")}>
-                  {activeReport.totalUnrealizedPnL >= 0 ? '+' : ''}{formatCurr(activeReport.totalUnrealizedPnL)}
-                </strong>
+                <div className="bg-card/50 p-2.5 rounded-xl border border-border/40">
+                  <span className="text-[10px] font-sans font-bold uppercase tracking-wider text-muted-foreground block">Today's P&L</span>
+                  <strong className={cn("text-base font-black mt-0.5 block", activeReport.totalDayPnL >= 0 ? "text-emerald-400" : "text-rose-400", isPrivacyMode && "blur-sm")}>
+                    {activeReport.totalDayPnL >= 0 ? '+' : ''}{formatCurr(activeReport.totalDayPnL)}
+                  </strong>
+                </div>
+
+                <div className="bg-card/50 p-2.5 rounded-xl border border-border/40">
+                  <span className="text-[10px] font-sans font-bold uppercase tracking-wider text-muted-foreground block">Open Unrealized P&L</span>
+                  <strong className={cn("text-base font-black mt-0.5 block", activeReport.totalUnrealizedPnL >= 0 ? "text-purple-300" : "text-rose-400", isPrivacyMode && "blur-sm")}>
+                    {activeReport.totalUnrealizedPnL >= 0 ? '+' : ''}{formatCurr(activeReport.totalUnrealizedPnL)}
+                  </strong>
+                </div>
               </div>
             </div>
           )}
@@ -303,7 +331,7 @@ export function PortfolioAuditModal({
               <div className="text-center space-y-1 max-w-md">
                 <h4 className="text-lg font-bold text-foreground">AI Portfolio Risk Agent Auditing Holdings...</h4>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Evaluating {positions.length} active contracts and equities across Interactive Brokers & Tastytrade, computing multi-factor delta exposures, testing margin cushions, and generating tactical defense playbooks.
+                  Evaluating {(positions || []).length} active contracts and equities across Interactive Brokers & Tastytrade, computing multi-factor delta exposures, testing margin cushions, and generating tactical defense playbooks.
                 </p>
               </div>
             </div>
@@ -612,9 +640,15 @@ export function PortfolioAuditModal({
                                 <Badge className="bg-purple-500 text-white text-[9px] font-bold">CURRENTLY VIEWING</Badge>
                               )}
                             </div>
-                            <p className="text-muted-foreground font-mono text-[11px]">
-                              Net Liq: {formatCurr(item.totalNetLiq)} • Buying Power: {formatCurr(item.totalBuyingPower)} • {item.positionsCount} Positions
-                            </p>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Badge className="bg-purple-950/60 text-purple-300 border border-purple-500/30 text-[9px] font-mono flex items-center gap-1">
+                                <Bot className="w-2.5 h-2.5" />
+                                AI Portfolio Tactical Analyser
+                              </Badge>
+                              <span className="text-muted-foreground font-mono text-[11px]">
+                                Net Liq: {formatCurr(item.totalNetLiq)} • Buying Power: {formatCurr(item.totalBuyingPower)} • {item.positionsCount} Positions
+                              </span>
+                            </div>
                           </div>
 
                           <div className="flex items-center gap-3 self-end sm:self-center">

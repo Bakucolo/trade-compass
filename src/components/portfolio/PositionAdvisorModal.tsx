@@ -38,7 +38,8 @@ import {
   BookmarkPlus,
   Minus,
   CheckCircle2,
-  Calendar
+  Calendar,
+  Bot
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -141,7 +142,8 @@ export function PositionAdvisorModal({
     setIsSavingNote(true);
     try {
       const planA = analysisData.rankedPlans.find(p => p.isRecommended) || analysisData.rankedPlans[0];
-      const noteContent = `### AI Position Management Plan (${position.symbol})\n**Urgency**: ${analysisData.urgencyHeadline}\n**Diagnosis**: ${analysisData.currentPnlAssessment}\n\n**Recommended Defense (${planA.title})**:\n${planA.summary}\n\n**Order Legs**:\n${planA.orderLegs.map(l => `- ${l}`).join('\n')}\n\n**Expected Net**: ${planA.netCreditOrDebit || 'N/A'} | **New Breakeven**: ${planA.newBreakeven || 'N/A'}\n\n*Rule of Thumb: ${analysisData.tradingRuleOfThumb}*`;
+      const legsText = (planA?.orderLegs || []).map(l => `- ${l}`).join('\n');
+      const noteContent = `### AI Position Management Plan (${position.symbol})\n**Urgency**: ${analysisData.urgencyHeadline}\n**Diagnosis**: ${analysisData.currentPnlAssessment}\n\n**Recommended Defense (${planA?.title || 'Defense'})**:\n${planA?.summary || ''}\n\n**Order Legs**:\n${legsText}\n\n**Expected Net**: ${planA?.netCreditOrDebit || 'N/A'} | **New Breakeven**: ${planA?.newBreakeven || 'N/A'}\n\n*Rule of Thumb: ${analysisData.tradingRuleOfThumb}*`;
 
       await saveStockNote({
         symbol: cleanBaseSymbol,
@@ -243,6 +245,28 @@ export function PositionAdvisorModal({
                 <RefreshCw className={cn("w-3.5 h-3.5", analyzeMutation.isPending && "animate-spin")} />
                 <span>{analyzeMutation.isPending ? 'Analyzing Position...' : 'Re-Analyze'}</span>
               </Button>
+            </div>
+          </div>
+
+          {/* Agent Creator Attestation */}
+          <div className="flex items-center justify-between gap-3 px-3.5 py-2 rounded-xl bg-purple-950/30 border border-purple-500/40 text-xs shadow-sm mt-3 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap text-[11px]">
+              <div className="flex items-center gap-1.5 text-purple-300 font-bold">
+                <Bot className="w-4 h-4 text-purple-400 shrink-0" />
+                <span>Report Created By Agent:</span>
+              </div>
+              <Badge className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-mono text-[10px] py-0 px-2 shadow-sm font-bold">
+                AI Position Defense & Management Advisor
+              </Badge>
+              <span className="text-muted-foreground">•</span>
+              <span className="text-muted-foreground">Engine:</span>
+              <span className="text-foreground font-medium">Live Option Chain Pricing & Risk Defense</span>
+              <span className="text-muted-foreground">•</span>
+              <span className="text-muted-foreground">Model:</span>
+              <span className="text-cyan-300 font-mono font-semibold">GPT-4o / Gemini-1.5-Flash</span>
+            </div>
+            <div className="text-[10px] text-muted-foreground font-mono">
+              Derivatives Risk Engine
             </div>
           </div>
         </DialogHeader>

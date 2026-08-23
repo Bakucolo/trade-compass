@@ -75,6 +75,8 @@ model PriceAlert {
   targetPrice    Float
   condition      String    // "ABOVE" | "BELOW"
   status         String    @default("ACTIVE") // "ACTIVE" | "TRIGGERED" | "CANCELLED"
+  isMuted        Boolean   @default(false)
+  mutedAt        DateTime?
   notes          String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -163,4 +165,85 @@ model PortfolioAuditReport {
   @@index([createdAt])
 }
 
+model TradeRecord {
+  id               String    @id @default(uuid())
+  broker           String    // "Tastytrade", "Interactive Brokers", "Manual"
+  brokerTradeId    String?   // External broker transaction ID / execId
+  symbol           String    // Full contract symbol or equity ticker
+  underlyingSymbol String?   // Root ticker (e.g. AAPL, FLNC)
+  assetType        String    // "OPTION" | "EQUITY"
+  optionType       String?   // "CALL" | "PUT"
+  strikePrice      Float?
+  expiryDate       String?   // YYYYMMDD or YYYY-MM-DD
+  action           String    // "BUY_TO_OPEN", "SELL_TO_CLOSE", "SELL_TO_OPEN", "BUY_TO_CLOSE", "BUY", "SELL"
+  side             String    // "BUY" | "SELL"
+  positionEffect   String    // "LONG" | "SHORT"
+  quantity         Float
+  price            Float
+  totalValue       Float
+  valueEffect      String?   // "CREDIT" | "DEBIT"
+  commission       Float?    @default(0)
+  clearingFees     Float?    @default(0)
+  orderId          String?
+  description      String?
+  executedAt       DateTime
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([broker, brokerTradeId])
+  @@index([broker])
+  @@index([symbol])
+  @@index([executedAt])
+}
+
+model DipDiagnosticReport {
+  id                      String   @id @default(uuid())
+  symbol                  String   // e.g. "NVDA", "AAPL"
+  companyName             String   // e.g. "NVIDIA Corporation"
+  currentPrice            Float
+  dayChangePercent        Float
+  distanceFrom52WHigh     Float
+  classification          String   // "VOLATILITY_DRIVEN", "FUNDAMENTAL_IMPAIRMENT", "MACRO_SECTOR_ROTATION", "OVERREACTION_OPPORTUNITY"
+  verdict                 String   // "STRONG_BUY_DIP", "ACCUMULATE_PULLBACK", "HOLD_WAIT_FOR_BASE", "AVOID_FALLING_KNIFE", "TRIM_DEFENSIVE"
+  opportunityScore        Int      // 0 - 100
+  fundamentalHealthScore  Int      // 0 - 100
+  volatilityFactorPercent Int      // 0 - 100
+  fundamentalFactorPercent Int     // 0 - 100
+  primaryDriverSummary    String
+  executiveDiagnosis      String
+  targetEntryZone         String?  // e.g. "$110 - $118"
+  dcaStrategy             String?
+  optionsStrategy         String?
+  stopLossOrInvalidation  String?
+  timeHorizon             String?
+  contentJson             String   // Full raw structured JSON of the report
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([symbol])
+  @@index([createdAt])
+}
+
+model PortfolioValuationAudit {
+  id                      String   @id @default(uuid())
+  title                   String   // e.g. "Portfolio Valuation & Intrinsic Health Audit"
+  overallValuationStatus  String   // "DEEPLY_UNDERVALUED" | "UNDERVALUED" | "FAIRLY_VALUED" | "OVERVALUED" | "EXTREMELY_OVERVALUED"
+  portfolioDiscountPercent Float   // e.g. +14.5% (undervalued discount) or -12.3% (overvalued premium)
+  portfolioScore          Int      // 0 - 100 overall valuation score
+  totalMarketValue        Float    // Total audited portfolio equity value
+  totalFairValue          Float    // Sum of estimated fair values
+  undervaluedCount        Int      // Count of holdings trading below fair value
+  fairlyValuedCount       Int      // Count of holdings trading near fair value
+  overvaluedCount         Int      // Count of holdings trading above fair value
+  totalHoldingsCount      Int      // Total holdings analyzed
+  executiveSummary        String   // Multi-paragraph AI diagnosis of portfolio valuation
+  keyOpportunitiesSummary String?  // Highlights of top undervalued gems
+  valuationRisksSummary   String?  // Highlights of overextended / overvalued holdings
+  holdingsValuationsJson  String   // JSON array of detailed asset-by-asset valuation records
+  rawReportJson           String   // Complete structured audit report
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([createdAt])
+}
 

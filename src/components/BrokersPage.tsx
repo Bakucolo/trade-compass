@@ -2,19 +2,29 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useIBKRStatus, useIBKRPortfolio } from '../services/ibkr';
 import { useTastytradePositions } from '../services/tastytrade';
+import { useTrading212Status, useTrading212Positions } from '../services/trading212';
 import { usePortfolioBalances } from '../services/portfolioBalanceService';
 import { marketDataService, StockQuote } from '../services/marketData';
 import { convertIbkrToOcc } from '../utils/optionUtils';
 import { PortfolioSummary } from './portfolio/PortfolioSummary';
+import { PerformanceLeaderboard } from './portfolio/PerformanceLeaderboard';
 import { HoldingsTable } from './portfolio/HoldingsTable';
 import { PortfolioAuditModal } from './portfolio/PortfolioAuditModal';
+import { PortfolioValuationModal } from './portfolio/PortfolioValuationModal';
 import { UnifiedPosition } from './portfolio/types';
+import { getCompanyStyleAndThemes } from '../services/stockThematics';
+import { ErrorBoundary } from './ErrorBoundary';
 
 import { Button } from './ui/button';
-import { RefreshCw, Plus, Settings, Wallet, Layers, ShieldAlert, Sparkles } from 'lucide-react';
+import { RefreshCw, Plus, Settings, Wallet, Layers, ShieldAlert, Sparkles, Bot, Activity, Scale } from 'lucide-react';
 import { useToast } from './ui/use-toast';
+import { AgentActivityDrawer } from './AgentActivityDrawer';
+import { useAgentActivities } from '../services/agentActivityService';
+interface BrokersPageProps {
+  onNavigateToResearch?: (symbol: string) => void;
+}
 
-export function BrokersPage() {
+export function BrokersPage({ onNavigateToResearch }: BrokersPageProps = {}) {
   const { toast } = useToast();
 
   // --- Real-time Broker Balances & Buying Power ---
@@ -26,6 +36,8 @@ export function BrokersPage() {
   const isIBConnected = ibStatus?.connected ?? false;
 
   const { data: tastyPositions, isLoading: isTastyLoading } = useTastytradePositions();
+  const { data: t212Status, isLoading: isT212Loading } = useTrading212Status();
+  const isT212Connected = t212Status?.connected || balancesData?.brokers?.trading212?.status === 'connected' || false;
 
   // --- Aggregation State ---
   // --- Aggregation State ---
@@ -50,6 +62,10 @@ export function BrokersPage() {
     return localStorage.getItem('isPrivacyMode') !== 'false'; // Default true
   });
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
+  const [isValuationModalOpen, setIsValuationModalOpen] = useState(false);
+  const [isAgentDrawerOpen, setIsAgentDrawerOpen] = useState(false);
+  const { data: agentData } = useAgentActivities(10);
+  const hasRunningAgent = agentData?.activities?.some(a => a.status === 'RUNNING');
 
   const togglePrivacyMode = () => {
     setIsPrivacyMode(prev => {
@@ -185,6 +201,8 @@ export function BrokersPage() {
       const dayChange = (quote && isUSD) ? (dayChangePerShare * p.quantity * multiplier) : (p.dayPnL || 0);
       const dayChangePercent = (quote && isUSD) ? (quote.changesPercentage || 0) : (p.dayPnLPercent || 0);
 
+      const thematicInfo = getCompanyStyleAndThemes(p.underlyingSymbol || unifiedSymbol, p.description || undefined);
+
       tempPositions.push({
         id: p.id,
         symbol: unifiedSymbol,
@@ -196,7 +214,7 @@ export function BrokersPage() {
         dayChangePercent: dayChangePercent,
         unrealizedPL: unrealizedPL,
         unrealizedPLPercent: unrealizedPLPercent,
-        source: p.broker?.name === 'Tastytrade' ? 'Tastytrade' : 'IBKR',
+        source: p.broker?.name === 'Tastytrade' ? 'Tastytrade' : p.broker?.name === 'Trading 212' ? 'Trading 212' : 'IBKR',
         assetType: p.assetType === 'OPTION' ? 'Option' : 'Stock',
         strike: p.strikePrice || undefined,
         optionType: p.assetType === 'OPTION' ? (p.optionType === 'C' || p.optionType === 'Call' ? 'Call' : 'Put') : undefined,
@@ -204,6 +222,9 @@ export function BrokersPage() {
         underlyingSymbol: p.underlyingSymbol || undefined,
         underlyingPrice: underlyingPrice,
         currency: p.currency || 'USD',
+        investmentStyle: thematicInfo.style,
+        themes: thematicInfo.themes,
+        primaryTheme: thematicInfo.primaryTheme,
       });
     }
     return tempPositions;
@@ -326,11 +347,42 @@ export function BrokersPage() {
           <Button
             variant="default"
             size="sm"
+            onClick={() => setIsValuationModalOpen(true)}
+            className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold text-xs shadow-md gap-1.5"
+          >
+            <Scale className="w-3.5 h-3.5" />
+            AI Valuation Agent
+          </Button>
+
+          <Button
+            variant="default"
+            size="sm"
             onClick={() => setIsAuditModalOpen(true)}
             className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-xs shadow-md gap-1.5"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            AI Portfolio Analyser
+            AI Risk Analyser
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsAgentDrawerOpen(true)}
+            className="text-xs gap-1.5 relative border-purple-500/30 hover:bg-purple-950/20"
+          >
+            <Bot className="w-3.5 h-3.5 text-purple-400" />
+            <span>Agent Activity</span>
+            {hasRunningAgent && (
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+            )}
+            {!hasRunningAgent && (agentData?.count || 0) > 0 && (
+              <Badge variant="secondary" className="text-[9px] font-mono px-1 py-0 h-4 bg-muted">
+                {agentData?.count}
+              </Badge>
+            )}
           </Button>
 
           <Button variant="outline" size="sm" onClick={refreshPrices} disabled={isAggregating} className="text-xs">
@@ -341,33 +393,54 @@ export function BrokersPage() {
       </div>
 
       {/* Portfolio Summary Cards */}
-      <PortfolioSummary
-        netLiquidValue={balancesData?.total?.netLiquidatingValue && balancesData.total.netLiquidatingValue > 0 ? balancesData.total.netLiquidatingValue : totals.netLiquidValue}
-        dailyPL={balancesData?.total?.dayPnL !== undefined && balancesData.total.dayPnL !== 0 ? balancesData.total.dayPnL : totals.dailyPL}
-        dailyPLPercent={portfolioDailyPercent || 0}
-        unrealizedPL={balancesData?.total?.unrealizedPnL !== undefined && balancesData.total.unrealizedPnL !== 0 ? balancesData.total.unrealizedPnL : totals.unrealizedPL}
-        buyingPower={balancesData?.total?.buyingPower ?? totals.buyingPower}
-        connectedSources={{
-          ibkr: isIBConnected,
-          tastytrade: balancesData?.brokers?.tastytrade?.status === 'connected' || balancesData?.brokers?.tastytrade?.status === 'active' || true
-        }}
-        isPrivacyMode={isPrivacyMode}
-        onTogglePrivacy={togglePrivacyMode}
-        accountBreakdown={{
-          ibkr: balancesData?.brokers?.ibkr?.netLiquidatingValue || totals.ibkrTotal,
-          tastytrade: balancesData?.brokers?.tastytrade?.netLiquidatingValue || totals.tastyTotal
-        }}
-        brokerBalances={balancesData?.brokers}
-        portfolioData={balancesData}
-      />
+      <ErrorBoundary fallbackTitle="Portfolio Summary">
+        <PortfolioSummary
+          netLiquidValue={balancesData?.total?.netLiquidatingValue && balancesData.total.netLiquidatingValue > 0 ? balancesData.total.netLiquidatingValue : totals.netLiquidValue}
+          dailyPL={balancesData?.total?.dayPnL !== undefined && balancesData.total.dayPnL !== 0 ? balancesData.total.dayPnL : totals.dailyPL}
+          dailyPLPercent={portfolioDailyPercent || 0}
+          unrealizedPL={balancesData?.total?.unrealizedPnL !== undefined && balancesData.total.unrealizedPnL !== 0 ? balancesData.total.unrealizedPnL : totals.unrealizedPL}
+          buyingPower={balancesData?.total?.buyingPower ?? totals.buyingPower}
+          connectedSources={{
+            ibkr: isIBConnected,
+            tastytrade: balancesData?.brokers?.tastytrade?.status === 'connected' || balancesData?.brokers?.tastytrade?.status === 'active' || true,
+            trading212: isT212Connected
+          }}
+          isPrivacyMode={isPrivacyMode}
+          onTogglePrivacy={togglePrivacyMode}
+          accountBreakdown={{
+            ibkr: balancesData?.brokers?.ibkr?.netLiquidatingValue || totals.ibkrTotal || 0,
+            tastytrade: balancesData?.brokers?.tastytrade?.netLiquidatingValue || totals.tastyTotal || 0,
+            trading212: balancesData?.brokers?.trading212?.netLiquidatingValue || 0
+          }}
+          brokerBalances={balancesData?.brokers}
+          portfolioData={balancesData}
+          positions={unifiedPositions}
+          onNavigateToResearch={onNavigateToResearch}
+        />
+      </ErrorBoundary>
+
+      {/* Portfolio Movers & Performance Leaderboard (Day, Week, Month, YTD) */}
+      <ErrorBoundary fallbackTitle="Movers & Performance Leaderboard">
+        <PerformanceLeaderboard
+          positions={unifiedPositions}
+          isPrivacyMode={isPrivacyMode}
+          onSelectPosition={(pos) => {
+            const sym = pos.underlyingSymbol || (pos.assetType === 'Option' ? pos.symbol.match(/^[A-Z0-9.\-]+/)?.[0] : pos.symbol) || pos.symbol;
+            onNavigateToResearch?.(sym);
+          }}
+        />
+      </ErrorBoundary>
 
       {/* Main Holdings Table */}
-      <HoldingsTable
-        positions={unifiedPositions}
-        isLoading={(isIBLoading || isTastyLoading) && unifiedPositions.length === 0}
-        onRefresh={refreshPrices}
-        isPrivacyMode={isPrivacyMode}
-      />
+      <ErrorBoundary fallbackTitle="Holdings Table">
+        <HoldingsTable
+          positions={unifiedPositions}
+          isLoading={(isIBLoading || isTastyLoading) && unifiedPositions.length === 0}
+          onRefresh={refreshPrices}
+          isPrivacyMode={isPrivacyMode}
+          onNavigateToResearch={onNavigateToResearch}
+        />
+      </ErrorBoundary>
 
       {/* AI Portfolio Tactical Audit & Risk Modal */}
       {isAuditModalOpen && (
@@ -380,6 +453,24 @@ export function BrokersPage() {
           isPrivacyMode={isPrivacyMode}
         />
       )}
+
+      {/* AI Portfolio Valuation Audit Modal */}
+      {isValuationModalOpen && (
+        <PortfolioValuationModal
+          isOpen={isValuationModalOpen}
+          onClose={() => setIsValuationModalOpen(false)}
+          positions={unifiedPositions}
+          balancesData={balancesData}
+          isPrivacyMode={isPrivacyMode}
+          onNavigateToResearch={onNavigateToResearch}
+        />
+      )}
+
+      {/* Real-Time AI Agent Activity Drawer */}
+      <AgentActivityDrawer
+        isOpen={isAgentDrawerOpen}
+        onClose={() => setIsAgentDrawerOpen(false)}
+      />
 
       <div className="text-xs text-muted-foreground text-center pt-4">
         Last Updated: {lastUpdated.toLocaleTimeString()}

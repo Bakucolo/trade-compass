@@ -19,7 +19,7 @@ export interface UnifiedPosition {
     dayChangePercent: number;
     unrealizedPL: number;
     unrealizedPLPercent: number;
-    source: 'IBKR' | 'Tastytrade';
+    source: 'IBKR' | 'Tastytrade' | 'Trading 212';
     assetType: 'Stock' | 'Option' | 'Crypto' | 'Other';
     // Option Specifics
     strike?: number;
@@ -29,4 +29,8 @@ export interface UnifiedPosition {
     underlyingSymbol?: string;
     underlyingPrice?: number;
     currency?: string;
+    // Thematic & Style
+    investmentStyle?: 'Growth' | 'Value' | 'Dividend' | 'Defensive' | 'Speculative' | 'Blend';
+    themes?: string[];
+    primaryTheme?: string;
 }

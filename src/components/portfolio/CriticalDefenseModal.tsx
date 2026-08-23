@@ -153,7 +153,7 @@ export function computePositionThreat(pos: UnifiedPosition): RankedThreatPositio
 export function CriticalDefenseModal({
   isOpen,
   onClose,
-  positions,
+  positions = [],
   onOpenAdvisorForPosition
 }: CriticalDefenseModalProps) {
   const [isFullScreen, setIsFullScreen] = useState(false);
@@ -167,8 +167,9 @@ export function CriticalDefenseModal({
 
   // Compute and rank all positions from most critical to least critical
   const rankedPositions = useMemo(() => {
-    const scored = positions.map(p => computePositionThreat(p));
-    const activeThreats = scored.filter(s => s.threatScore >= 15 || s.position.unrealizedPL < 0);
+    const safePositions = Array.isArray(positions) ? positions.filter(Boolean) : [];
+    const scored = safePositions.map(p => computePositionThreat(p));
+    const activeThreats = scored.filter(s => s.threatScore >= 15 || (s.position && s.position.unrealizedPL < 0));
     return activeThreats.sort((a, b) => b.threatScore - a.threatScore);
   }, [positions]);
 

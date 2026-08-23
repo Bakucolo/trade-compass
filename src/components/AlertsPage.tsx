@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils';
 import {
   Bell,
   BellRing,
+  BellOff,
   Plus,
   Search,
   Trash2,
@@ -19,7 +20,9 @@ import {
   Loader2,
   Sparkles,
   Calendar,
-  Edit2
+  Edit2,
+  VolumeX,
+  Volume2
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -29,9 +32,12 @@ import {
   useAlerts,
   useDeleteAlert,
   useResetAlert,
+  useMuteAlert,
+  useUnmuteAlert,
   PriceAlert,
 } from '@/services/alertService';
 import { PriceAlertModal } from './PriceAlertModal';
+import { useToast } from './ui/use-toast';
 
 type SortOption =
   | 'triggered_desc'
@@ -41,13 +47,14 @@ type SortOption =
   | 'created_desc'
   | 'target_desc';
 
-type StatusFilter = 'ALL' | 'ACTIVE' | 'TRIGGERED';
+type StatusFilter = 'ALL' | 'ACTIVE' | 'TRIGGERED' | 'MUTED';
 
 interface AlertsPageProps {
   onNavigateToResearch?: (symbol: string) => void;
 }
 
 export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
+  const { toast } = useToast();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortOption, setSortOption] = useState<SortOption>('triggered_desc');
@@ -61,10 +68,15 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
   const { data: alerts = [], isLoading, isRefetching, refetch } = useAlerts();
   const deleteAlertMutation = useDeleteAlert();
   const resetAlertMutation = useResetAlert();
+  const muteAlertMutation = useMuteAlert();
+  const unmuteAlertMutation = useUnmuteAlert();
 
   // Metrics
   const activeCount = alerts.filter((a) => a.status === 'ACTIVE').length;
-  const triggeredCount = alerts.filter((a) => a.status === 'TRIGGERED').length;
+  const unmutedTriggeredCount = alerts.filter((a) => a.status === 'TRIGGERED' && !a.isMuted).length;
+  const mutedCount = alerts.filter((a) => a.isMuted || a.status === 'CANCELLED').length;
+  const totalTriggeredCount = alerts.filter((a) => a.status === 'TRIGGERED').length;
+
   const latestTriggered = alerts
     .filter((a) => a.status === 'TRIGGERED' && a.triggeredAt)
     .sort((a, b) => new Date(b.triggeredAt!).getTime() - new Date(a.triggeredAt!).getTime())[0];
@@ -74,8 +86,12 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
     let list = [...alerts];
 
     // Status Filter
-    if (statusFilter !== 'ALL') {
-      list = list.filter((a) => a.status === statusFilter);
+    if (statusFilter === 'ACTIVE') {
+      list = list.filter((a) => a.status === 'ACTIVE');
+    } else if (statusFilter === 'TRIGGERED') {
+      list = list.filter((a) => a.status === 'TRIGGERED' && !a.isMuted);
+    } else if (statusFilter === 'MUTED') {
+      list = list.filter((a) => a.isMuted);
     }
 
     // Search Filter
@@ -123,9 +139,49 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
     if (confirm(`Are you sure you want to delete the price alert for ${symbol}?`)) {
       try {
         await deleteAlertMutation.mutateAsync(id);
+        toast({
+          title: "Alert Deleted",
+          description: `Price alert for ${symbol} was removed.`,
+        });
       } catch (err: any) {
-        alert(`Failed to delete alert: ${err.message}`);
+        toast({
+          title: "Failed to delete alert",
+          description: err.message,
+          variant: "destructive"
+        });
       }
+    }
+  };
+
+  const handleMute = async (alertItem: PriceAlert) => {
+    try {
+      await muteAlertMutation.mutateAsync(alertItem.id);
+      toast({
+        title: "Alert Muted",
+        description: `Triggered alert for ${alertItem.symbol} is muted and preserved in history.`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Failed to mute alert",
+        description: err.message,
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleUnmute = async (alertItem: PriceAlert) => {
+    try {
+      await unmuteAlertMutation.mutateAsync(alertItem.id);
+      toast({
+        title: "Alert Unmuted",
+        description: `Alert for ${alertItem.symbol} is now unmuted.`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Failed to unmute alert",
+        description: err.message,
+        variant: "destructive"
+      });
     }
   };
 
@@ -136,8 +192,16 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
         targetPrice: alertItem.targetPrice,
         condition: alertItem.condition,
       });
+      toast({
+        title: "Alert Re-armed",
+        description: `Price alert for ${alertItem.symbol} is now actively monitoring.`,
+      });
     } catch (err: any) {
-      alert(`Failed to re-arm alert: ${err.message}`);
+      toast({
+        title: "Failed to re-arm alert",
+        description: err.message,
+        variant: "destructive"
+      });
     }
   };
 
@@ -166,18 +230,23 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-border/50 pb-6">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary/60">
-              Price Alerts
+            <h1 className="text-3xl font-bold tracking-tight text-foreground glow-text-white">
+              Price Alerts Command
             </h1>
-            {triggeredCount > 0 && (
-              <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-xs font-semibold animate-pulse">
+            {unmutedTriggeredCount > 0 ? (
+              <Badge className="bg-rose-500/20 text-rose-300 border-rose-500/30 text-xs font-semibold animate-pulse">
                 <BellRing className="w-3.5 h-3.5 mr-1" />
-                {triggeredCount} Triggered
+                {unmutedTriggeredCount} Fired Alert{unmutedTriggeredCount > 1 ? 's' : ''}
               </Badge>
-            )}
+            ) : mutedCount > 0 ? (
+              <Badge variant="outline" className="bg-slate-800 text-muted-foreground border-border/60 text-xs font-semibold">
+                <BellOff className="w-3.5 h-3.5 mr-1" />
+                {mutedCount} Muted
+              </Badge>
+            ) : null}
           </div>
           <p className="text-muted-foreground text-sm mt-1">
-            Real-time price monitoring and triggered alert history. Sorted by trigger time, ticker, and target level.
+            Real-time price monitoring, instant alerts, and triggered alert history with custom muting & archiving.
           </p>
         </div>
 
@@ -219,32 +288,39 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
 
         <Card className="bg-card/60 border-primary/20 p-4">
           <div className="flex justify-between items-start">
-            <p className="text-xs font-semibold text-primary uppercase tracking-wider">Active Monitoring</p>
+            <p className="text-xs font-semibold text-primary uppercase tracking-wider">Active Targets</p>
             <span className="w-2 h-2 rounded-full bg-primary animate-ping" />
           </div>
           <p className="text-2xl font-bold font-mono text-primary mt-1">{activeCount}</p>
         </Card>
 
-        <Card className="bg-card/60 border-amber-500/20 p-4">
-          <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Triggered Alerts</p>
-          <p className="text-2xl font-bold font-mono text-amber-400 mt-1">{triggeredCount}</p>
+        <Card className={cn(
+          "p-4 border",
+          unmutedTriggeredCount > 0
+            ? "bg-rose-950/20 border-rose-500/30"
+            : "bg-card/60 border-border/60"
+        )}>
+          <div className="flex justify-between items-start">
+            <p className={cn("text-xs font-semibold uppercase tracking-wider", unmutedTriggeredCount > 0 ? "text-rose-400" : "text-muted-foreground")}>
+              Unmuted Fired
+            </p>
+            {unmutedTriggeredCount > 0 && <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />}
+          </div>
+          <p className={cn("text-2xl font-bold font-mono mt-1", unmutedTriggeredCount > 0 ? "text-rose-300" : "text-foreground")}>
+            {unmutedTriggeredCount}
+          </p>
         </Card>
 
         <Card className="bg-card/60 border-border/60 p-4">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Latest Trigger</p>
-          <p className="text-sm font-bold font-mono text-foreground mt-1 truncate">
-            {latestTriggered ? `${latestTriggered.symbol} @ $${latestTriggered.triggeredPrice?.toFixed(2)}` : 'None'}
-          </p>
-          <p className="text-[10px] text-muted-foreground mt-0.5">
-            {latestTriggered ? formatDate(latestTriggered.triggeredAt) : 'No alerts triggered yet'}
-          </p>
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Muted / Acknowledged</p>
+          <p className="text-2xl font-bold font-mono text-muted-foreground mt-1">{mutedCount}</p>
         </Card>
       </div>
 
       {/* Filter Tabs & Search / Sort Controls */}
       <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
         {/* Status Filter Pills */}
-        <div className="flex items-center gap-1.5 p-1 bg-card/60 border border-border/60 rounded-xl">
+        <div className="flex items-center gap-1.5 p-1 bg-card/60 border border-border/60 rounded-xl flex-wrap">
           <button
             onClick={() => setStatusFilter('ALL')}
             className={cn(
@@ -273,12 +349,24 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
             className={cn(
               "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5",
               statusFilter === 'TRIGGERED'
-                ? "bg-primary text-primary-foreground shadow"
+                ? "bg-rose-500 text-white shadow"
                 : "text-muted-foreground hover:text-foreground"
             )}
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-            Triggered ({triggeredCount})
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+            Triggered ({unmutedTriggeredCount})
+          </button>
+          <button
+            onClick={() => setStatusFilter('MUTED')}
+            className={cn(
+              "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5",
+              statusFilter === 'MUTED'
+                ? "bg-slate-700 text-white shadow"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <BellOff className="w-3.5 h-3.5 text-slate-400" />
+            Muted ({mutedCount})
           </button>
         </div>
 
@@ -353,13 +441,14 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
                 onClick={() => setIsModalOpen(true)}
                 className="mt-2 text-xs bg-primary text-primary-foreground"
               >
-                <Plus className="w-3.5 h-3.5 mr-1" /> Create Your First Alert
+                <Plus className="w-3.5 h-3.5 mr-1" /> Create Price Alert
               </Button>
             </div>
           </Card>
         ) : (
           processedAlerts.map((item) => {
             const isTriggered = item.status === 'TRIGGERED';
+            const isMuted = Boolean(item.isMuted);
             const isAbove = item.condition === 'ABOVE';
 
             return (
@@ -367,7 +456,11 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
                 key={item.id}
                 className={cn(
                   "border transition-all hover:border-primary/40 bg-card/60 backdrop-blur-sm p-4 overflow-hidden",
-                  isTriggered ? "border-amber-500/30 bg-amber-950/10" : "border-border/60"
+                  isTriggered && !isMuted
+                    ? "border-rose-500/40 bg-rose-950/15 shadow-[0_0_15px_rgba(244,63,94,0.08)]"
+                    : isMuted
+                    ? "border-border/40 bg-slate-950/30 opacity-80"
+                    : "border-border/60"
                 )}
               >
                 <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -376,16 +469,18 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
                     <div
                       className={cn(
                         "w-11 h-11 rounded-xl border flex items-center justify-center font-mono font-black text-sm shrink-0",
-                        isTriggered
-                          ? "bg-amber-500/15 border-amber-500/30 text-amber-400"
+                        isTriggered && !isMuted
+                          ? "bg-rose-500/20 border-rose-500/40 text-rose-300"
+                          : isMuted
+                          ? "bg-slate-800 border-slate-700 text-slate-400"
                           : "bg-primary/10 border-primary/20 text-primary"
                       )}
                     >
-                      {item.symbol.slice(0, 3)}
+                      {isMuted ? <BellOff className="w-5 h-5" /> : item.symbol.slice(0, 3)}
                     </div>
 
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <button
                           onClick={() => handleOpenResearch(item.symbol)}
                           className="font-mono font-bold text-base text-foreground hover:text-primary transition-colors flex items-center gap-1 group/btn"
@@ -399,8 +494,8 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
                           className={cn(
                             "px-2 py-0.5 text-[11px] font-bold border font-mono",
                             isAbove
-                              ? "bg-success/10 text-success border-success/30"
-                              : "bg-destructive/10 text-destructive border-destructive/30"
+                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                              : "bg-rose-500/10 text-rose-400 border-rose-500/30"
                           )}
                         >
                           {isAbove ? (
@@ -408,14 +503,21 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
                           ) : (
                             <TrendingDown className="w-3 h-3 mr-1 inline" />
                           )}
-                          {isAbove ? 'Price ≥' : 'Price ≤'} ${item.targetPrice.toFixed(2)}
+                          {isAbove ? 'Target ≥' : 'Target ≤'} ${item.targetPrice.toFixed(2)}
                         </Badge>
 
-                        {isTriggered ? (
-                          <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/40 text-[10px] font-bold">
-                            TRIGGERED
+                        {isTriggered && !isMuted && (
+                          <Badge className="bg-rose-500/20 text-rose-300 border-rose-500/40 text-[10px] font-bold animate-pulse">
+                            FIRED
                           </Badge>
-                        ) : (
+                        )}
+                        {isMuted && (
+                          <Badge variant="outline" className="bg-slate-800 text-slate-300 border-slate-700 text-[10px] font-semibold flex items-center gap-1">
+                            <BellOff className="w-3 h-3 text-slate-400" />
+                            MUTED
+                          </Badge>
+                        )}
+                        {!isTriggered && (
                           <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px]">
                             ACTIVE
                           </Badge>
@@ -448,8 +550,8 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
                         className={cn(
                           "font-mono font-bold text-sm",
                           item.distancePercent != null && item.distancePercent >= 0
-                            ? "text-success"
-                            : "text-destructive"
+                            ? "text-emerald-400"
+                            : "text-rose-400"
                         )}
                       >
                         {item.distancePercent != null
@@ -459,12 +561,23 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
                     </div>
 
                     {isTriggered ? (
-                      <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2">
-                        <span className="text-[10px] uppercase font-bold text-amber-400 block">
-                          Triggered Info
+                      <div className={cn(
+                        "rounded-lg p-2 border",
+                        isMuted
+                          ? "bg-slate-900/60 border-slate-800"
+                          : "bg-rose-500/10 border-rose-500/20"
+                      )}>
+                        <span className={cn(
+                          "text-[10px] uppercase font-bold block",
+                          isMuted ? "text-slate-400" : "text-rose-400"
+                        )}>
+                          Trigger Record
                         </span>
-                        <p className="font-mono text-xs font-semibold text-amber-300">
-                          Hit ${item.triggeredPrice ? item.triggeredPrice.toFixed(2) : item.targetPrice.toFixed(2)} at {formatDate(item.triggeredAt)}
+                        <p className={cn(
+                          "font-mono text-xs font-semibold",
+                          isMuted ? "text-slate-300" : "text-rose-300"
+                        )}>
+                          Hit ${item.triggeredPrice ? item.triggeredPrice.toFixed(2) : item.targetPrice.toFixed(2)} on {formatDate(item.triggeredAt)}
                         </p>
                       </div>
                     ) : (
@@ -481,13 +594,42 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
 
                   {/* Right: Action Buttons */}
                   <div className="flex items-center gap-1.5 self-end md:self-center">
+                    {/* Mute Button (If Triggered & Unmuted) */}
+                    {isTriggered && !isMuted && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleMute(item)}
+                        className="h-8 text-xs gap-1 border-slate-700 bg-slate-800/80 hover:bg-slate-700 text-slate-200"
+                        title="Mute alert so it stops notifying while keeping trigger history"
+                      >
+                        <BellOff className="w-3.5 h-3.5 text-slate-400" />
+                        Mute
+                      </Button>
+                    )}
+
+                    {/* Unmute Button (If Muted) */}
+                    {isMuted && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleUnmute(item)}
+                        className="h-8 text-xs gap-1 border-border/70 hover:bg-accent text-muted-foreground hover:text-foreground"
+                        title="Unmute alert"
+                      >
+                        <Bell className="w-3.5 h-3.5 text-amber-400" />
+                        Unmute
+                      </Button>
+                    )}
+
+                    {/* Re-arm Button */}
                     {isTriggered && (
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => handleReset(item)}
-                        className="h-8 text-xs gap-1 border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
-                        title="Re-arm alert"
+                        className="h-8 text-xs gap-1 border-primary/30 text-primary hover:bg-primary/10"
+                        title="Re-arm and set active"
                       >
                         <RotateCcw className="w-3.5 h-3.5" />
                         Re-arm

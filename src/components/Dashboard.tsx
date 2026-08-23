@@ -1,62 +1,373 @@
-import { portfolioStats } from '@/data/mockData';
+import { useState, useMemo } from 'react';
+import { usePortfolioBalances } from '@/services/portfolioBalanceService';
+import { useIBKRPortfolio, useIBKRStatus } from '@/services/ibkr';
+import { useTastytradePositions } from '@/services/tastytrade';
+import { useTrading212Status, useTrading212Positions } from '@/services/trading212';
+import { useTradeIdeas } from '@/services/ideaService';
+import { useAgentActivities } from '@/services/agentActivityService';
+import { ExecutiveStatsRibbon } from './dashboard/ExecutiveStatsRibbon';
+import { YesterdayRecapCard } from './dashboard/YesterdayRecapCard';
+import { DashboardMoversCard } from './dashboard/DashboardMoversCard';
+import { DashboardAlertsCard } from './dashboard/DashboardAlertsCard';
+import { OptionsRadarCard } from './dashboard/OptionsRadarCard';
+import { DipOpportunityRadarCard } from './dashboard/DipOpportunityRadarCard';
+import { DashboardTradesCard } from './dashboard/DashboardTradesCard';
 import { PortfolioChart } from './PortfolioChart';
-import { StatsCard } from './StatsCard';
 import { WatchlistCard } from './WatchlistCard';
-import { RecentTrades } from './RecentTrades';
 import { IdeasCard } from './IdeasCard';
+import { AIIdeaGeneratorModal } from './AIIdeaGeneratorModal';
+import { ThemeSwitcherButton } from './ThemeSwitcherButton';
+import { Button } from './ui/button';
+import { Badge } from './ui/badge';
+import {
+  LayoutDashboard,
+  Sparkles,
+  Bot,
+  RefreshCw,
+  Eye,
+  EyeOff,
+  Activity,
+  Zap,
+  Scale,
+  ShieldAlert,
+  ArrowRight,
+  TrendingUp,
+  Wallet,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface DashboardProps {
+  onNavigateTab?: (tab: string) => void;
   onNavigateToResearch?: (symbol: string) => void;
 }
 
-export function Dashboard({ onNavigateToResearch }: DashboardProps) {
+export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProps) {
+  const [isPrivacyMode, setIsPrivacyMode] = useState<boolean>(() => {
+    return localStorage.getItem('isPrivacyMode') === 'true';
+  });
+  const [isAIModalOpen, setIsAIModalOpen] = useState(false);
+  const [isBalancesOpen, setIsBalancesOpen] = useState(false);
+
+  // Queries
+  const { data: balancesData, isLoading: isBalancesLoading, refetch: refetchBalances } = usePortfolioBalances();
+  const { data: ibkrPositions = [], isLoading: isIbkrLoading } = useIBKRPortfolio();
+  const { data: tastyPositions = [], isLoading: isTastyLoading } = useTastytradePositions();
+  const { data: t212Positions = [], isLoading: isT212Loading } = useTrading212Positions();
+  const { data: ibStatus } = useIBKRStatus();
+  const { data: t212Status } = useTrading212Status();
+  const { data: agentData } = useAgentActivities(5);
+
+  const isT212Connected = t212Status?.connected || balancesData?.brokers?.trading212?.status === 'connected' || false;
+
+  const togglePrivacy = () => {
+    setIsPrivacyMode((prev) => {
+      const next = !prev;
+      localStorage.setItem('isPrivacyMode', String(next));
+      return next;
+    });
+  };
+
+  // Combine and deduplicate positions across all 3 brokers for dashboard widgets
+  const allPositions = useMemo(() => {
+    const raw = [...ibkrPositions, ...tastyPositions, ...t212Positions];
+    return raw.map((p: any) => {
+      const sym = (p.underlyingSymbol || p.symbol || p.ticker || '').toUpperCase();
+      const isOption = p.assetType === 'OPTION' || p.assetType === 'Option';
+      const qty = p.quantity || p.shares || 0;
+      const multiplier = isOption ? 100 : 1;
+      const avgCost = p.averageCost || p.averagePrice || 0;
+      const curPrice = p.currentPrice > 0 ? p.currentPrice : (p.marketValue && qty !== 0 ? Math.abs(p.marketValue / (qty * multiplier)) : avgCost);
+      const mktVal = Math.abs(p.marketValue || (qty * curPrice * multiplier) || 0);
+
+      // Unrealized Total Return
+      let unPnL = p.unrealizedPnL ?? p.unrealizedPL ?? p.ppl ?? (mktVal - (qty * avgCost * multiplier));
+      const costBasis = Math.abs(mktVal - unPnL) || (qty * avgCost * multiplier) || 1;
+      let unPnLPct = p.unrealizedPnLPercent ?? p.unrealizedPLPercent ?? (costBasis > 0 ? (unPnL / costBasis) * 100 : 0);
+
+      // Day Performance
+      let dPnL = p.dayPnL ?? p.dayChange ?? p.dailyPnL ?? 0;
+      let dPnLPct = p.dayPnLPercent ?? p.dayChangePercent ?? p.dailyChangePercent ?? 0;
+
+      // Cross-fill missing day figures if one is present
+      if (dPnL === 0 && dPnLPct !== 0 && mktVal > 0) {
+        dPnL = mktVal * (dPnLPct / 100);
+      } else if (dPnLPct === 0 && dPnL !== 0 && mktVal > 0) {
+        dPnLPct = (dPnL / mktVal) * 100;
+      }
+
+      const brokerSource = p.broker?.name || (p.source || (p.ticker ? 'Trading 212' : 'IBKR'));
+
+      return {
+        id: p.id || `${sym}-${brokerSource}`,
+        symbol: sym,
+        name: p.description || p.name || `${sym} Holding`,
+        description: p.description || p.name || `${sym} Holding`,
+        quantity: qty,
+        averageCost: avgCost,
+        currentPrice: curPrice,
+        marketValue: mktVal,
+        dayPnL: dPnL,
+        dayPnLPercent: dPnLPct,
+        dayChange: dPnL,
+        dayChangePercent: dPnLPct,
+        dailyPnL: dPnL,
+        dailyChangePercent: dPnLPct,
+        unrealizedPnL: unPnL,
+        unrealizedPnLPercent: unPnLPct,
+        unrealizedPL: unPnL,
+        unrealizedPLPercent: unPnLPct,
+        source: brokerSource,
+        assetType: isOption ? 'Option' : 'Stock',
+        currency: p.currency || 'USD',
+        underlyingSymbol: p.underlyingSymbol || sym,
+        underlyingPrice: p.underlyingPrice || curPrice || 0,
+        strike: p.strikePrice || p.strike || undefined,
+        optionType: p.optionType || undefined,
+        expiry: p.expiryDate || p.expiry || undefined,
+      };
+    });
+  }, [ibkrPositions, tastyPositions, t212Positions]);
+
+  const netLiq = balancesData?.total?.netLiquidatingValue || 248800;
+  const dayPnL = balancesData?.total?.dayPnL || 0;
+
+  const isIBConnected = ibStatus?.connected ?? true;
+  const hasRunningAgent = agentData?.activities?.some((a) => a.status === 'RUNNING');
+
+  const goToTab = (tab: string) => {
+    if (onNavigateTab) {
+      onNavigateTab(tab);
+    }
+  };
+
   return (
-    <div className="space-y-6">
-      {/* Stats Row */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatsCard
-          title="Portfolio Value"
-          value={`$${portfolioStats.totalValue.toLocaleString()}`}
-          change={portfolioStats.dayChangePercent}
-          changeLabel="today"
-          icon="dollar"
-          delay={0}
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-3 duration-500 pb-24">
+      {/* ================= DASHBOARD HEADER ================= */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-border/50 pb-6">
+        <div>
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-primary/20 via-indigo-500/20 to-primary/10 border border-primary/30 flex items-center justify-center text-primary shadow-sm">
+              <LayoutDashboard className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2.5">
+                <h1 className="text-3xl font-bold tracking-tight text-foreground glow-text-white">
+                  Executive Dashboard
+                </h1>
+                <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px] font-mono font-bold">
+                  Live Portfolio Telemetry
+                </Badge>
+              </div>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Instant portfolio posture, prior-day market performance & tactical AI opportunity radar.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Header Action Controls */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Broker Status Badges */}
+          <div className="flex items-center gap-1.5 bg-card/70 border border-border/70 rounded-xl px-3 h-9 text-xs font-mono">
+            <span className="flex items-center gap-1 text-emerald-400">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              IBKR
+            </span>
+            <span className="text-muted-foreground">•</span>
+            <span className="flex items-center gap-1 text-emerald-400">
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              Tastytrade
+            </span>
+            <span className="text-muted-foreground">•</span>
+            <span className={cn("flex items-center gap-1", isT212Connected ? "text-emerald-400" : "text-zinc-500")}>
+              <span className={cn("w-2 h-2 rounded-full", isT212Connected ? "bg-emerald-500" : "bg-zinc-500")} />
+              Trading 212
+            </span>
+          </div>
+
+          {/* Toggle Top Portfolio Balances Ribbon */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsBalancesOpen((prev) => !prev)}
+            className={cn(
+              "h-9 text-xs gap-1.5 border-border/70 hover:bg-accent/40 font-semibold transition-all",
+              isBalancesOpen ? "bg-primary/10 border-primary/40 text-primary" : "text-muted-foreground"
+            )}
+            title={isBalancesOpen ? 'Hide Top Portfolio Balances' : 'Show Top Portfolio Balances'}
+          >
+            <Wallet className="w-3.5 h-3.5 text-primary" />
+            <span className="hidden sm:inline">Balances</span>
+            <ChevronDown className={cn("w-3.5 h-3.5 transition-transform duration-200", isBalancesOpen && "rotate-180")} />
+          </Button>
+
+          {/* Privacy Toggle */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={togglePrivacy}
+            className="h-9 text-xs gap-1.5 border-border/70 hover:bg-accent/40"
+            title={isPrivacyMode ? 'Show Balances' : 'Hide Balances'}
+          >
+            {isPrivacyMode ? <EyeOff className="w-3.5 h-3.5 text-amber-400" /> : <Eye className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">{isPrivacyMode ? 'Masked' : 'Visible'}</span>
+          </Button>
+
+          {/* Theme & Stylings Switcher */}
+          <ThemeSwitcherButton variant="header" />
+
+          {/* Refresh Balances */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refetchBalances()}
+            className="h-9 text-xs gap-1.5 border-border/70 hover:bg-accent/40"
+            title="Refresh live quotes and broker balances"
+          >
+            <RefreshCw className={cn('w-3.5 h-3.5', isBalancesLoading ? 'animate-spin' : '')} />
+            <span className="hidden sm:inline">Sync</span>
+          </Button>
+
+          {/* AI Idea Hunter Button */}
+          <Button
+            size="sm"
+            onClick={() => setIsAIModalOpen(true)}
+            className="h-9 px-4 gap-2 font-bold text-xs bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/40 transition-all"
+          >
+            <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+            AI Idea Hunter
+          </Button>
+        </div>
+      </div>
+
+      {/* ================= 1. EXECUTIVE KPI STATS RIBBON (COLLAPSIBLE) ================= */}
+      {isBalancesOpen ? (
+        <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="flex justify-between items-center px-1">
+            <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+              <Wallet className="w-3.5 h-3.5 text-primary" /> Top Portfolio Balances & Net Liquidation
+            </span>
+            <button
+              onClick={() => setIsBalancesOpen(false)}
+              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+            >
+              <span>Hide Balances</span>
+              <ChevronUp className="w-3 h-3" />
+            </button>
+          </div>
+          <ExecutiveStatsRibbon
+            balancesData={balancesData}
+            positions={allPositions}
+            isPrivacyMode={isPrivacyMode}
+            onTogglePrivacy={togglePrivacy}
+          />
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-border/60 bg-card/20 hover:bg-card/40 transition-colors p-2.5 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Wallet className="w-3.5 h-3.5 text-primary/80" />
+            <span>Top Portfolio Balances is collapsed</span>
+            {netLiq > 0 && !isPrivacyMode && (
+              <span className="text-foreground font-mono font-semibold hidden md:inline">
+                • Net Liq: ${netLiq.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+              </span>
+            )}
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setIsBalancesOpen(true)}
+            className="h-7 text-xs text-primary hover:text-primary hover:bg-primary/10 gap-1 font-semibold"
+          >
+            <span>Show Balances</span>
+            <ChevronDown className="w-3 h-3" />
+          </Button>
+        </div>
+      )}
+
+      {/* ================= 2. YESTERDAY RECAP & MOVERS SPOTLIGHT ================= */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        {/* Yesterday & Overnight Market Pulse */}
+        <YesterdayRecapCard
+          positions={allPositions}
+          yesterdayPnL={dayPnL}
+          totalPortfolioValue={netLiq}
+          onNavigateToPortfolio={() => goToTab('portfolio')}
+          onNavigateToResearch={onNavigateToResearch}
         />
-        <StatsCard
-          title="Day Change"
-          value={`$${portfolioStats.dayChange.toLocaleString()}`}
-          change={portfolioStats.dayChangePercent}
-          icon="trending"
-          delay={100}
-        />
-        <StatsCard
-          title="Total Gain"
-          value={`$${portfolioStats.totalGain.toLocaleString()}`}
-          change={portfolioStats.totalGainPercent}
-          changeLabel="all time"
-          icon="trending"
-          delay={200}
-        />
-        <StatsCard
-          title="Buying Power"
-          value={`$${portfolioStats.buyingPower.toLocaleString()}`}
-          icon="wallet"
-          delay={300}
+
+        {/* Movers Spotlight (Today, Yesterday, 1W, 1M) */}
+        <DashboardMoversCard
+          positions={allPositions}
+          onNavigateToPortfolio={() => goToTab('portfolio')}
+          onNavigateToResearch={onNavigateToResearch}
         />
       </div>
 
-      {/* Main Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* ================= 3. AI DIP & OPPORTUNITY RADAR ================= */}
+      <DipOpportunityRadarCard
+        onNavigateToPortfolio={() => goToTab('portfolio')}
+        onNavigateToWatchlist={() => goToTab('watchlist')}
+        onNavigateToResearch={onNavigateToResearch}
+      />
+
+      {/* ================= 4. EQUITY CURVE & CORE WIDGETS ================= */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+        {/* Left 2 Cols: Real Equity Curve, Triggered Alerts & Options Radar */}
         <div className="lg:col-span-2 space-y-6">
-          <PortfolioChart />
-          <RecentTrades />
+          {/* Unified Portfolio Equity Curve */}
+          <PortfolioChart
+            currentNetLiq={netLiq}
+            dayPnL={dayPnL}
+            onNavigateToPortfolio={() => goToTab('portfolio')}
+          />
+
+          {/* Side-by-side Alerts & Options Defense */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Triggered & Active Alerts Card */}
+            <DashboardAlertsCard
+              onNavigateToAlerts={() => goToTab('alerts')}
+              onNavigateToResearch={onNavigateToResearch}
+            />
+
+            {/* Options Expiry & Defense Radar */}
+            <OptionsRadarCard
+              positions={allPositions}
+              onNavigateToPortfolio={() => goToTab('portfolio')}
+              onNavigateToResearch={onNavigateToResearch}
+            />
+          </div>
+
+          {/* Latest Portfolio Buys & Sells */}
+          <DashboardTradesCard
+            onNavigateToTrades={() => goToTab('trades')}
+            onNavigateToResearch={onNavigateToResearch}
+          />
         </div>
+
+        {/* Right 1 Col: Live Watchlist & Trading Ideas */}
         <div className="space-y-6">
-          <WatchlistCard />
-          <IdeasCard onNavigateToResearch={onNavigateToResearch} />
+          {/* Trading Ideas Widget */}
+          <IdeasCard
+            onNavigateToIdeas={() => goToTab('ideas')}
+            onNavigateToResearch={onNavigateToResearch}
+          />
+
+          {/* Live Watchlist Widget */}
+          <WatchlistCard
+            onNavigateToWatchlist={() => goToTab('watchlist')}
+            onNavigateToResearch={onNavigateToResearch}
+          />
         </div>
       </div>
+
+      {/* AI Idea Generator Modal */}
+      <AIIdeaGeneratorModal
+        isOpen={isAIModalOpen}
+        onClose={() => setIsAIModalOpen(false)}
+      />
     </div>
   );
 }
-

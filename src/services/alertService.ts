@@ -6,6 +6,8 @@ export interface PriceAlert {
   targetPrice: number;
   condition: 'ABOVE' | 'BELOW';
   status: 'ACTIVE' | 'TRIGGERED' | 'CANCELLED';
+  isMuted?: boolean;
+  mutedAt?: string | null;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -29,6 +31,7 @@ export interface UpdateAlertPayload {
   condition?: 'ABOVE' | 'BELOW';
   notes?: string;
   status?: 'ACTIVE' | 'TRIGGERED' | 'CANCELLED';
+  isMuted?: boolean;
 }
 
 export interface ResetAlertPayload {
@@ -86,6 +89,30 @@ export async function updateAlert({ id, ...data }: UpdateAlertPayload): Promise<
   return res.json();
 }
 
+export async function muteAlert(id: string): Promise<{ success: boolean; alert: PriceAlert }> {
+  const res = await fetch(`${API_BASE}/${id}/mute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to mute alert');
+  }
+  return res.json();
+}
+
+export async function unmuteAlert(id: string): Promise<{ success: boolean; alert: PriceAlert }> {
+  const res = await fetch(`${API_BASE}/${id}/unmute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to unmute alert');
+  }
+  return res.json();
+}
+
 export async function resetAlert({ id, ...data }: ResetAlertPayload): Promise<{ success: boolean; alert: PriceAlert }> {
   const res = await fetch(`${API_BASE}/${id}/reset`, {
     method: 'POST',
@@ -138,6 +165,26 @@ export function useUpdateAlert() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: updateAlert,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+    },
+  });
+}
+
+export function useMuteAlert() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: muteAlert,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+    },
+  });
+}
+
+export function useUnmuteAlert() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: unmuteAlert,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['alerts'] });
     },

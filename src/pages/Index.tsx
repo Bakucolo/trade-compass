@@ -1,13 +1,17 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Sidebar } from '@/components/Sidebar';
 import { Dashboard } from '@/components/Dashboard';
 import { WatchlistPage } from '@/components/WatchlistPage';
+import { GraphsPage } from '@/components/GraphsPage';
+import { MacroPage } from '@/components/MacroPage';
 import { TradesPage } from '@/components/TradesPage';
 import { IdeasPage } from '@/components/IdeasPage';
 import { ResearchPage } from '@/components/ResearchPage';
 import { AlertsPage } from '@/components/AlertsPage';
 import { BrokersPage } from '@/components/BrokersPage';
 import { SettingsPage } from '@/components/SettingsPage';
+import { ManagementPage } from '@/components/ManagementPage';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -18,10 +22,46 @@ const Index = () => {
     setActiveTab('research');
   };
 
+  const handleNavigateToGraphs = (_symbol?: string) => {
+    setActiveTab('graphs');
+  };
+
+  useEffect(() => {
+    const handleTickerEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<string>;
+      if (customEvent.detail) {
+        handleNavigateToResearch(customEvent.detail);
+      }
+    };
+    window.addEventListener('select-research-ticker', handleTickerEvent);
+    return () => window.removeEventListener('select-research-ticker', handleTickerEvent);
+  }, []);
+
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard':
-        return <Dashboard onNavigateToResearch={handleNavigateToResearch} />;
+        return (
+          <Dashboard
+            onNavigateTab={setActiveTab}
+            onNavigateToResearch={handleNavigateToResearch}
+          />
+        );
+      case 'management':
+        return (
+          <ManagementPage
+            onNavigateToResearch={handleNavigateToResearch}
+            onNavigateToPortfolio={() => setActiveTab('portfolio')}
+          />
+        );
+      case 'macro':
+        return (
+          <MacroPage
+            onNavigateToResearch={handleNavigateToResearch}
+            onNavigateToGraphs={handleNavigateToGraphs}
+          />
+        );
+      case 'graphs':
+        return <GraphsPage onNavigateToResearch={handleNavigateToResearch} />;
       case 'watchlist':
         return <WatchlistPage onNavigateToResearch={handleNavigateToResearch} />;
       case 'alerts':
@@ -34,7 +74,7 @@ const Index = () => {
         return <ResearchPage initialSymbol={researchTicker} />;
       case 'portfolio':
       case 'brokers':
-        return <BrokersPage />;
+        return <BrokersPage onNavigateToResearch={handleNavigateToResearch} />;
       case 'settings':
         return <SettingsPage />;
       default:
@@ -47,7 +87,9 @@ const Index = () => {
       <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
       <main className="flex-1 overflow-y-auto">
         <div className="p-6 lg:p-8">
-          {renderContent()}
+          <ErrorBoundary fallbackTitle={`${activeTab.toUpperCase()} View`}>
+            {renderContent()}
+          </ErrorBoundary>
         </div>
       </main>
     </div>

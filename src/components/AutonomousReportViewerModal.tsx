@@ -45,7 +45,8 @@ import {
   Award,
   BookOpen,
   Minus,
-  CheckCheck
+  CheckCheck,
+  Bot
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -533,6 +534,28 @@ export function AutonomousReportViewerModal({
               <Trash2 className="w-3.5 h-3.5" />
               <span>Delete Report</span>
             </Button>
+          </div>
+
+          {/* Agent Creator Attestation */}
+          <div className="flex items-center justify-between gap-3 px-3.5 py-2 rounded-xl bg-blue-950/30 border border-blue-500/40 text-xs shadow-sm mt-3 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap text-[11px]">
+              <div className="flex items-center gap-1.5 text-blue-300 font-bold">
+                <Bot className="w-4 h-4 text-blue-400 shrink-0" />
+                <span>Report Created By Agent:</span>
+              </div>
+              <Badge className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-mono text-[10px] py-0 px-2 shadow-sm font-bold">
+                Autonomous Deep Research Agent (Python 3.12)
+              </Badge>
+              <span className="text-muted-foreground">•</span>
+              <span className="text-muted-foreground">Pipeline:</span>
+              <span className="text-foreground font-medium">Multi-Agent SEC 10-K/10-Q & Financial Dossier Engine</span>
+              <span className="text-muted-foreground">•</span>
+              <span className="text-muted-foreground">Synthesizer:</span>
+              <span className="text-cyan-300 font-mono font-semibold">LLM Consensus & Structured Parser</span>
+            </div>
+            <div className="text-[10px] text-muted-foreground font-mono">
+              Autonomous Verification Active
+            </div>
           </div>
         </DialogHeader>
 

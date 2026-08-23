@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
-import { Lightbulb, TrendingDown, TrendingUp, Minus, Bot, Sparkles, Plus, Loader2 } from 'lucide-react';
+import { Lightbulb, TrendingDown, TrendingUp, Minus, Bot, Sparkles, Plus, Loader2, ArrowRight } from 'lucide-react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { useTradeIdeas } from '@/services/ideaService';
 import { IdeaModal } from './IdeaModal';
 import { IdeaDetailModal } from './IdeaDetailModal';
 import { AIIdeaGeneratorModal } from './AIIdeaGeneratorModal';
+import { getIdeaMarketTheme } from '@/utils/ideaThemeUtils';
 
 interface IdeasCardProps {
   onNavigateToIdeas?: () => void;
@@ -51,6 +52,18 @@ export function IdeasCard({ onNavigateToIdeas, onNavigateToResearch }: IdeasCard
           <h3 className="text-lg font-bold text-foreground">Trading Ideas</h3>
         </div>
         <div className="flex items-center gap-1.5">
+          {onNavigateToIdeas && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onNavigateToIdeas}
+              className="h-8 text-xs text-primary hover:text-primary hover:bg-primary/10 gap-1 px-2 font-semibold"
+              title="Open full Trading Ideas Pipeline"
+            >
+              <span>All Ideas</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -95,6 +108,7 @@ export function IdeasCard({ onNavigateToIdeas, onNavigateToResearch }: IdeasCard
             const tagsList = idea.tags
               ? idea.tags.split(',').map((t) => t.trim()).filter(Boolean)
               : [];
+            const theme = getIdeaMarketTheme(idea);
 
             return (
               <div
@@ -102,7 +116,7 @@ export function IdeasCard({ onNavigateToIdeas, onNavigateToResearch }: IdeasCard
                 onClick={() => setSelectedIdea(idea)}
                 className="p-4 rounded-xl bg-accent/20 hover:bg-accent/40 border border-border/50 hover:border-primary/30 transition-all cursor-pointer group"
               >
-                <div className="flex items-start justify-between mb-2">
+                <div className="flex items-start justify-between mb-1.5">
                   <div className="flex items-center gap-2">
                     <span className="font-bold text-foreground ticker-symbol font-mono">
                       {idea.symbol}
@@ -125,6 +139,19 @@ export function IdeasCard({ onNavigateToIdeas, onNavigateToResearch }: IdeasCard
                     )}
                   </div>
                   {getTypeIcon(idea.type)}
+                </div>
+
+                <div className="mb-1.5">
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      'text-[9px] font-semibold px-1.5 py-0 h-4 rounded border gap-1',
+                      theme.colorClass.badge
+                    )}
+                  >
+                    <span>{theme.emoji}</span>
+                    <span>{theme.shortName}</span>
+                  </Badge>
                 </div>
 
                 <h4 className="font-semibold text-sm text-foreground mb-1 group-hover:text-primary transition-colors line-clamp-1">

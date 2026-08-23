@@ -4,8 +4,13 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Switch } from './ui/switch';
 import { Badge } from './ui/badge';
+import { useTheme, THEME_PRESETS } from '@/services/themeService';
+import { ThemeStylingModal } from './ThemeStylingModal';
+import { cn } from '@/lib/utils';
 
 export function SettingsPage() {
+  const { currentTheme, glowIntensity, radiusStyle, densityStyle, setTheme, setGlowIntensity, setRadiusStyle, setDensityStyle } = useTheme();
+  const [isThemeModalOpen, setIsThemeModalOpen] = useState(false);
   const [geminiApiKey, setGeminiApiKey] = useState('');
   const [openrouterApiKey, setOpenrouterApiKey] = useState('');
   const [showGeminiKey, setShowGeminiKey] = useState(false);
@@ -242,26 +247,146 @@ export function SettingsPage() {
         </div>
       </div>
 
-      {/* Appearance */}
-      <div className="glass-card rounded-xl p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <Palette className="w-5 h-5 text-primary" />
-          <h2 className="text-lg font-semibold text-foreground">Appearance</h2>
+      {/* Appearance & Website Stylings */}
+      <div className="glass-card rounded-xl p-6 space-y-5">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/30 flex items-center justify-center text-primary">
+              <Palette className="w-4 h-4" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">Website Stylings & Visual Themes</h2>
+              <p className="text-xs text-muted-foreground">Select your preferred color palette, terminal look, or light mode</p>
+            </div>
+          </div>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsThemeModalOpen(true)}
+            className="text-xs font-semibold gap-1.5 border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Customize All Stylings</span>
+          </Button>
         </div>
 
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Moon className="w-5 h-5 text-muted-foreground" />
-              <div>
-                <p className="font-medium text-foreground">Dark Mode</p>
-                <p className="text-sm text-muted-foreground">Use dark theme (currently active)</p>
-              </div>
+        {/* Theme Presets Quick Selector */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-1">
+          {THEME_PRESETS.slice(0, 6).map((preset) => {
+            const isActive = currentTheme === preset.id;
+
+            return (
+              <button
+                key={preset.id}
+                onClick={() => setTheme(preset.id)}
+                className={cn(
+                  'p-3.5 rounded-xl border text-left transition-all relative flex flex-col justify-between gap-2.5 shadow-sm',
+                  isActive
+                    ? 'border-primary bg-primary/10 ring-1 ring-primary/40'
+                    : 'border-border/60 bg-card/40 hover:bg-card/80 hover:border-border'
+                )}
+              >
+                <div
+                  className="h-1.5 rounded-full w-full opacity-90"
+                  style={{ background: preset.previewGradient }}
+                />
+
+                <div className="flex justify-between items-center w-full">
+                  <span className="font-bold text-xs text-foreground">
+                    {preset.name}
+                  </span>
+                  {isActive && (
+                    <span className="text-[9px] font-mono font-bold text-primary bg-primary/20 px-1.5 py-0.2 rounded">
+                      Active
+                    </span>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                  <span className="truncate max-w-[130px]">{preset.tagline}</span>
+                  <span
+                    className="w-3 h-3 rounded-full border border-white/20"
+                    style={{ backgroundColor: preset.primaryColor }}
+                  />
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Fine-Tuning Mini Controls */}
+        <div className="pt-3 border-t border-border/50 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+          <div className="p-3 rounded-lg bg-card/60 border border-border/40 space-y-1.5">
+            <span className="font-semibold text-foreground flex items-center gap-1 text-[11px]">
+              <Sparkles className="w-3 h-3 text-primary" /> Glow Lighting
+            </span>
+            <div className="flex gap-1">
+              {(['vibrant', 'subtle', 'minimal'] as const).map((level) => (
+                <button
+                  key={level}
+                  onClick={() => setGlowIntensity(level)}
+                  className={cn(
+                    'flex-1 py-1 rounded text-[10px] capitalize font-medium border transition-colors',
+                    glowIntensity === level
+                      ? 'bg-primary text-primary-foreground border-primary font-bold'
+                      : 'border-border/60 text-muted-foreground hover:bg-accent'
+                  )}
+                >
+                  {level}
+                </button>
+              ))}
             </div>
-            <Switch defaultChecked />
+          </div>
+
+          <div className="p-3 rounded-lg bg-card/60 border border-border/40 space-y-1.5">
+            <span className="font-semibold text-foreground flex items-center gap-1 text-[11px]">
+              Corner Geometry
+            </span>
+            <div className="flex gap-1">
+              {(['rounded', 'sharp', 'pill'] as const).map((rad) => (
+                <button
+                  key={rad}
+                  onClick={() => setRadiusStyle(rad)}
+                  className={cn(
+                    'flex-1 py-1 rounded text-[10px] capitalize font-medium border transition-colors',
+                    radiusStyle === rad
+                      ? 'bg-primary text-primary-foreground border-primary font-bold'
+                      : 'border-border/60 text-muted-foreground hover:bg-accent'
+                  )}
+                >
+                  {rad === 'rounded' ? 'Curved' : rad === 'sharp' ? 'Sharp' : 'Pill'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="p-3 rounded-lg bg-card/60 border border-border/40 space-y-1.5">
+            <span className="font-semibold text-foreground flex items-center gap-1 text-[11px]">
+              Layout Density
+            </span>
+            <div className="flex gap-1">
+              {(['comfortable', 'compact'] as const).map((den) => (
+                <button
+                  key={den}
+                  onClick={() => setDensityStyle(den)}
+                  className={cn(
+                    'flex-1 py-1 rounded text-[10px] capitalize font-medium border transition-colors',
+                    densityStyle === den
+                      ? 'bg-primary text-primary-foreground border-primary font-bold'
+                      : 'border-border/60 text-muted-foreground hover:bg-accent'
+                  )}
+                >
+                  {den}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Theme Styling Modal Dialog */}
+      <ThemeStylingModal isOpen={isThemeModalOpen} onClose={() => setIsThemeModalOpen(false)} />
 
       {/* Security */}
       <div className="glass-card rounded-xl p-6">

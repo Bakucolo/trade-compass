@@ -400,7 +400,7 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-border/50 pb-6">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary/60">
+            <h1 className="text-3xl font-bold tracking-tight text-foreground glow-text-white">
               Watchlists
             </h1>
             <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs font-semibold">

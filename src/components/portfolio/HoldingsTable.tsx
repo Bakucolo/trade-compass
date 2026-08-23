@@ -25,7 +25,12 @@ import {
     CircleDollarSign, 
     Clock, 
     Calendar,
-    Briefcase
+    Briefcase,
+    Zap,
+    Tag,
+    X,
+    Compass,
+    ExternalLink
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,15 +39,35 @@ import { useStockNotesMap } from "@/services/noteService";
 import { StockNoteModal } from "../StockNoteModal";
 import { PositionAdvisorModal } from "./PositionAdvisorModal";
 import { CriticalDefenseModal } from "./CriticalDefenseModal";
+import { 
+    InvestmentStyle, 
+    STYLE_CONFIG, 
+    getThemeBadgeStyle, 
+    getCompanyStyleAndThemes 
+} from "@/services/stockThematics";
 
 interface HoldingsTableProps {
     positions: UnifiedPosition[];
     isLoading: boolean;
     onRefresh?: () => void;
     isPrivacyMode?: boolean;
+    onNavigateToResearch?: (symbol: string) => void;
 }
 
-type SortKey = 'symbol' | 'quantity' | 'marketValue' | 'dayChange' | 'unrealizedPL' | 'source' | 'assetType' | 'currentPrice' | 'expiry' | 'risky';
+type SortKey = 
+    | 'symbol' 
+    | 'quantity' 
+    | 'marketValue' 
+    | 'dayChange' 
+    | 'unrealizedPL' 
+    | 'source' 
+    | 'assetType' 
+    | 'currentPrice' 
+    | 'expiry' 
+    | 'risky'
+    | 'style'
+    | 'theme';
+
 type SortDirection = 'asc' | 'desc';
 type ViewLayout = 'CATEGORIZED' | 'OPTIONS_ONLY' | 'EQUITIES_ONLY' | 'UNIFIED';
 
@@ -51,12 +76,24 @@ interface SortConfig {
     direction: SortDirection;
 }
 
-export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode = false }: HoldingsTableProps) {
+export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode = false, onNavigateToResearch }: HoldingsTableProps) {
     // --- State ---
     const [searchQuery, setSearchQuery] = useState('');
-    const [brokerFilter, setBrokerFilter] = useState<'All' | 'IBKR' | 'Tastytrade'>('All');
+    const [brokerFilter, setBrokerFilter] = useState<'All' | 'IBKR' | 'Tastytrade' | 'Trading 212'>('All');
+    const [currencyFilter, setCurrencyFilter] = useState<'All' | 'USD' | 'CAD' | 'EUR' | 'GBP' | 'AUD'>('All');
+    const [styleFilter, setStyleFilter] = useState<'All' | InvestmentStyle>('All');
+    const [themeFilter, setThemeFilter] = useState<string>('All');
+    const [sideFilter, setSideFilter] = useState<'All' | 'Long' | 'Short'>('All');
     const [viewLayout, setViewLayout] = useState<ViewLayout>('CATEGORIZED');
     const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'marketValue', direction: 'desc' });
+
+    const handleOpenResearch = (symbol: string) => {
+        if (onNavigateToResearch) {
+            onNavigateToResearch(symbol);
+        } else {
+            window.dispatchEvent(new CustomEvent('select-research-ticker', { detail: symbol }));
+        }
+    };
 
     // Stock Notes State
     const { notesMap } = useStockNotesMap();
@@ -70,12 +107,30 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
     // Critical Defense Center Window State
     const [isDefenseCenterOpen, setIsDefenseCenterOpen] = useState(false);
 
+    // Ensure all positions have style and themes
+    const enrichedPositions = useMemo(() => {
+        if (!positions || !Array.isArray(positions)) return [];
+        return positions.map(pos => {
+            if (pos.investmentStyle && pos.themes && pos.themes.length > 0) {
+                return pos;
+            }
+            const info = getCompanyStyleAndThemes(pos.underlyingSymbol || pos.symbol, pos.description);
+            return {
+                ...pos,
+                investmentStyle: pos.investmentStyle || info.style,
+                themes: pos.themes && pos.themes.length > 0 ? pos.themes : info.themes,
+                primaryTheme: pos.primaryTheme || info.primaryTheme,
+            };
+        });
+    }, [positions]);
+
     // Critical Defense Count
     const criticalPositions = useMemo(() => {
-        return positions.filter(pos => {
+        return enrichedPositions.filter(pos => {
+            if (!pos) return false;
             const isOption = pos.assetType === 'Option';
-            const isShort = pos.quantity < 0;
-            const isLosing = pos.unrealizedPL < 0;
+            const isShort = (pos.quantity || 0) < 0;
+            const isLosing = (pos.unrealizedPL || 0) < 0;
             
             let isITM = false;
             let distance = Infinity;
@@ -85,9 +140,53 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                 isITM = isCall ? (pos.underlyingPrice > pos.strike) : (pos.underlyingPrice < pos.strike);
             }
 
-            return (isShort && (isITM || distance < 8 || (isLosing && Math.abs(pos.unrealizedPLPercent) > 40))) || (isLosing && Math.abs(pos.unrealizedPLPercent) > 50);
+            const unPLPct = pos.unrealizedPLPercent || 0;
+            return (isShort && (isITM || distance < 8 || (isLosing && Math.abs(unPLPct) > 40))) || (isLosing && Math.abs(unPLPct) > 50);
         });
-    }, [positions]);
+    }, [enrichedPositions]);
+
+    // Available Themes & Counts across entire portfolio
+    const themeStats = useMemo(() => {
+        const counts: Record<string, number> = {};
+        enrichedPositions.forEach(p => {
+            p.themes?.forEach(t => {
+                counts[t] = (counts[t] || 0) + 1;
+            });
+        });
+        return Object.entries(counts)
+            .sort((a, b) => b[1] - a[1])
+            .map(([name, count]) => ({ name, count }));
+    }, [enrichedPositions]);
+
+    // Available Styles & Counts
+    const styleStats = useMemo(() => {
+        const counts: Record<string, { count: number; totalVal: number }> = {
+            Growth: { count: 0, totalVal: 0 },
+            Value: { count: 0, totalVal: 0 },
+            Dividend: { count: 0, totalVal: 0 },
+            Defensive: { count: 0, totalVal: 0 },
+            Speculative: { count: 0, totalVal: 0 },
+        };
+        enrichedPositions.forEach(p => {
+            const st = p.investmentStyle || 'Growth';
+            if (counts[st]) {
+                counts[st].count += 1;
+                counts[st].totalVal += p.marketValue || 0;
+            }
+        });
+        return counts;
+    }, [enrichedPositions]);
+
+    // Available Long & Short Counts
+    const sideStats = useMemo(() => {
+        let long = 0;
+        let short = 0;
+        enrichedPositions.forEach(p => {
+            if ((p.quantity || 0) > 0) long += 1;
+            else if ((p.quantity || 0) < 0) short += 1;
+        });
+        return { long, short };
+    }, [enrichedPositions]);
 
     // --- Helper to parse expiration date ---
     const parseExpiryDate = (expiryStr?: string): Date | null => {
@@ -99,69 +198,77 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
             const date = new Date(Number(y), Number(m) - 1, Number(d));
             return isNaN(date.getTime()) ? null : date;
         }
-        const date = new Date(expiryStr);
-        return isNaN(date.getTime()) ? null : date;
+        const d = new Date(expiryStr);
+        return isNaN(d.getTime()) ? null : d;
     };
 
     // --- Helper to calculate Days to Expiry (DTE) ---
     const getDTE = (expiryStr?: string): number | null => {
         const date = parseExpiryDate(expiryStr);
         if (!date) return null;
-        const now = new Date();
-        const diffMs = date.getTime() - now.getTime();
-        return Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+        const diffTime = date.getTime() - new Date().getTime();
+        return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     };
 
-    // --- Sorting function ---
+    // --- Sorting Logic ---
     const sortPositions = (list: UnifiedPosition[]) => {
+        if (!list || !Array.isArray(list)) return [];
         return [...list].sort((a, b) => {
+            if (!a || !b) return 0;
             if (sortConfig.key === 'risky') {
-                const getExp = (p: UnifiedPosition) => {
-                    const d = parseExpiryDate(p.expiry);
-                    return d ? d.getTime() : Infinity;
-                };
-
-                const getDist = (p: UnifiedPosition) => {
-                    if (!p.underlyingPrice || !p.strike) return Infinity;
-                    return Math.abs((p.underlyingPrice - p.strike) / p.strike) * 100;
-                };
-
                 const getRiskScore = (p: UnifiedPosition) => {
                     let isITM = 1;
                     if (p.assetType === 'Option' && p.underlyingPrice && p.strike) {
                         const isCall = p.optionType === 'Call' || p.optionType === 'C';
-                        const itm = isCall ? (p.underlyingPrice > p.strike) : (p.underlyingPrice < p.strike);
-                        isITM = itm ? 0 : 1;
+                        isITM = isCall ? (p.underlyingPrice > p.strike ? 2 : 0) : (p.underlyingPrice < p.strike ? 2 : 0);
                     }
-                    const isShort = p.quantity < 0 ? 0 : 1;
-                    return { isShort, isITM, dist: getDist(p), expiry: getExp(p) };
+                    const dte = getDTE(p.expiry) ?? 999;
+                    const dteRisk = dte <= 7 ? 3 : dte <= 14 ? 2 : dte <= 30 ? 1 : 0;
+                    const unPLPct = p.unrealizedPLPercent || 0;
+                    const plRisk = unPLPct < -50 ? 3 : unPLPct < -20 ? 2 : 0;
+                    return isITM + dteRisk + plRisk;
                 };
 
-                const scoreA = getRiskScore(a);
-                const scoreB = getRiskScore(b);
-
-                let comparison = 0;
-                if (scoreA.isShort !== scoreB.isShort) {
-                    comparison = scoreA.isShort - scoreB.isShort;
-                } else if (scoreA.isITM !== scoreB.isITM) {
-                    comparison = scoreA.isITM - scoreB.isITM;
-                } else if (Math.abs(scoreA.dist - scoreB.dist) < 2) {
-                    comparison = scoreA.expiry - scoreB.expiry;
-                } else {
-                    comparison = scoreA.dist - scoreB.dist;
-                }
-
-                return sortConfig.direction === 'desc' ? comparison : -comparison;
+                return sortConfig.direction === 'asc' 
+                    ? getRiskScore(a) - getRiskScore(b) 
+                    : getRiskScore(b) - getRiskScore(a);
             }
 
-            let aValue = a[sortConfig.key];
-            let bValue = b[sortConfig.key];
+            if (sortConfig.key === 'style') {
+                const stA = a.investmentStyle || '';
+                const stB = b.investmentStyle || '';
+                return sortConfig.direction === 'asc' ? stA.localeCompare(stB) : stB.localeCompare(stA);
+            }
+
+            if (sortConfig.key === 'theme') {
+                const thA = a.primaryTheme || '';
+                const thB = b.primaryTheme || '';
+                return sortConfig.direction === 'asc' ? thA.localeCompare(thB) : thB.localeCompare(thA);
+            }
+
+            let aValue: any = a[sortConfig.key as keyof UnifiedPosition];
+            let bValue: any = b[sortConfig.key as keyof UnifiedPosition];
+
+            if (sortConfig.key === 'dayChange') {
+                aValue = a.dayChangePercent ?? a.dayChange ?? 0;
+                bValue = b.dayChangePercent ?? b.dayChange ?? 0;
+            }
+
+            if (sortConfig.key === 'unrealizedPL') {
+                aValue = a.unrealizedPLPercent ?? a.unrealizedPL ?? 0;
+                bValue = b.unrealizedPLPercent ?? b.unrealizedPL ?? 0;
+            }
 
             if (sortConfig.key === 'expiry') {
                 const expA = parseExpiryDate(a.expiry)?.getTime() ?? Infinity;
                 const expB = parseExpiryDate(b.expiry)?.getTime() ?? Infinity;
-                aValue = expA as any;
-                bValue = expB as any;
+                aValue = expA;
+                bValue = expB;
+            }
+
+            if (typeof aValue === 'string') {
+                aValue = aValue.toLowerCase();
+                bValue = (bValue || '').toLowerCase();
             }
 
             if (aValue === undefined || bValue === undefined) return 0;
@@ -174,25 +281,51 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
 
     // --- Filtering Logic ---
     const filteredPositions = useMemo(() => {
-        let result = [...positions];
+        let result = [...enrichedPositions];
 
         // 1. Search Filter
         if (searchQuery) {
             const query = searchQuery.toLowerCase();
             result = result.filter(p => 
-                p.symbol.toLowerCase().includes(query) || 
-                (p.description && p.description.toLowerCase().includes(query)) ||
-                (p.underlyingSymbol && p.underlyingSymbol.toLowerCase().includes(query))
+                p && (
+                    (p.symbol && p.symbol.toLowerCase().includes(query)) || 
+                    (p.description && p.description.toLowerCase().includes(query)) ||
+                    (p.underlyingSymbol && p.underlyingSymbol.toLowerCase().includes(query)) ||
+                    (p.investmentStyle && p.investmentStyle.toLowerCase().includes(query)) ||
+                    (p.themes && p.themes.some(t => t.toLowerCase().includes(query)))
+                )
             );
         }
 
         // 2. Broker Filter
         if (brokerFilter !== 'All') {
-            result = result.filter(p => p.source === brokerFilter);
+            result = result.filter(p => p && p.source === brokerFilter);
+        }
+
+        // 3. Currency Filter
+        if (currencyFilter !== 'All') {
+            result = result.filter(p => p && (p.currency || 'USD').toUpperCase() === currencyFilter);
+        }
+
+        // 4. Style Filter (Value, Growth, Dividend, etc.)
+        if (styleFilter !== 'All') {
+            result = result.filter(p => p && p.investmentStyle === styleFilter);
+        }
+
+        // 5. Theme Filter
+        if (themeFilter !== 'All') {
+            result = result.filter(p => p && (p.themes?.includes(themeFilter) || p.primaryTheme === themeFilter));
+        }
+
+        // 6. Side Filter (Long vs Short)
+        if (sideFilter === 'Long') {
+            result = result.filter(p => p && (p.quantity || 0) > 0);
+        } else if (sideFilter === 'Short') {
+            result = result.filter(p => p && (p.quantity || 0) < 0);
         }
 
         return result;
-    }, [positions, searchQuery, brokerFilter]);
+    }, [enrichedPositions, searchQuery, brokerFilter, currencyFilter, styleFilter, themeFilter, sideFilter]);
 
     // Split positions into Options and Equities
     const optionsPositions = useMemo(() => {
@@ -244,13 +377,13 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
     };
 
     const SortIcon = ({ columnKey }: { columnKey: SortKey }) => {
-        if (sortConfig.key !== columnKey) return <ArrowUpDown className="w-3 h-3 ml-1 opacity-30 group-hover:opacity-50" />;
+        if (sortConfig.key !== columnKey) return <ArrowUpDown className="w-3 h-3 ml-1 opacity-30 group-hover:opacity-50 inline" />;
         return sortConfig.direction === 'asc'
-            ? <ChevronUp className="w-3 h-3 ml-1 text-cyan-400" />
-            : <ChevronDown className="w-3 h-3 ml-1 text-cyan-400" />;
+            ? <ChevronUp className="w-3 h-3 ml-1 text-cyan-400 inline" />
+            : <ChevronDown className="w-3 h-3 ml-1 text-cyan-400 inline" />;
     };
 
-    if (!isLoading && positions.length === 0) {
+    if (!isLoading && enrichedPositions.length === 0) {
         return (
             <div className="glass-card rounded-xl p-12 flex flex-col items-center justify-center text-center opacity-80">
                 <div className="bg-primary/10 p-4 rounded-full mb-4">
@@ -297,7 +430,7 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
 
     // --- Render Position Row ---
     const renderPositionRow = (pos: UnifiedPosition, isOptionView: boolean = false) => {
-        const baseSymbol = pos.underlyingSymbol || (pos.assetType === 'Option' ? pos.symbol.match(/^[A-Z]+/)?.[0] : pos.symbol) || pos.symbol;
+        const baseSymbol = pos.underlyingSymbol || (pos.assetType === 'Option' ? pos.symbol.match(/^[A-Z0-9.\-]+/)?.[0] : pos.symbol) || pos.symbol;
         const cleanBaseSymbol = baseSymbol.trim().toUpperCase();
         const stockNote = notesMap[cleanBaseSymbol];
         const isOption = pos.assetType === 'Option';
@@ -316,29 +449,61 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
         const isLosing = pos.unrealizedPL < 0;
         const isCritical = (isShort && (isITM || distance < 8 || (isLosing && Math.abs(pos.unrealizedPLPercent) > 40))) || (isLosing && Math.abs(pos.unrealizedPLPercent) > 50);
 
+        const styleConfig = STYLE_CONFIG[pos.investmentStyle || 'Growth'] || STYLE_CONFIG.Growth;
+
         return (
-            <TableRow key={pos.id} className="group border-white/5 hover:bg-white/5 transition-colors">
-                {/* Symbol & Info */}
+            <TableRow 
+                key={pos.id} 
+                onClick={() => handleOpenResearch(cleanBaseSymbol)}
+                className="group border-white/5 hover:bg-white/5 transition-colors cursor-pointer"
+            >
+                {/* Symbol, Style & Thematic Badges */}
                 <TableCell>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-start gap-3">
                         <div className={cn(
-                            "w-8 h-8 rounded-full flex items-center justify-center border font-bold text-xs shrink-0 transition-all",
+                            "w-8 h-8 rounded-full flex items-center justify-center border font-bold text-xs shrink-0 transition-all mt-0.5",
                             isOption 
                                 ? "bg-purple-500/10 border-purple-500/20 text-purple-300 group-hover:border-purple-500/50" 
                                 : "bg-cyan-500/10 border-cyan-500/20 text-cyan-300 group-hover:border-cyan-500/50"
                         )}>
                             {cleanBaseSymbol.substring(0, 2)}
                         </div>
-                        <div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-bold text-slate-200 text-sm tracking-wide group-hover:text-white transition-colors">
-                                    {cleanBaseSymbol}
-                                </span>
+                        <div className="space-y-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleOpenResearch(cleanBaseSymbol);
+                                    }}
+                                    className="font-bold text-slate-200 text-sm tracking-wide hover:text-cyan-300 transition-colors flex items-center gap-1 group-hover:text-cyan-300 cursor-pointer"
+                                    title={`Click to open ${cleanBaseSymbol} in Research Dossier`}
+                                >
+                                    <span>{cleanBaseSymbol}</span>
+                                    <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 text-cyan-400 transition-opacity" />
+                                </button>
                                 
+                                {/* Investment Style Badge (Value, Growth, Dividend, etc.) */}
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setStyleFilter(pos.investmentStyle === styleFilter ? 'All' : (pos.investmentStyle || 'Growth'));
+                                    }}
+                                    className={cn(
+                                        "text-[9px] px-1.5 py-0 h-4 rounded font-bold border flex items-center gap-1 transition-all cursor-pointer",
+                                        styleConfig.badgeClass
+                                    )}
+                                    title={`Click to filter by ${pos.investmentStyle || 'Growth'} style`}
+                                >
+                                    <span className={cn("w-1 h-1 rounded-full", styleConfig.dotColor)} />
+                                    {pos.investmentStyle || 'Growth'}
+                                </button>
+
                                 {/* Broker Badge */}
                                 <Badge variant="outline" className={cn(
                                     "text-[9px] px-1.5 py-0 h-4 border-opacity-30",
-                                    pos.source === 'IBKR' ? "bg-orange-500/10 text-orange-400 border-orange-500" : "bg-red-500/10 text-red-400 border-red-500"
+                                    pos.source === 'IBKR' ? "bg-orange-500/10 text-orange-400 border-orange-500" :
+                                    pos.source === 'Trading 212' ? "bg-blue-500/10 text-blue-400 border-blue-500" :
+                                    "bg-red-500/10 text-red-400 border-red-500"
                                 )}>
                                     {pos.source}
                                 </Badge>
@@ -377,7 +542,35 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                                     </button>
                                 )}
                             </div>
-                            <div className="text-xs text-muted-foreground mt-0.5 max-w-[160px] truncate">
+
+                            {/* Thematic Exposure Badges (Clickable) */}
+                            {pos.themes && pos.themes.length > 0 && (
+                                <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                                    {pos.themes.slice(0, 2).map((t) => {
+                                        const themeStyle = getThemeBadgeStyle(t);
+                                        return (
+                                            <button
+                                                key={t}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setThemeFilter(themeFilter === t ? 'All' : t);
+                                                }}
+                                                className={cn(
+                                                    "text-[8.5px] px-1.5 py-0 h-3.5 rounded-full border flex items-center gap-0.5 transition-all cursor-pointer font-medium hover:scale-105",
+                                                    themeStyle.badgeClass,
+                                                    themeFilter === t && "ring-1 ring-white/60 font-bold"
+                                                )}
+                                                title={`Click to filter portfolio by theme: ${t}`}
+                                            >
+                                                <span>{themeStyle.icon}</span>
+                                                <span className="truncate max-w-[90px]">{t}</span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            <div className="text-[11px] text-muted-foreground/80 max-w-[170px] truncate">
                                 {pos.description || (isOption ? 'Option Contract' : 'Equity Position')}
                             </div>
                         </div>
@@ -403,7 +596,11 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                             )}
                         </div>
                     ) : (
-                        <span className="text-muted-foreground/60 text-xs font-mono">-</span>
+                        <div className="flex items-center gap-1">
+                            <Badge variant="outline" className={cn("text-[9px] px-1.5 py-0 h-4 border-white/10 text-muted-foreground", styleConfig.badgeClass)}>
+                                {pos.investmentStyle || 'Equity'}
+                            </Badge>
+                        </div>
                     )}
                 </TableCell>
 
@@ -429,52 +626,64 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                                         ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
                                         : "bg-rose-500/20 text-rose-300 border border-rose-500/40"
                                 )}>
-                                    {pos.optionType || 'OPT'}
+                                    {(pos.optionType === 'Call' || pos.optionType === 'C') ? 'C' : 'P'}
                                 </Badge>
                             </div>
-                            {distance !== Infinity && (
-                                <span className={cn(
-                                    "text-[10px] font-mono px-1 py-0.2 rounded border",
-                                    isShort
-                                        ? (isITM ? "bg-rose-500/15 text-rose-300 border-rose-500/40 font-bold" : "bg-emerald-500/10 text-emerald-400 border-emerald-500/30")
-                                        : (isITM ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" : "bg-zinc-500/10 text-zinc-400 border-zinc-500/30")
-                                )}>
-                                    {distance.toFixed(1)}% {isITM ? 'ITM' : 'OTM'}
-                                </span>
-                            )}
+                            <div className="flex items-center gap-1">
+                                {isITM ? (
+                                    <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/40 text-[8px] px-1 py-0 h-3 font-bold">ITM</Badge>
+                                ) : (
+                                    <Badge variant="outline" className="bg-slate-800 text-slate-400 border-slate-700 text-[8px] px-1 py-0 h-3 font-medium">OTM</Badge>
+                                )}
+                                <span className="text-[10px] font-mono text-muted-foreground">{distance.toFixed(1)}%</span>
+                            </div>
                         </div>
                     ) : (
-                        <span className="text-muted-foreground/60 text-xs font-mono">Stock</span>
+                        <div className="text-right">
+                            <span className="text-xs font-mono text-muted-foreground">Equity</span>
+                        </div>
                     )}
                 </TableCell>
 
-                {/* Underlying Stock Price */}
-                <TableCell className="text-right font-mono text-xs text-muted-foreground">
-                    {pos.underlyingPrice ? formatCurrencyPrice(pos.underlyingPrice, pos.currency) : (pos.currentPrice > 0 ? formatCurrencyPrice(pos.currentPrice, pos.currency) : '-')}
+                {/* Underlying / Live Stock Price */}
+                <TableCell className="text-right">
+                    {pos.underlyingPrice || pos.currentPrice ? (
+                        <div className="font-mono text-xs font-bold text-foreground">
+                            {formatCurrencyPrice(pos.underlyingPrice || pos.currentPrice, pos.currency)}
+                        </div>
+                    ) : (
+                        <span className="text-muted-foreground text-xs">-</span>
+                    )}
                 </TableCell>
 
-                {/* Market Price */}
-                <TableCell className="text-right font-mono text-sm text-slate-200">
-                    {formatCurrencyPrice(pos.currentPrice, pos.currency)}
+                {/* Current Market Price */}
+                <TableCell className="text-right">
+                    <div className="font-mono text-xs font-bold text-foreground">
+                        {formatCurrencyPrice(pos.currentPrice, pos.currency)}
+                    </div>
                 </TableCell>
 
-                {/* Avg Cost */}
-                <TableCell className="text-right md:table-cell hidden font-mono text-sm text-muted-foreground">
-                    {formatCurrencyPrice(pos.averageCost, pos.currency)}
+                {/* Average Cost */}
+                <TableCell className="text-right md:table-cell hidden">
+                    <div className="font-mono text-xs text-muted-foreground">
+                        {formatCurrencyPrice(pos.averageCost, pos.currency)}
+                    </div>
                 </TableCell>
 
                 {/* Market Value */}
-                <TableCell className="text-right font-mono text-sm font-semibold text-slate-100">
-                    <span className={cn(isPrivacyMode && "blur-sm select-none opacity-50")}>
-                        {formatCurrencyValue(pos.marketValue, pos.currency)}
-                    </span>
+                <TableCell className="text-right">
+                    <div className="font-mono text-sm font-bold text-foreground">
+                        <span className={cn(isPrivacyMode && "blur-sm select-none opacity-50")}>
+                            {formatCurrencyValue(pos.marketValue, pos.currency)}
+                        </span>
+                    </div>
                 </TableCell>
 
                 {/* Day P/L */}
                 <TableCell className="text-right">
-                    {pos.currentPrice > 0 ? (
+                    {pos.dayChange !== undefined && pos.dayChange !== 0 ? (
                         <>
-                            <div className={cn("font-mono text-sm flex items-center justify-end gap-1", pos.dayChange >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                            <div className={cn("font-mono text-xs font-bold flex items-center justify-end gap-0.5", pos.dayChange >= 0 ? "text-emerald-400" : "text-rose-400")}>
                                 <span className={cn(isPrivacyMode && "blur-sm select-none opacity-50")}>
                                     {pos.dayChange >= 0 ? '+' : ''}{formatCurrencyValue(pos.dayChange, pos.currency)}
                                 </span>
@@ -570,8 +779,92 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
     };
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-4">
             
+            {/* ================= STYLE & THEMATIC COMMAND RIBBON ================= */}
+            <div className="glass-card rounded-2xl p-3.5 border border-white/10 bg-slate-900/60 backdrop-blur-xl shadow-xl space-y-3">
+                {/* Investment Styles Row */}
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-2.5 border-b border-white/5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 mr-1">
+                            <Compass className="w-3.5 h-3.5 text-cyan-400" />
+                            Investment Style:
+                        </span>
+                        <button
+                            onClick={() => setStyleFilter('All')}
+                            className={cn(
+                                "px-3 py-1 text-xs font-semibold rounded-lg transition-all border",
+                                styleFilter === 'All'
+                                    ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                                    : "bg-slate-950/60 text-muted-foreground border-white/5 hover:text-foreground"
+                            )}
+                        >
+                            All ({enrichedPositions.length})
+                        </button>
+                        {(['Growth', 'Value', 'Dividend', 'Defensive', 'Speculative'] as const).map((styleKey) => {
+                            const config = STYLE_CONFIG[styleKey];
+                            const stats = styleStats[styleKey] || { count: 0, totalVal: 0 };
+                            return (
+                                <button
+                                    key={styleKey}
+                                    onClick={() => setStyleFilter(styleFilter === styleKey ? 'All' : styleKey)}
+                                    className={cn(
+                                        "px-2.5 py-1 text-xs font-semibold rounded-lg transition-all border flex items-center gap-1.5",
+                                        styleFilter === styleKey
+                                            ? cn(config.badgeClass, "ring-1 ring-white/60 font-bold shadow")
+                                            : "bg-slate-950/50 text-muted-foreground border-white/5 hover:text-foreground"
+                                    )}
+                                >
+                                    <span className={cn("w-1.5 h-1.5 rounded-full", config.dotColor)} />
+                                    <span>{config.label}</span>
+                                    <span className="font-mono text-[10px] opacity-70">({stats.count})</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    {/* Quick Thematic Filter Reset / Indicator */}
+                    {themeFilter !== 'All' && (
+                        <div className="flex items-center gap-2">
+                            <Badge className="bg-cyan-500/20 text-cyan-300 border-cyan-500/40 text-xs font-semibold gap-1 pl-2 pr-1 py-0.5">
+                                <span>Theme: <strong>{themeFilter}</strong> ({filteredPositions.length})</span>
+                                <button onClick={() => setThemeFilter('All')} className="p-0.5 hover:bg-cyan-500/30 rounded-full">
+                                    <X className="w-3 h-3" />
+                                </button>
+                            </Badge>
+                        </div>
+                    )}
+                </div>
+
+                {/* Thematic Badges Strip */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                    <span className="text-[11px] font-semibold text-muted-foreground whitespace-nowrap flex items-center gap-1 mr-1">
+                        <Tag className="w-3 h-3 text-purple-400" />
+                        Themes:
+                    </span>
+                    {themeStats.slice(0, 12).map(({ name, count }) => {
+                        const style = getThemeBadgeStyle(name);
+                        const isSelected = themeFilter === name;
+                        return (
+                            <button
+                                key={name}
+                                onClick={() => setThemeFilter(isSelected ? 'All' : name)}
+                                className={cn(
+                                    "px-2 py-0.5 text-[11px] font-medium rounded-full border transition-all shrink-0 flex items-center gap-1",
+                                    isSelected
+                                        ? cn(style.badgeClass, "ring-1 ring-white/80 font-bold shadow-sm")
+                                        : "bg-slate-950/40 text-muted-foreground border-white/5 hover:bg-white/5 hover:text-foreground"
+                                )}
+                            >
+                                <span>{style.icon}</span>
+                                <span>{name}</span>
+                                <span className="font-mono text-[9px] opacity-60">({count})</span>
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+
             {/* Mission Control Navigation & Filters Bar */}
             <div className="glass-card rounded-2xl p-4 border border-white/5 bg-slate-900/40 backdrop-blur-md flex flex-col md:flex-row md:items-center justify-between gap-4">
                 
@@ -580,10 +873,10 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                     <div className="relative group">
                         <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground group-focus-within:text-cyan-400 transition-colors" />
                         <Input
-                            placeholder="Search Ticker or Stock..."
+                            placeholder="Search Ticker, Style or Theme..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="pl-9 h-9 w-[200px] bg-slate-800/50 border-slate-700/50 focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/20 text-sm transition-all rounded-xl"
+                            className="pl-9 h-9 w-[220px] bg-slate-800/50 border-slate-700/50 focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/20 text-sm transition-all rounded-xl"
                         />
                     </div>
 
@@ -636,14 +929,60 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                     </div>
                 </div>
 
-                {/* Broker Filter & Critical Defense Action */}
+                {/* Broker, Currency & Side Filters */}
                 <div className="flex items-center gap-3 flex-wrap">
                     
+                    {/* Position Side (Long / Short) Selector */}
+                    <div className="flex items-center gap-1">
+                        <span className="text-xs text-muted-foreground mr-1 hidden sm:inline">Side:</span>
+                        <div className="flex p-0.5 bg-slate-950/60 rounded-lg border border-white/5">
+                            <button
+                                onClick={() => setSideFilter('All')}
+                                className={cn(
+                                    "px-2.5 py-1 text-xs font-medium rounded-md transition-all",
+                                    sideFilter === 'All'
+                                        ? "bg-white/15 text-foreground font-bold shadow-sm"
+                                        : "text-muted-foreground hover:text-foreground"
+                                )}
+                            >
+                                All ({enrichedPositions.length})
+                            </button>
+                            <button
+                                onClick={() => setSideFilter('Long')}
+                                className={cn(
+                                    "px-2.5 py-1 text-xs font-medium rounded-md transition-all flex items-center gap-1",
+                                    sideFilter === 'Long'
+                                        ? "bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40 shadow-sm"
+                                        : "text-muted-foreground hover:text-emerald-400"
+                                )}
+                                title="Show Long positions (Quantity > 0)"
+                            >
+                                <TrendingUp className="w-3 h-3 text-emerald-400" />
+                                <span>Long</span>
+                                <span className="font-mono text-[10px] opacity-75">({sideStats.long})</span>
+                            </button>
+                            <button
+                                onClick={() => setSideFilter('Short')}
+                                className={cn(
+                                    "px-2.5 py-1 text-xs font-medium rounded-md transition-all flex items-center gap-1",
+                                    sideFilter === 'Short'
+                                        ? "bg-rose-500/20 text-rose-300 font-bold border border-rose-500/40 shadow-sm"
+                                        : "text-muted-foreground hover:text-rose-400"
+                                )}
+                                title="Show Short positions (Quantity < 0)"
+                            >
+                                <TrendingDown className="w-3 h-3 text-rose-400" />
+                                <span>Short</span>
+                                <span className="font-mono text-[10px] opacity-75">({sideStats.short})</span>
+                            </button>
+                        </div>
+                    </div>
+
                     {/* Broker Selector */}
                     <div className="flex items-center gap-1">
                         <span className="text-xs text-muted-foreground mr-1 hidden sm:inline">Broker:</span>
                         <div className="flex p-0.5 bg-slate-950/60 rounded-lg border border-white/5">
-                            {(['All', 'IBKR', 'Tastytrade'] as const).map((filter) => (
+                            {(['All', 'IBKR', 'Tastytrade', 'Trading 212'] as const).map((filter) => (
                                 <button
                                     key={filter}
                                     onClick={() => setBrokerFilter(filter)}
@@ -655,6 +994,27 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                                     )}
                                 >
                                     {filter}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Currency Selector */}
+                    <div className="flex items-center gap-1">
+                        <span className="text-xs text-muted-foreground mr-1 hidden sm:inline">Currency:</span>
+                        <div className="flex p-0.5 bg-slate-950/60 rounded-lg border border-white/5">
+                            {(['All', 'USD', 'CAD', 'EUR', 'GBP', 'AUD'] as const).map((curr) => (
+                                <button
+                                    key={curr}
+                                    onClick={() => setCurrencyFilter(curr)}
+                                    className={cn(
+                                        "px-2 py-1 text-xs font-medium rounded-md transition-all",
+                                        currencyFilter === curr
+                                            ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40 shadow-sm"
+                                            : "text-muted-foreground hover:text-foreground"
+                                    )}
+                                >
+                                    {curr}
                                 </button>
                             ))}
                         </div>
@@ -747,8 +1107,8 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                         <Table>
                             <TableHeader className="bg-slate-950/50">
                                 <TableRow className="hover:bg-transparent border-white/5">
-                                    <TableHead className="w-[180px] cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('symbol')}>
-                                        <div className="flex items-center">Underlying <SortIcon columnKey="symbol" /></div>
+                                    <TableHead className="w-[240px] cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('symbol')}>
+                                        <div className="flex items-center">Underlying & Style <SortIcon columnKey="symbol" /></div>
                                     </TableHead>
                                     <TableHead className="cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('expiry')}>
                                         <div className="flex items-center">Expiry & DTE <SortIcon columnKey="expiry" /></div>
@@ -814,7 +1174,7 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                                         </Badge>
                                     </div>
                                     <p className="text-xs text-muted-foreground">
-                                        Core equity shares, long holdings, and common stock allocations
+                                        Core equity shares, long holdings, and categorized asset allocations
                                     </p>
                                 </div>
                             </div>
@@ -850,11 +1210,11 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                         <Table>
                             <TableHeader className="bg-slate-950/50">
                                 <TableRow className="hover:bg-transparent border-white/5">
-                                    <TableHead className="w-[180px] cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('symbol')}>
-                                        <div className="flex items-center">Stock Ticker <SortIcon columnKey="symbol" /></div>
+                                    <TableHead className="w-[240px] cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('symbol')}>
+                                        <div className="flex items-center">Stock Ticker & Themes <SortIcon columnKey="symbol" /></div>
                                     </TableHead>
-                                    <TableHead className="cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('expiry')}>
-                                        <div className="flex items-center">Asset Class <SortIcon columnKey="expiry" /></div>
+                                    <TableHead className="cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('style')}>
+                                        <div className="flex items-center">Style <SortIcon columnKey="style" /></div>
                                     </TableHead>
                                     <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('quantity')}>
                                         <div className="flex items-center justify-end">Shares <SortIcon columnKey="quantity" /></div>
@@ -907,11 +1267,11 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                         <Table>
                             <TableHeader className="bg-slate-950/50">
                                 <TableRow className="hover:bg-transparent border-white/5">
-                                    <TableHead className="w-[180px] cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('symbol')}>
-                                        <div className="flex items-center">Symbol <SortIcon columnKey="symbol" /></div>
+                                    <TableHead className="w-[240px] cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('symbol')}>
+                                        <div className="flex items-center">Symbol & Themes <SortIcon columnKey="symbol" /></div>
                                     </TableHead>
-                                    <TableHead className="cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('expiry')}>
-                                        <div className="flex items-center">Expiry <SortIcon columnKey="expiry" /></div>
+                                    <TableHead className="cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('style')}>
+                                        <div className="flex items-center">Style <SortIcon columnKey="style" /></div>
                                     </TableHead>
                                     <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('quantity')}>
                                         <div className="flex items-center justify-end">Pos <SortIcon columnKey="quantity" /></div>

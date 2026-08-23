@@ -6,7 +6,9 @@ import {
   TrendingDown, TrendingUp, Loader2, Activity,
   Newspaper, LineChart, PieChart, ActivitySquare,
   Globe, Clock, Sparkles, AlertTriangle, FileText, Download,
-  SlidersHorizontal, Settings2
+  SlidersHorizontal, Settings2, Scale, ExternalLink,
+  Layers, ArrowUpRight, ArrowDownRight, ShieldCheck,
+  CheckCircle2, Compass, Zap, Flame, Lightbulb, Bookmark
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -17,6 +19,8 @@ import { useReportPrompts } from '../services/promptService';
 import { PromptManagerModal } from './PromptManagerModal';
 import { useStockNote } from '@/services/noteService';
 import { StockNoteModal } from './StockNoteModal';
+import { PortfolioFitModal } from './portfolio/PortfolioFitModal';
+import { IdeaModal } from './IdeaModal';
 import { AutonomousReport, reportService, useAutonomousReports } from '@/services/reportService';
 import { AutonomousReportsList } from './AutonomousReportsList';
 import { AutonomousReportViewerModal } from './AutonomousReportViewerModal';
@@ -36,10 +40,12 @@ function useDebounceValue<T>(value: T, delay: number): T {
   return debouncedValue;
 }
 
+const POPULAR_TICKERS = ['AAPL', 'NVDA', 'TSLA', 'MSFT', 'AMZN', 'PLTR', 'CCJ', 'SMR'];
+
 export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
-  const debouncedSearch = useDebounceValue(searchQuery, 500);
+  const debouncedSearch = useDebounceValue(searchQuery, 400);
   const [selectedSymbol, setSelectedSymbol] = useState(initialSymbol || 'AAPL');
   const [activeDataTab, setActiveDataTab] = useState('overview');
 
@@ -57,11 +63,28 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
   const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
   const { data: currentStockNote } = useStockNote(selectedSymbol);
 
+  // Portfolio Fit State
+  const [isFitModalOpen, setIsFitModalOpen] = useState(false);
+  const [ideaModalState, setIdeaModalState] = useState<{ open: boolean; initialThesis?: string }>({ open: false });
+
   useEffect(() => {
     if (initialSymbol) {
       setSelectedSymbol(initialSymbol);
+      setSearchQuery('');
     }
   }, [initialSymbol]);
+
+  useEffect(() => {
+    const handleTickerEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<string>;
+      if (customEvent.detail) {
+        setSelectedSymbol(customEvent.detail);
+        setSearchQuery('');
+      }
+    };
+    window.addEventListener('select-research-ticker', handleTickerEvent);
+    return () => window.removeEventListener('select-research-ticker', handleTickerEvent);
+  }, []);
 
   // Real-time Streaming State
   const [streamingData, setStreamingData] = useState<Partial<StreamerData>>({});
@@ -138,23 +161,23 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
   const isLoading = isQuoteLoading;
 
   const formatNumber = (num: number | undefined | any) => {
-    if (num === undefined || num === null) return 'N/A';
+    if (num === undefined || num === null) return '—';
     const val = Number(num);
-    if (isNaN(val)) return 'N/A';
+    if (isNaN(val)) return '—';
 
-    if (val >= 1e12) return (val / 1e12).toFixed(2) + 'T';
-    if (val >= 1e9) return (val / 1e9).toFixed(2) + 'B';
-    if (val >= 1e6) return (val / 1e6).toFixed(2) + 'M';
-    if (val >= 1e3) return (val / 1e3).toFixed(2) + 'K';
-    return val.toLocaleString();
+    if (val >= 1e12) return '$' + (val / 1e12).toFixed(2) + 'T';
+    if (val >= 1e9) return '$' + (val / 1e9).toFixed(2) + 'B';
+    if (val >= 1e6) return '$' + (val / 1e6).toFixed(2) + 'M';
+    if (val >= 1e3) return '$' + (val / 1e3).toFixed(2) + 'K';
+    return '$' + val.toLocaleString();
   };
 
   const safeFixed = (val: number | undefined | null | any, decimals: number = 2) => {
-    if (val === undefined || val === null) return '0.00';
+    if (val === undefined || val === null) return '—';
     const num = Number(val);
-    if (isNaN(num)) return '0.00';
+    if (isNaN(num)) return '—';
     return num.toFixed(decimals);
-  }
+  };
 
   const currentPrice = streamingData.price || quote?.price;
   const currentChange = streamingData.change || quote?.change;
@@ -198,24 +221,33 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700 pb-20">
-
-      {/* Title Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 border-b border-border/50 pb-6">
-        <div className="space-y-1">
-          <h1 className="text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary/60">
-            Global Research
-          </h1>
-          <p className="text-muted-foreground flex items-center gap-2 text-sm">
-            <Globe className="w-4 h-4" /> Company Analysis & Unified Market Dossiers
-          </p>
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-3 duration-500 pb-24">
+      {/* ================= HEADER RIBBON ================= */}
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 border-b border-border/50 pb-6">
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-primary/20 via-indigo-500/20 to-primary/10 border border-primary/30 flex items-center justify-center text-primary shadow-sm">
+            <Globe className="w-6 h-6" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-3xl font-bold tracking-tight text-foreground glow-text-white">
+                Global Equity Research
+              </h1>
+              <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30 text-[10px] font-mono uppercase font-bold">
+                Unified Dossier
+              </Badge>
+            </div>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Institutional fundamentals, live market telemetry, AI synthesis & portfolio fit benchmarking.
+            </p>
+          </div>
         </div>
 
-        {/* Action Controls: Report Type Selector + Customize Prompts + Reports Button + Generate Button */}
+        {/* Action Controls Bar */}
         <div className="flex items-center gap-2 flex-wrap">
           {/* Report Type Selector */}
-          <div className="flex items-center gap-1.5 bg-card/80 border border-border/80 rounded-xl px-3 py-1.5 shadow-sm">
-            <FileText className="w-4 h-4 text-purple-400 shrink-0" />
+          <div className="flex items-center gap-1.5 bg-card/70 border border-border/70 rounded-xl px-3 h-9 shadow-sm">
+            <FileText className="w-3.5 h-3.5 text-purple-400 shrink-0" />
             <select
               value={selectedPromptSlug}
               onChange={(e) => setSelectedPromptSlug(e.target.value)}
@@ -234,11 +266,11 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
             variant="outline"
             size="sm"
             onClick={() => setIsPromptModalOpen(true)}
-            className="text-xs gap-1.5 h-9 border-border/80 hover:bg-accent/40"
+            className="text-xs gap-1.5 h-9 border-border/70 hover:bg-accent/40"
             title="Manage and customize report prompt instructions"
           >
             <SlidersHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="hidden sm:inline">Customize Prompts</span>
+            <span className="hidden sm:inline">Customize</span>
           </Button>
 
           {/* View Saved Reports Button */}
@@ -247,16 +279,16 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
             size="sm"
             onClick={() => setActiveDataTab('reports')}
             className={cn(
-              "text-xs gap-1.5 h-9 border-border/80 transition-all",
+              "text-xs gap-1.5 h-9 border-border/70 transition-all",
               savedReports.length > 0
-                ? "bg-purple-500/15 text-purple-300 border-purple-500/30 hover:bg-purple-500/25 shadow-[0_0_8px_rgba(168,85,247,0.2)]"
+                ? "bg-purple-500/15 text-purple-300 border-purple-500/30 hover:bg-purple-500/25 shadow-[0_0_10px_rgba(168,85,247,0.2)]"
                 : "hover:bg-accent/40 text-muted-foreground hover:text-foreground"
             )}
-            title={`View ${savedReports.length} saved autonomous reports for ${selectedSymbol}`}
+            title={`View ${savedReports.length} saved reports for ${selectedSymbol}`}
           >
             <Sparkles className="w-3.5 h-3.5 text-purple-400" />
             <span className="font-semibold">
-              {savedReports.length > 0 ? `Reports (${savedReports.length})` : 'AI Reports'}
+              {savedReports.length > 0 ? `Reports (${savedReports.length})` : 'Reports'}
             </span>
           </Button>
 
@@ -266,55 +298,66 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
             size="sm"
             onClick={() => setIsNoteModalOpen(true)}
             className={cn(
-              "text-xs gap-1.5 h-9 border-border/80 transition-all",
+              "text-xs gap-1.5 h-9 border-border/70 transition-all",
               currentStockNote
                 ? currentStockNote.sentiment === 'BULLISH'
-                  ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25 shadow-[0_0_8px_rgba(160,185,129,0.2)]"
+                  ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25 shadow-[0_0_10px_rgba(16,185,129,0.2)]"
                   : currentStockNote.sentiment === 'BEARISH'
-                  ? "bg-rose-500/15 text-rose-400 border-rose-500/30 hover:bg-rose-500/25 shadow-[0_0_8px_rgba(244,63,94,0.2)]"
-                  : "bg-primary/15 text-primary border-primary/30 hover:bg-primary/25 shadow-[0_0_8px_rgba(99,102,241,0.2)]"
+                  ? "bg-rose-500/15 text-rose-400 border-rose-500/30 hover:bg-rose-500/25 shadow-[0_0_10px_rgba(244,63,94,0.2)]"
+                  : "bg-primary/15 text-primary border-primary/30 hover:bg-primary/25"
                 : "hover:bg-accent/40 text-muted-foreground hover:text-foreground"
             )}
-            title={
-              currentStockNote
-                ? `Notes on ${selectedSymbol} (${currentStockNote.sentiment || 'Notes'})`
-                : `Write notes for ${selectedSymbol}`
-            }
+            title={currentStockNote ? `Notes on ${selectedSymbol}` : `Write notes for ${selectedSymbol}`}
           >
-            <FileText className="w-3.5 h-3.5" />
-            <span className="font-semibold">{currentStockNote ? `${selectedSymbol} Notes` : 'Notes'}</span>
+            <Bookmark className="w-3.5 h-3.5" />
+            <span className="font-semibold">{currentStockNote ? 'Notes (Saved)' : 'Notes'}</span>
+          </Button>
+
+          {/* Portfolio Fit Checker Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsFitModalOpen(true)}
+            className="text-xs gap-1.5 h-9 bg-cyan-500/10 text-cyan-300 border-cyan-500/30 hover:bg-cyan-500/20 shadow-[0_0_12px_rgba(6,182,212,0.15)] font-bold transition-all"
+            title={`Check portfolio fit & correlation for ${selectedSymbol}`}
+          >
+            <Scale className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Portfolio Fit</span>
           </Button>
 
           {/* Generate Report Button */}
           <Button
             onClick={handleAgentGeneration}
             disabled={isAgentLoading || !selectedSymbol}
-            className="h-9 flex items-center gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/40 transition-all font-semibold text-xs px-4"
+            className="h-9 flex items-center gap-2 bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/40 transition-all font-bold text-xs px-4"
           >
             {isAgentLoading ? (
-              <><Loader2 className="w-4 h-4 animate-spin" /> Compiling AI Report...</>
+              <><Loader2 className="w-4 h-4 animate-spin" /> Compiling Dossier...</>
             ) : (
-              <><Sparkles className="w-4 h-4 text-amber-300" /> Generate Report</>
+              <><Sparkles className="w-4 h-4 text-amber-300" /> Generate AI Report</>
             )}
           </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-        {/* Left Sidebar: Search & Nav */}
+      {/* ================= MAIN 2-COLUMN LAYOUT ================= */}
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 items-start">
+        {/* Left Sidebar: Asset Search & Quick Tickers */}
         <div className="xl:col-span-1 space-y-6">
-          <Card className="bg-background/40 backdrop-blur-md shadow-lg border-primary/10">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Search className="w-5 h-5 text-primary" />
-                Asset Search
+          <Card className="bg-card/60 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden">
+            <CardHeader className="p-4 pb-3 border-b border-border/40 bg-accent/20">
+              <CardTitle className="text-sm font-bold flex items-center gap-2 text-foreground">
+                <Search className="w-4 h-4 text-primary" />
+                Asset Explorer
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="relative mb-3 group">
+
+            <CardContent className="p-4 space-y-4">
+              {/* Search Input */}
+              <div className="relative group">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
                 <Input
-                  placeholder="Ticker (e.g. MSFT, TSLA) - Press Enter"
+                  placeholder="Ticker (e.g. NVDA, PLTR, CCJ)"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onKeyDown={(e) => {
@@ -329,7 +372,7 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
                       }
                     }
                   }}
-                  className="pl-10 pr-10 bg-accent/50 border-border/50 focus:border-primary/50 transition-all shadow-inner font-mono uppercase"
+                  className="pl-9 pr-10 bg-background/60 border-border/60 focus:border-primary/50 text-xs font-mono uppercase h-9 rounded-xl shadow-inner"
                 />
                 {searchQuery && (
                   <button
@@ -344,7 +387,7 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
                         }
                       }
                     }}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded font-semibold hover:opacity-90 transition-opacity"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold bg-primary text-primary-foreground px-2 py-0.5 rounded-md hover:opacity-90 transition-opacity"
                   >
                     Go
                   </button>
@@ -352,29 +395,35 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
               </div>
 
               {/* Quick Select Popular Tickers */}
-              <div className="flex flex-wrap gap-1.5 mb-4">
-                {['AAPL', 'NVDA', 'TSLA', 'MSFT', 'AMZN', 'PLTR'].map((ticker) => (
-                  <button
-                    key={ticker}
-                    type="button"
-                    onClick={() => setSelectedSymbol(ticker)}
-                    className={cn(
-                      "text-[11px] px-2 py-0.5 rounded-md font-mono font-medium transition-colors border",
-                      selectedSymbol === ticker
-                        ? "bg-primary text-primary-foreground border-primary"
-                        : "bg-muted/40 hover:bg-muted text-muted-foreground border-border/40 hover:text-foreground"
-                    )}
-                  >
-                    {ticker}
-                  </button>
-                ))}
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                  Quick Watch Tickers
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {POPULAR_TICKERS.map((ticker) => (
+                    <button
+                      key={ticker}
+                      type="button"
+                      onClick={() => setSelectedSymbol(ticker)}
+                      className={cn(
+                        "text-xs px-2.5 py-1 rounded-lg font-mono font-bold transition-all border",
+                        selectedSymbol === ticker
+                          ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                          : "bg-card/40 hover:bg-accent/60 text-muted-foreground hover:text-foreground border-border/50"
+                      )}
+                    >
+                      {ticker}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              <div className="space-y-2 max-h-[380px] overflow-y-auto scrollbar-thin pr-2">
+              {/* Search Results / Autocomplete */}
+              <div className="space-y-1.5 max-h-[380px] overflow-y-auto scrollbar-thin pr-1 pt-1">
                 {isSearchLoading ? (
-                  <div className="flex justify-center p-4"><Loader2 className="animate-spin text-primary" /></div>
+                  <div className="flex justify-center p-6"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
                 ) : isSearchError ? (
-                  <div className="p-4 rounded-md text-destructive text-sm bg-destructive/10">
+                  <div className="p-3 rounded-xl text-destructive text-xs bg-destructive/10 border border-destructive/20">
                     Failed to fetch search results.
                   </div>
                 ) : searchResults && searchResults.length > 0 ? (
@@ -383,30 +432,32 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
                       key={stock.symbol}
                       onClick={() => setSelectedSymbol(stock.symbol)}
                       className={cn(
-                        "w-full flex items-center justify-between p-3 rounded-xl transition-all duration-300 border",
+                        "w-full flex items-center justify-between p-2.5 rounded-xl transition-all border text-left group",
                         selectedSymbol === stock.symbol
-                          ? "bg-primary/10 border-primary/30 shadow-[0_0_15px_rgba(var(--primary),0.15)] ring-1 ring-primary/20"
-                          : "bg-background/30 border-border/30 hover:bg-accent/50 hover:border-border/80"
+                          ? "bg-primary/10 border-primary/40 shadow-sm ring-1 ring-primary/20"
+                          : "bg-background/40 border-border/40 hover:bg-accent/50 hover:border-border/80"
                       )}
                     >
-                      <div className="text-left">
-                        <p className={cn("font-bold tracking-wide", selectedSymbol === stock.symbol ? "text-primary" : "text-foreground")}>
+                      <div>
+                        <p className={cn("font-mono font-black text-xs", selectedSymbol === stock.symbol ? "text-primary" : "text-foreground")}>
                           {stock.symbol}
                         </p>
-                        <p className="text-[11px] text-muted-foreground truncate w-[140px] leading-tight">{stock.name}</p>
+                        <p className="text-[11px] text-muted-foreground truncate max-w-[130px] leading-tight">
+                          {stock.name}
+                        </p>
                       </div>
-                      <Badge variant={selectedSymbol === stock.symbol ? "default" : "secondary"} className="text-[10px] px-1.5 h-5">
+                      <Badge variant={selectedSymbol === stock.symbol ? "default" : "secondary"} className="text-[9px] font-mono px-1.5 h-4">
                         {stock.stockExchange}
                       </Badge>
                     </button>
                   ))
                 ) : debouncedSearch.length > 0 ? (
-                  <div className="text-center text-muted-foreground p-4 text-sm">
+                  <div className="text-center text-muted-foreground p-4 text-xs">
                     No matching assets for "{debouncedSearch}"
                   </div>
                 ) : (
-                  <div className="text-center text-muted-foreground p-4 text-sm italic">
-                    Type characters or select a ticker above...
+                  <div className="text-center text-muted-foreground/60 p-4 text-xs italic">
+                    Type to search any US/Global equity...
                   </div>
                 )}
               </div>
@@ -414,172 +465,301 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
           </Card>
         </div>
 
-        {/* Right Main Content */}
+        {/* Right Main Content Area */}
         <div className="xl:col-span-3 space-y-6">
           {isLoading ? (
-            <Card className="h-[400px] flex items-center justify-center bg-background/30 backdrop-blur-sm border-primary/10 shadow-lg">
-              <div className="flex flex-col items-center gap-4">
+            <Card className="h-[420px] flex items-center justify-center bg-card/50 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl">
+              <div className="flex flex-col items-center gap-3">
                 <Loader2 className="h-10 w-10 animate-spin text-primary" />
-                <p className="text-muted-foreground animate-pulse">Compiling Global Dossier...</p>
+                <p className="text-sm font-semibold text-muted-foreground animate-pulse">
+                  Compiling Live Research Dossier for {selectedSymbol}...
+                </p>
               </div>
             </Card>
           ) : isQuoteError ? (
-            <Card className="bg-destructive/5 border-destructive/20 shadow-lg">
-              <CardContent className="p-8 text-center">
-                <div className="inline-flex w-12 h-12 rounded-full bg-destructive/10 items-center justify-center mb-4">
-                  <ActivitySquare className="h-6 w-6 text-destructive" />
+            <Card className="bg-destructive/10 border-destructive/30 shadow-lg rounded-2xl">
+              <CardContent className="p-8 text-center space-y-3">
+                <div className="inline-flex w-12 h-12 rounded-2xl bg-destructive/20 items-center justify-center text-destructive">
+                  <AlertTriangle className="h-6 w-6" />
                 </div>
-                <h3 className="text-lg font-semibold text-destructive mb-2">Error Loading Data</h3>
-                <p className="font-mono text-sm text-destructive/80 bg-destructive/10 p-3 rounded text-left overflow-auto">
-                  {quoteError instanceof Error ? quoteError.message : 'Dossier synthesis failed.'}
+                <h3 className="text-lg font-bold text-destructive">Dossier Synthesis Failed</h3>
+                <p className="font-mono text-xs text-destructive/80 bg-destructive/10 p-3 rounded-xl max-w-lg mx-auto overflow-auto">
+                  {quoteError instanceof Error ? quoteError.message : 'Unable to retrieve live market fundamentals.'}
                 </p>
+                <Button size="sm" variant="outline" onClick={() => setSelectedSymbol(selectedSymbol)} className="text-xs">
+                  Retry Dossier
+                </Button>
               </CardContent>
             </Card>
           ) : quote ? (
             <>
-              {/* Ticker Action Strip */}
-              <Card className="bg-background/60 backdrop-blur-xl border-primary/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] hover:border-primary/30 transition-colors duration-500 overflow-hidden relative">
-                <div className="absolute top-0 right-0 p-8 h-full opacity-5 pointer-events-none">
-                  <BarChart3 className="w-full h-full text-primary" />
-                </div>
+              {/* ================= HERO COMMAND CENTER ================= */}
+              <Card className="bg-card/70 backdrop-blur-2xl border border-border/70 shadow-xl hover:border-primary/40 transition-all duration-300 rounded-2xl overflow-hidden relative group">
+                {/* Sentiment Accent Top Glow Strip */}
+                <div
+                  className={cn(
+                    'h-1.5 w-full',
+                    priceIsUp
+                      ? 'bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-600'
+                      : 'bg-gradient-to-r from-rose-500 via-pink-400 to-rose-600'
+                  )}
+                />
 
-                <CardContent className="p-6">
+                <CardContent className="p-6 space-y-6">
+                  {/* Top Row: Symbol, Profile & Live Telemetry */}
                   <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
                     <div>
                       <div className="flex items-center gap-3">
-                        <h2 className="text-4xl font-black tracking-tight text-foreground">{quote.symbol}</h2>
-                        <Badge
-                          variant="outline"
+                        <div
                           className={cn(
-                            "px-3 pl-2 py-1 text-sm font-semibold border transition-colors",
+                            'w-14 h-14 rounded-2xl flex items-center justify-center font-mono font-black text-xl border shadow-md',
                             priceIsUp
-                              ? "bg-success/10 text-success border-success/30 shadow-[0_0_10px_rgba(34,197,94,0.2)]"
-                              : "bg-destructive/10 text-destructive border-destructive/30 shadow-[0_0_10px_rgba(239,68,68,0.2)]"
+                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                              : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
                           )}
                         >
-                          {priceIsUp ? <TrendingUp className="w-4 h-4 mr-1 inline-block" /> : <TrendingDown className="w-4 h-4 mr-1 inline-block" />}
-                          {priceIsUp ? '+' : ''}{safeFixed(currentChangePercent)}%
-                        </Badge>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-3 mt-2">
-                        <p className="text-xl text-muted-foreground font-medium">{quote.name}</p>
-                        {profile.sector && (
-                          <div className="flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-md bg-accent/50 text-accent-foreground">
-                            <Building2 className="w-3 h-3" /> {profile.sector}
+                          {quote.symbol.slice(0, 4)}
+                        </div>
+
+                        <div>
+                          <div className="flex items-center gap-2.5">
+                            <h2 className="text-3xl font-black font-mono tracking-tight text-foreground">
+                              {quote.symbol}
+                            </h2>
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                "px-2.5 py-0.5 text-xs font-bold font-mono uppercase border transition-colors",
+                                priceIsUp
+                                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30 shadow-[0_0_10px_rgba(16,185,129,0.2)]"
+                                  : "bg-rose-500/10 text-rose-400 border-rose-500/30 shadow-[0_0_10px_rgba(244,63,94,0.2)]"
+                              )}
+                            >
+                              {priceIsUp ? <ArrowUpRight className="w-3.5 h-3.5 mr-0.5 inline" /> : <ArrowDownRight className="w-3.5 h-3.5 mr-0.5 inline" />}
+                              {priceIsUp ? '+' : ''}{safeFixed(currentChangePercent)}%
+                            </Badge>
                           </div>
-                        )}
+
+                          <div className="flex flex-wrap items-center gap-2 mt-1">
+                            <span className="text-base text-muted-foreground font-semibold">
+                              {quote.name}
+                            </span>
+                            {profile.sector && (
+                              <Badge variant="secondary" className="text-[10px] font-semibold bg-accent/60 text-muted-foreground gap-1">
+                                <Building2 className="w-3 h-3" /> {profile.sector}
+                              </Badge>
+                            )}
+                            {profile.industry && (
+                              <Badge variant="outline" className="text-[10px] font-medium border-border/50 text-muted-foreground">
+                                {profile.industry}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </div>
 
+                    {/* Right: Live Price Display */}
                     <div className="text-left md:text-right">
                       <div className="flex items-center justify-start md:justify-end gap-2 mb-1">
-                        <span className="text-xs uppercase tracking-wider font-bold text-muted-foreground">Market Price</span>
+                        <span className="text-[11px] uppercase tracking-wider font-bold text-muted-foreground">
+                          Market Price
+                        </span>
                         {isStreaming ? (
-                          <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border border-green-500/30 text-green-500 bg-green-500/10 uppercase tracking-widest font-bold animate-pulse">
-                            <Activity className="w-3 h-3" /> Live
+                          <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border border-emerald-500/30 text-emerald-400 bg-emerald-500/10 uppercase tracking-widest font-mono font-bold animate-pulse">
+                            <Activity className="w-3 h-3" /> Live Feed
                           </span>
                         ) : (
-                          <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded border border-yellow-500/30 text-yellow-500 bg-yellow-500/10 uppercase tracking-widest font-bold">
+                          <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border border-amber-500/30 text-amber-400 bg-amber-500/10 uppercase tracking-widest font-mono font-bold">
                             <Clock className="w-3 h-3" /> Delayed
                           </span>
                         )}
                       </div>
+
                       <p className={cn(
-                        "text-5xl font-black font-mono tracking-tighter transition-colors duration-500",
+                        "text-4xl sm:text-5xl font-black font-mono tracking-tight",
                         isStreaming ? "text-primary" : "text-foreground"
                       )}>
                         ${safeFixed(currentPrice)}
                       </p>
-                      <p className={cn("text-lg font-mono font-medium mt-1", priceIsUp ? "text-success" : "text-destructive")}>
-                        {priceIsUp ? '+' : ''}${safeFixed(currentChange)} Today
+                      <p className={cn("text-xs font-mono font-bold mt-1 flex items-center justify-start md:justify-end", priceIsUp ? "text-emerald-400" : "text-rose-400")}>
+                        {priceIsUp ? '+' : ''}${safeFixed(currentChange)} ({safeFixed(currentChangePercent)}%) Today
                       </p>
+                    </div>
+                  </div>
+
+                  {/* Micro-Stats Bar + Direct Quick Action Chips */}
+                  <div className="pt-4 border-t border-border/50 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-mono">
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground block font-sans">Market Cap</span>
+                        <span className="font-bold text-foreground">{formatNumber(quote.marketCap)}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground block font-sans">Day Range</span>
+                        <span className="font-bold text-foreground">${safeFixed(quote.dayLow)} - ${safeFixed(quote.dayHigh)}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground block font-sans">52W Range</span>
+                        <span className="font-bold text-foreground">${safeFixed(quote.yearLow)} - ${safeFixed(quote.yearHigh)}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground block font-sans">P/E Multiple</span>
+                        <span className="font-bold text-foreground">{safeFixed(quote.pe)}x</span>
+                      </div>
+                    </div>
+
+                    {/* Direct Quick Action Buttons */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setIsFitModalOpen(true)}
+                        className="h-8 text-xs font-bold bg-cyan-500/10 text-cyan-300 border-cyan-500/30 hover:bg-cyan-500/20 gap-1.5 shadow-sm"
+                      >
+                        <Scale className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Portfolio Fit</span>
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setIdeaModalState({ open: true })}
+                        className="h-8 text-xs font-bold bg-purple-500/10 text-purple-300 border-purple-500/30 hover:bg-purple-500/20 gap-1.5"
+                      >
+                        <Lightbulb className="w-3.5 h-3.5 text-amber-300" />
+                        <span>Trade Idea</span>
+                      </Button>
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
-              {/* Data Tabs */}
+              {/* ================= DATA TABS RIBBON ================= */}
               <Tabs value={activeDataTab} onValueChange={setActiveDataTab} className="w-full">
-                <TabsList className="grid w-full grid-cols-3 sm:grid-cols-6 h-auto sm:h-12 items-center bg-background/50 p-1 border border-border/50 backdrop-blur-md rounded-xl gap-1">
-                  <TabsTrigger value="overview" className="rounded-lg py-2 data-[state=active]:bg-primary/20 data-[state=active]:text-primary transition-all text-xs font-semibold">Overview</TabsTrigger>
-                  <TabsTrigger value="fundamentals" className="rounded-lg py-2 data-[state=active]:bg-primary/20 data-[state=active]:text-primary transition-all text-xs font-semibold">Fundamentals</TabsTrigger>
-                  <TabsTrigger value="financials" className="rounded-lg py-2 data-[state=active]:bg-primary/20 data-[state=active]:text-primary transition-all text-xs font-semibold">Financials</TabsTrigger>
-                  <TabsTrigger value="news" className="rounded-lg py-2 data-[state=active]:bg-primary/20 data-[state=active]:text-primary transition-all text-xs font-semibold">News & Press</TabsTrigger>
-                  <TabsTrigger value="ai-analysis" className="rounded-lg py-2 data-[state=active]:bg-primary/20 data-[state=active]:text-primary transition-all flex items-center justify-center gap-1.5 text-xs font-semibold">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-300" /> AI Summary
+                <TabsList className="grid w-full grid-cols-3 sm:grid-cols-6 h-auto p-1.5 bg-card/70 backdrop-blur-xl border border-border/70 rounded-2xl gap-1.5">
+                  <TabsTrigger
+                    value="overview"
+                    className="rounded-xl py-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <BarChart3 className="w-3.5 h-3.5" /> Overview
                   </TabsTrigger>
-                  <TabsTrigger value="reports" className="rounded-lg py-2 data-[state=active]:bg-purple-500/20 data-[state=active]:text-purple-300 transition-all flex items-center justify-center gap-1.5 text-xs font-semibold">
-                    <FileText className="w-3.5 h-3.5 text-purple-400" />
-                    <span>AI Reports</span>
+                  <TabsTrigger
+                    value="fundamentals"
+                    className="rounded-xl py-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <PieChart className="w-3.5 h-3.5" /> Valuation
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="financials"
+                    className="rounded-xl py-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <Building2 className="w-3.5 h-3.5" /> Financials
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="news"
+                    className="rounded-xl py-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <Newspaper className="w-3.5 h-3.5" /> News
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="ai-analysis"
+                    className="rounded-xl py-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-600 data-[state=active]:to-indigo-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all flex items-center justify-center gap-1.5 text-xs font-bold"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-300" /> AI Thesis
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="reports"
+                    className="rounded-xl py-2 data-[state=active]:bg-purple-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all flex items-center justify-center gap-1.5 text-xs font-bold"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Reports</span>
                     {savedReports.length > 0 && (
-                      <span className="px-1.5 py-0.2 rounded-full bg-purple-500/25 text-purple-300 text-[10px] font-mono font-bold">
+                      <span className="px-1.5 py-0 rounded-full bg-purple-400/30 text-[10px] font-mono font-bold">
                         {savedReports.length}
                       </span>
                     )}
                   </TabsTrigger>
                 </TabsList>
 
-                {/* OVERVIEW TAB */}
-                <TabsContent value="overview" className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                {/* ================= 1. OVERVIEW TAB ================= */}
+                <TabsContent value="overview" className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  {/* 4 Metric Spotlight Cards */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <Card className="bg-background/40 hover:bg-background/60 transition-colors border-primary/5 hover:border-primary/20">
+                    <Card className="bg-card/60 backdrop-blur-xl border border-border/60 hover:border-primary/40 transition-all rounded-2xl shadow-sm">
                       <CardContent className="p-4">
                         <div className="flex justify-between items-start mb-2">
-                          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Volume</p>
-                          <BarChart3 className="w-4 h-4 text-primary/50" />
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Volume</span>
+                          <BarChart3 className="w-4 h-4 text-primary" />
                         </div>
-                        <p className="font-mono text-xl font-bold">{formatNumber(streamingData.dayVolume || quote.volume)}</p>
-                        <p className="text-xs text-muted-foreground mt-1">Avg: {formatNumber(quote.avgVolume)}</p>
+                        <p className="font-mono text-xl font-black text-foreground">
+                          {quote.volume ? Number(quote.volume).toLocaleString() : '—'}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          Avg: {quote.avgVolume ? Number(quote.avgVolume).toLocaleString() : '—'}
+                        </p>
                       </CardContent>
                     </Card>
-                    <Card className="bg-background/40 hover:bg-background/60 transition-colors border-primary/5 hover:border-primary/20">
+
+                    <Card className="bg-card/60 backdrop-blur-xl border border-border/60 hover:border-primary/40 transition-all rounded-2xl shadow-sm">
                       <CardContent className="p-4">
                         <div className="flex justify-between items-start mb-2">
-                          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Market Cap</p>
-                          <DollarSign className="w-4 h-4 text-primary/50" />
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Market Cap</span>
+                          <DollarSign className="w-4 h-4 text-primary" />
                         </div>
-                        <p className="font-mono text-xl font-bold">{formatNumber(quote.marketCap)}</p>
+                        <p className="font-mono text-xl font-black text-foreground">
+                          {formatNumber(quote.marketCap)}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground mt-1">Enterprise Size</p>
                       </CardContent>
                     </Card>
-                    <Card className="bg-background/40 hover:bg-background/60 transition-colors border-primary/5 hover:border-primary/20">
+
+                    <Card className="bg-card/60 backdrop-blur-xl border border-border/60 hover:border-primary/40 transition-all rounded-2xl shadow-sm">
                       <CardContent className="p-4">
                         <div className="flex justify-between items-start mb-2">
-                          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">P/E Ratio</p>
-                          <ActivitySquare className="w-4 h-4 text-primary/50" />
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Trailing P/E</span>
+                          <ActivitySquare className="w-4 h-4 text-primary" />
                         </div>
-                        <p className="font-mono text-xl font-bold">{safeFixed(quote.pe)}</p>
+                        <p className="font-mono text-xl font-black text-foreground">
+                          {safeFixed(quote.pe)}x
+                        </p>
+                        <p className="text-[11px] text-muted-foreground mt-1">Earnings Multiple</p>
                       </CardContent>
                     </Card>
-                    <Card className="bg-background/40 hover:bg-background/60 transition-colors border-purple-500/10 hover:border-purple-500/30">
+
+                    <Card className="bg-card/60 backdrop-blur-xl border border-border/60 hover:border-purple-500/40 transition-all rounded-2xl shadow-sm">
                       <CardContent className="p-4">
                         <div className="flex justify-between items-start mb-2">
-                          <p className="text-xs font-semibold text-purple-400/80 uppercase tracking-wider">Imp. Volatility</p>
-                          <Activity className="w-4 h-4 text-purple-500/50" />
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-purple-400">Imp. Volatility</span>
+                          <Activity className="w-4 h-4 text-purple-400" />
                         </div>
-                        <p className="font-mono text-xl font-bold text-purple-100">
+                        <p className="font-mono text-xl font-black text-purple-200">
                           {streamingData.volatility ? safeFixed(streamingData.volatility * 100) + '%' : 'N/A'}
                         </p>
+                        <p className="text-[11px] text-muted-foreground mt-1">Options Pricing Factor</p>
                       </CardContent>
                     </Card>
                   </div>
 
-                  <Card className="bg-background/40 backdrop-blur-sm border-primary/10 overflow-hidden group">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-semibold uppercase tracking-wider flex items-center gap-2">
-                        <LineChart className="w-4 h-4 text-primary" /> 52-Week Range
+                  {/* 52-Week Range Bar */}
+                  <Card className="bg-card/60 backdrop-blur-xl border border-border/60 rounded-2xl overflow-hidden shadow-sm">
+                    <CardHeader className="p-4 pb-2">
+                      <CardTitle className="text-xs font-bold uppercase tracking-wider flex items-center gap-2 text-foreground">
+                        <LineChart className="w-4 h-4 text-primary" /> 52-Week Price Range
                       </CardTitle>
                     </CardHeader>
-                    <CardContent>
-                      <div className="flex justify-between text-xs font-mono font-medium mb-2">
-                        <span className="text-destructive">${safeFixed(quote.yearLow)}</span>
-                        <span className="text-success">${safeFixed(quote.yearHigh)}</span>
+                    <CardContent className="p-4 pt-1 space-y-2">
+                      <div className="flex justify-between text-xs font-mono font-bold">
+                        <span className="text-rose-400">52W Low: ${safeFixed(quote.yearLow)}</span>
+                        <span className="text-foreground">Current: ${safeFixed(currentPrice)}</span>
+                        <span className="text-emerald-400">52W High: ${safeFixed(quote.yearHigh)}</span>
                       </div>
-                      <div className="relative h-3 bg-accent rounded-full overflow-hidden shadow-inner group-hover:h-4 transition-all duration-300">
-                        <div className="absolute h-full bg-gradient-to-r from-destructive via-warning to-success" style={{ width: '100%' }} />
+                      <div className="relative h-3 bg-accent/40 rounded-full overflow-hidden border border-border/50">
+                        <div className="absolute h-full bg-gradient-to-r from-rose-500 via-amber-400 to-emerald-500 w-full" />
                         <div
-                          className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-foreground rounded-full border-2 border-background shadow-[0_0_10px_rgba(0,0,0,0.5)] transition-all duration-500"
+                          className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full border-2 border-background shadow-[0_0_10px_rgba(0,0,0,0.6)] transition-all duration-500"
                           style={{
-                            left: `${Math.min(100, Math.max(0, (((quote.price || 0) - (quote.yearLow || 0)) / ((quote.yearHigh || 1) - (quote.yearLow || 0))) * 100))}%`,
+                            left: `${Math.min(100, Math.max(0, (((currentPrice || 0) - (quote.yearLow || 0)) / ((quote.yearHigh || 1) - (quote.yearLow || 0))) * 100))}%`,
                             transform: 'translate(-50%, -50%)',
                           }}
                         />
@@ -587,13 +767,56 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
                     </CardContent>
                   </Card>
 
+                  {/* Portfolio Fit & Correlation Assessment Banner */}
+                  <Card className="bg-gradient-to-r from-cyan-950/30 via-background/60 to-indigo-950/30 border border-cyan-500/30 hover:border-cyan-500/50 transition-all shadow-md rounded-2xl overflow-hidden relative group">
+                    <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/5 rounded-full blur-3xl -z-10 group-hover:bg-cyan-500/10 transition-colors" />
+                    <CardHeader className="p-5">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-cyan-500/15 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shadow-sm">
+                            <Scale className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <CardTitle className="text-sm font-bold text-foreground">
+                              Portfolio Fit & Category Benchmarking
+                            </CardTitle>
+                            <CardDescription className="text-xs text-muted-foreground mt-0.5">
+                              Evaluate portfolio correlation, sector concentration & head-to-head metrics vs. existing holdings.
+                            </CardDescription>
+                          </div>
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={() => setIsFitModalOpen(true)}
+                          className="text-xs h-9 bg-cyan-600 hover:bg-cyan-500 text-white font-bold gap-1.5 shadow-md px-4 shrink-0"
+                        >
+                          <Scale className="w-3.5 h-3.5" /> Check Portfolio Fit
+                        </Button>
+                      </div>
+                    </CardHeader>
+                  </Card>
+
+                  {/* Company Profile Card */}
                   {profile.summary && (
-                    <Card className="bg-background/40 border-primary/10">
-                      <CardHeader>
-                        <CardTitle className="text-sm font-semibold uppercase tracking-wider">Company Profile</CardTitle>
+                    <Card className="bg-card/60 backdrop-blur-xl border border-border/60 rounded-2xl shadow-sm">
+                      <CardHeader className="p-4 pb-2 border-b border-border/40 flex flex-row items-center justify-between">
+                        <CardTitle className="text-xs font-bold uppercase tracking-wider text-foreground">
+                          Company Business Profile
+                        </CardTitle>
+                        {profile.website && (
+                          <a
+                            href={profile.website}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-primary hover:underline flex items-center gap-1 font-semibold"
+                          >
+                            <span>Website</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        )}
                       </CardHeader>
-                      <CardContent>
-                        <p className="text-sm text-muted-foreground leading-relaxed">
+                      <CardContent className="p-4 pt-3">
+                        <p className="text-xs text-muted-foreground leading-relaxed">
                           {profile.summary}
                         </p>
                       </CardContent>
@@ -601,52 +824,67 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
                   )}
                 </TabsContent>
 
-                {/* FUNDAMENTALS TAB */}
-                <TabsContent value="fundamentals" className="mt-6 space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                {/* ================= 2. FUNDAMENTALS TAB ================= */}
+                <TabsContent value="fundamentals" className="mt-6 space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Card className="bg-background/40 hover:bg-background/60 transition-all border-primary/10">
-                      <CardHeader className="pb-2 flex flex-row items-center gap-2">
-                        <div className="p-2 bg-primary/10 rounded-lg"><PieChart className="w-4 h-4 text-primary" /></div>
-                        <CardTitle className="text-lg">Valuation & Growth</CardTitle>
+                    {/* Valuation Multiples */}
+                    <Card className="bg-card/60 backdrop-blur-xl border border-border/60 rounded-2xl shadow-sm">
+                      <CardHeader className="p-4 pb-3 border-b border-border/40 flex flex-row items-center gap-2">
+                        <div className="p-2 bg-primary/10 rounded-xl text-primary"><PieChart className="w-4 h-4" /></div>
+                        <CardTitle className="text-sm font-bold text-foreground">Valuation & Growth Multiples</CardTitle>
                       </CardHeader>
-                      <CardContent className="space-y-4 pt-4">
-                        <div className="flex justify-between items-center border-b border-border/50 pb-2">
-                          <span className="text-sm text-muted-foreground">P/E Ratio (Trailing)</span>
-                          <span className="font-mono font-semibold">{safeFixed(quote.pe)}</span>
+                      <CardContent className="p-4 space-y-3 font-mono text-xs">
+                        <div className="flex justify-between items-center border-b border-border/40 pb-2">
+                          <span className="font-sans text-muted-foreground">P/E Ratio (Trailing)</span>
+                          <span className="font-bold text-foreground">{safeFixed(quote.pe)}x</span>
                         </div>
-                        <div className="flex justify-between items-center border-b border-border/50 pb-2">
-                          <span className="text-sm text-muted-foreground">Price / Sales</span>
-                          <span className="font-mono font-semibold">{safeFixed(financials?.priceToSales)}</span>
+                        <div className="flex justify-between items-center border-b border-border/40 pb-2">
+                          <span className="font-sans text-muted-foreground">Price to Sales (P/S)</span>
+                          <span className="font-bold text-foreground">{safeFixed(financials?.priceToSales)}x</span>
                         </div>
-                        <div className="flex justify-between items-center pb-2">
-                          <span className="text-sm text-muted-foreground">Earnings Per Share</span>
-                          <span className="font-mono font-semibold">${safeFixed(quote.eps)}</span>
+                        <div className="flex justify-between items-center border-b border-border/40 pb-2">
+                          <span className="font-sans text-muted-foreground">Earnings Per Share (EPS)</span>
+                          <span className="font-bold text-foreground">${safeFixed(quote.eps)}</span>
+                        </div>
+                        <div className="flex justify-between items-center pb-1">
+                          <span className="font-sans text-muted-foreground">Market Capitalization</span>
+                          <span className="font-bold text-foreground">{formatNumber(quote.marketCap)}</span>
                         </div>
                       </CardContent>
                     </Card>
 
-                    <Card className="bg-background/40 hover:bg-background/60 transition-all border-primary/10">
-                      <CardHeader className="pb-2 flex flex-row items-center gap-2">
-                        <div className="p-2 bg-success/10 rounded-lg"><Percent className="w-4 h-4 text-success" /></div>
-                        <CardTitle className="text-lg">Profitability & Returns</CardTitle>
+                    {/* Profitability & Returns */}
+                    <Card className="bg-card/60 backdrop-blur-xl border border-border/60 rounded-2xl shadow-sm">
+                      <CardHeader className="p-4 pb-3 border-b border-border/40 flex flex-row items-center gap-2">
+                        <div className="p-2 bg-emerald-500/10 rounded-xl text-emerald-400"><Percent className="w-4 h-4" /></div>
+                        <CardTitle className="text-sm font-bold text-foreground">Profitability & Capital Efficiency</CardTitle>
                       </CardHeader>
-                      <CardContent className="space-y-4 pt-4">
-                        <div className="flex justify-between items-center border-b border-border/50 pb-2">
-                          <span className="text-sm text-muted-foreground">Operating Margin</span>
-                          <span className="font-mono font-semibold text-success">
-                            {financials?.operatingMargin ? safeFixed(financials.operatingMargin * 100) + '%' : 'N/A'}
+                      <CardContent className="p-4 space-y-3 font-mono text-xs">
+                        <div className="flex justify-between items-center border-b border-border/40 pb-2">
+                          <span className="font-sans text-muted-foreground">Operating Margin</span>
+                          <span className="font-bold text-emerald-400">
+                            {financials?.operatingMargin ? safeFixed(financials.operatingMargin * 100) + '%' : '—'}
                           </span>
                         </div>
-                        <div className="flex justify-between items-center border-b border-border/50 pb-2">
-                          <span className="text-sm text-muted-foreground">Return on Assets (ROA)</span>
-                          <span className="font-mono font-semibold">
-                            {financials?.roa ? safeFixed(financials.roa * 100) + '%' : 'N/A'}
+                        <div className="flex justify-between items-center border-b border-border/40 pb-2">
+                          <span className="font-sans text-muted-foreground">Return on Equity (ROE)</span>
+                          <span className="font-bold text-emerald-400">
+                            {financials?.roe ? safeFixed(financials.roe * 100) + '%' : '—'}
                           </span>
                         </div>
-                        <div className="flex justify-between items-center pb-2">
-                          <span className="text-sm text-muted-foreground">Return on Equity (ROE)</span>
-                          <span className="font-mono font-semibold">
-                            {financials?.roe ? safeFixed(financials.roe * 100) + '%' : 'N/A'}
+                        <div className="flex justify-between items-center border-b border-border/40 pb-2">
+                          <span className="font-sans text-muted-foreground">Return on Assets (ROA)</span>
+                          <span className="font-bold text-foreground">
+                            {financials?.roa ? safeFixed(financials.roa * 100) + '%' : '—'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center pb-1">
+                          <span className="font-sans text-muted-foreground">Debt-to-Equity Multiple</span>
+                          <span className={cn(
+                            "font-bold",
+                            (financials?.debtToEquity || 0) > 100 ? "text-rose-400" : "text-emerald-400"
+                          )}>
+                            {safeFixed(financials?.debtToEquity)}
                           </span>
                         </div>
                       </CardContent>
@@ -654,66 +892,66 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
                   </div>
                 </TabsContent>
 
-                {/* FINANCIALS TAB */}
-                <TabsContent value="financials" className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
-                  <Card className="bg-background/40 hover:bg-background/60 border-primary/10">
-                    <CardHeader className="pb-2 flex flex-row items-center gap-2">
-                      <div className="p-2 bg-warning/10 rounded-lg"><Building2 className="w-4 h-4 text-warning" /></div>
-                      <CardTitle className="text-lg">Balance Sheet & Liquidity</CardTitle>
+                {/* ================= 3. FINANCIALS TAB ================= */}
+                <TabsContent value="financials" className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <Card className="bg-card/60 backdrop-blur-xl border border-border/60 rounded-2xl shadow-sm">
+                    <CardHeader className="p-4 pb-3 border-b border-border/40 flex flex-row items-center gap-2">
+                      <div className="p-2 bg-amber-500/10 rounded-xl text-amber-400"><Building2 className="w-4 h-4" /></div>
+                      <CardTitle className="text-sm font-bold text-foreground">Balance Sheet & Liquidity Summary</CardTitle>
                     </CardHeader>
-                    <CardContent className="pt-4 grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-4">
-                      <div className="flex justify-between items-center border-b border-border/50 pb-2">
-                        <span className="text-sm text-muted-foreground">Enterprise Value</span>
-                        <span className="font-mono font-bold text-foreground">{formatNumber(financials?.enterpriseValue)}</span>
+                    <CardContent className="p-5 grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-4 font-mono text-xs">
+                      <div className="flex justify-between items-center border-b border-border/40 pb-2">
+                        <span className="font-sans text-muted-foreground">Enterprise Value (EV)</span>
+                        <span className="font-bold text-foreground">{formatNumber(financials?.enterpriseValue)}</span>
                       </div>
-                      <div className="flex justify-between items-center border-b border-border/50 pb-2">
-                        <span className="text-sm text-muted-foreground">Market Capitalization</span>
-                        <span className="font-mono font-bold text-foreground">{formatNumber(quote.marketCap)}</span>
+                      <div className="flex justify-between items-center border-b border-border/40 pb-2">
+                        <span className="font-sans text-muted-foreground">Market Capitalization</span>
+                        <span className="font-bold text-foreground">{formatNumber(quote.marketCap)}</span>
                       </div>
-                      <div className="flex justify-between items-center border-b border-border/50 pb-2">
-                        <span className="text-sm text-muted-foreground">Debt to Equity</span>
+                      <div className="flex justify-between items-center border-b border-border/40 pb-2">
+                        <span className="font-sans text-muted-foreground">Debt to Equity</span>
                         <span className={cn(
-                          "font-mono font-bold",
-                          (financials?.debtToEquity || 0) > 100 ? "text-destructive" : "text-success"
+                          "font-bold",
+                          (financials?.debtToEquity || 0) > 100 ? "text-rose-400" : "text-emerald-400"
                         )}>
                           {safeFixed(financials?.debtToEquity)}
                         </span>
                       </div>
-                      <div className="flex justify-between items-center border-b border-border/50 pb-2">
-                        <span className="text-sm text-muted-foreground">Levered Free Cash Flow</span>
-                        <span className="font-mono font-bold text-foreground">{formatNumber(financials?.fcf)}</span>
+                      <div className="flex justify-between items-center border-b border-border/40 pb-2">
+                        <span className="font-sans text-muted-foreground">Levered Free Cash Flow</span>
+                        <span className="font-bold text-emerald-400">{formatNumber(financials?.fcf)}</span>
                       </div>
                     </CardContent>
                   </Card>
                 </TabsContent>
 
-                {/* NEWS TAB */}
-                <TabsContent value="news" className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                {/* ================= 4. NEWS TAB ================= */}
+                <TabsContent value="news" className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                   {dossier?.news && dossier.news.length > 0 ? (
-                    <div className="grid grid-cols-1 gap-4">
+                    <div className="grid grid-cols-1 gap-3.5">
                       {dossier.news.map((item: any, i: number) => (
                         <a
                           key={i}
                           href={item.link}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="group"
+                          className="group block"
                         >
-                          <Card className="bg-background/40 hover:bg-accent/40 transition-colors border-primary/5 hover:border-primary/30 group-hover:shadow-[0_0_15px_rgba(var(--primary),0.1)]">
-                            <CardContent className="p-5 flex gap-4 items-start">
-                              <div className="mt-1 p-2 bg-primary/10 rounded-full group-hover:bg-primary/20 transition-colors shadow-sm">
-                                <Newspaper className="w-5 h-5 text-primary" />
+                          <Card className="bg-card/60 hover:bg-card/90 backdrop-blur-xl border border-border/60 hover:border-primary/40 transition-all rounded-2xl shadow-sm p-4">
+                            <div className="flex gap-4 items-start">
+                              <div className="p-2.5 bg-primary/10 rounded-xl group-hover:bg-primary/20 transition-colors shrink-0 text-primary">
+                                <Newspaper className="w-5 h-5" />
                               </div>
-                              <div>
-                                <h4 className="font-semibold text-lg text-foreground mb-1 group-hover:text-primary transition-colors leading-tight">
+                              <div className="flex-1 min-w-0">
+                                <h4 className="font-bold text-sm text-foreground group-hover:text-primary transition-colors leading-snug mb-1">
                                   {item.title}
                                 </h4>
-                                <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                                  <Badge variant="secondary" className="font-medium bg-secondary/50">
-                                    {item.publisher || 'Wire'}
+                                <div className="flex items-center gap-2.5 text-[11px] text-muted-foreground">
+                                  <Badge variant="secondary" className="text-[10px] font-semibold bg-accent/60">
+                                    {item.publisher || 'Market Wire'}
                                   </Badge>
                                   {item.providerPublishTime && (
-                                    <span className="flex items-center gap-1 font-mono text-xs">
+                                    <span className="flex items-center gap-1 font-mono text-[10px]">
                                       <Clock className="w-3 h-3" />
                                       {new Date(item.providerPublishTime * 1000).toLocaleString(undefined, {
                                         month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
@@ -722,56 +960,58 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
                                   )}
                                 </div>
                               </div>
-                            </CardContent>
+                              <ExternalLink className="w-4 h-4 text-muted-foreground group-hover:text-primary opacity-0 group-hover:opacity-100 transition-all shrink-0 mt-1" />
+                            </div>
                           </Card>
                         </a>
                       ))}
                     </div>
                   ) : (
-                    <Card className="bg-background/30 border-dashed border-2 py-12">
-                      <CardContent className="flex flex-col items-center justify-center text-center">
-                        <Newspaper className="w-12 h-12 text-muted-foreground/30 mb-4" />
-                        <h3 className="text-lg font-medium text-foreground">No News Available</h3>
-                        <p className="text-sm text-muted-foreground mt-1 max-w-sm">
-                          News feeds from Yahoo Finance have not populated for {quote.symbol}.
+                    <Card className="bg-card/30 border-dashed border-2 border-border/60 py-12 rounded-2xl text-center">
+                      <CardContent className="flex flex-col items-center justify-center">
+                        <Newspaper className="w-10 h-10 text-muted-foreground/40 mb-3" />
+                        <h3 className="text-base font-bold text-foreground">No News Feed Data</h3>
+                        <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+                          Recent news articles for {quote.symbol} have not populated from data providers.
                         </p>
                       </CardContent>
                     </Card>
                   )}
                 </TabsContent>
 
-                {/* AI ANALYSIS TAB */}
-                <TabsContent value="ai-analysis" className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
-                  <Card className="bg-background/40 border-primary/10 relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 p-8 h-full opacity-[0.03] pointer-events-none group-hover:opacity-[0.06] transition-opacity">
-                      <Sparkles className="w-full h-full text-primary" />
-                    </div>
-                    <CardHeader className="pb-4 flex flex-row items-center gap-2 border-b border-border/50">
-                      <div className="p-2 bg-primary/10 rounded-lg"><Sparkles className="w-5 h-5 text-primary animate-pulse" /></div>
+                {/* ================= 5. AI THESIS TAB ================= */}
+                <TabsContent value="ai-analysis" className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <Card className="bg-card/60 backdrop-blur-xl border border-border/70 rounded-2xl shadow-lg overflow-hidden relative">
+                    <CardHeader className="p-5 pb-4 border-b border-border/50 bg-gradient-to-r from-purple-950/30 via-background to-indigo-950/30 flex flex-row items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400">
+                        <Sparkles className="w-5 h-5 animate-pulse" />
+                      </div>
                       <div>
-                        <CardTitle className="text-xl">Aggressive Growth AI Analysis</CardTitle>
-                        <CardDescription>Generated by GPT-4o-mini using live dossier data</CardDescription>
+                        <CardTitle className="text-base font-bold text-foreground">AI Fundamental & Valuation Thesis</CardTitle>
+                        <CardDescription className="text-xs text-muted-foreground">Synthesized by Hedge Fund Analyst Agent using live dossier telemetry</CardDescription>
                       </div>
                     </CardHeader>
-                    <CardContent className="pt-6">
+                    <CardContent className="p-6">
                       {aiLoading ? (
-                        <div className="flex flex-col items-center justify-center py-12 space-y-4">
-                          <Loader2 className="w-10 h-10 animate-spin text-primary" />
-                          <p className="text-muted-foreground animate-pulse">Running advanced AI evaluation...</p>
+                        <div className="flex flex-col items-center justify-center py-16 space-y-3">
+                          <Loader2 className="w-8 h-8 animate-spin text-purple-400" />
+                          <p className="text-xs font-semibold text-muted-foreground animate-pulse">Running advanced AI equity thesis evaluation...</p>
                         </div>
                       ) : aiError ? (
-                        <div className="flex flex-col items-center justify-center py-12 space-y-3">
-                          <ActivitySquare className="h-10 w-10 text-destructive/80" />
-                          <p className="text-destructive font-medium">Failed to generate AI Analysis</p>
-                          <p className="text-sm text-muted-foreground">Verify OPENROUTER_API_KEY in your .env.local file</p>
+                        <div className="flex flex-col items-center justify-center py-12 space-y-2 text-center">
+                          <AlertTriangle className="h-8 w-8 text-destructive" />
+                          <p className="text-xs font-bold text-destructive">Failed to generate AI Analysis</p>
+                          <p className="text-[11px] text-muted-foreground">Verify OPENROUTER_API_KEY in your settings.</p>
                         </div>
                       ) : parsedAiAnalysis ? (
                         <div className="space-y-6">
                           {/* Company Overview */}
                           {parsedAiAnalysis.overview && (
-                            <section>
-                              <h3 className="text-lg font-semibold text-foreground border-b border-border/50 pb-2 mb-3">Company Overview</h3>
-                              <p className="text-slate-300 max-w-4xl leading-relaxed">
+                            <section className="space-y-2">
+                              <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                <Building2 className="w-3.5 h-3.5 text-primary" /> Core Overview
+                              </h3>
+                              <p className="text-xs text-foreground/90 leading-relaxed bg-accent/20 p-4 rounded-xl border border-border/40">
                                 {parsedAiAnalysis.overview}
                               </p>
                             </section>
@@ -779,13 +1019,15 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
 
                           {/* Key Metrics Grid */}
                           {parsedAiAnalysis.keyMetrics && Object.keys(parsedAiAnalysis.keyMetrics).length > 0 && (
-                            <section>
-                              <h3 className="text-lg font-semibold text-foreground border-b border-border/50 pb-2 mb-3">Key Metrics</h3>
-                              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                            <section className="space-y-2">
+                              <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                <PieChart className="w-3.5 h-3.5 text-primary" /> Key Financial Drivers
+                              </h3>
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                                 {Object.entries(parsedAiAnalysis.keyMetrics).map(([key, val]) => (
-                                  <div key={key} className="bg-slate-900/80 p-4 rounded-xl border border-white/5 flex flex-col justify-center">
-                                    <span className="text-xs text-muted-foreground uppercase tracking-wider mb-1 font-medium">{key}</span>
-                                    <span className="text-lg font-bold text-white">{val as string}</span>
+                                  <div key={key} className="bg-background/60 p-3 rounded-xl border border-border/50">
+                                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider block font-bold mb-0.5">{key}</span>
+                                    <span className="font-mono text-sm font-bold text-foreground">{val as string}</span>
                                   </div>
                                 ))}
                               </div>
@@ -794,28 +1036,35 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
 
                           {/* Red Flags / Alerts */}
                           {parsedAiAnalysis.redFlags && parsedAiAnalysis.redFlags.length > 0 && (
-                            <section className="space-y-3">
-                              {parsedAiAnalysis.redFlags.map((flag: string, idx: number) => (
-                                <div key={idx} className="flex items-start gap-3 bg-red-950/30 border border-red-900/50 p-4 rounded-xl">
-                                  <AlertTriangle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
-                                  <p className="text-red-200 text-sm leading-relaxed">{flag}</p>
-                                </div>
-                              ))}
+                            <section className="space-y-2">
+                              <h3 className="text-xs font-bold uppercase tracking-wider text-rose-400 flex items-center gap-1.5">
+                                <AlertTriangle className="w-3.5 h-3.5" /> Risk Factors & Red Flags
+                              </h3>
+                              <div className="space-y-2">
+                                {parsedAiAnalysis.redFlags.map((flag: string, idx: number) => (
+                                  <div key={idx} className="flex items-start gap-2.5 bg-rose-950/20 border border-rose-800/40 p-3 rounded-xl text-xs text-rose-200">
+                                    <span className="text-rose-400 font-bold">•</span>
+                                    <span>{flag}</span>
+                                  </div>
+                                ))}
+                              </div>
                             </section>
                           )}
 
                           {/* Deep Dive */}
                           {parsedAiAnalysis.deepDive && (
-                            <section>
-                              <h3 className="text-lg font-semibold text-foreground border-b border-border/50 pb-2 mb-3">Deep Dive into Financials</h3>
-                              <p className="text-slate-300 max-w-4xl leading-relaxed">
+                            <section className="space-y-2">
+                              <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                <Sparkles className="w-3.5 h-3.5 text-purple-400" /> Deep Dive Analysis
+                              </h3>
+                              <p className="text-xs text-foreground/90 leading-relaxed bg-accent/20 p-4 rounded-xl border border-border/40">
                                 {parsedAiAnalysis.deepDive}
                               </p>
                             </section>
                           )}
                         </div>
                       ) : (
-                        <div className="prose prose-invert prose-p:text-muted-foreground prose-headings:text-foreground prose-strong:text-foreground prose-a:text-primary max-w-none">
+                        <div className="prose prose-invert prose-p:text-muted-foreground prose-headings:text-foreground prose-strong:text-foreground max-w-none text-xs leading-relaxed">
                           <ReactMarkdown>{aiData?.analysis || "No analysis available."}</ReactMarkdown>
                         </div>
                       )}
@@ -823,18 +1072,18 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
                   </Card>
                 </TabsContent>
 
-                {/* AUTONOMOUS REPORTS TAB */}
-                <TabsContent value="reports" className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
+                {/* ================= 6. AUTONOMOUS REPORTS TAB ================= */}
+                <TabsContent value="reports" className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                   <AutonomousReportsList symbol={selectedSymbol} />
                 </TabsContent>
               </Tabs>
             </>
           ) : (
-            <Card className="h-[400px] flex items-center justify-center bg-background/30 backdrop-blur-sm border-dashed border-2 border-border/50">
-              <div className="text-center">
-                <Search className="h-10 w-10 text-muted-foreground/50 mx-auto mb-4" />
-                <p className="text-lg font-medium text-foreground">Awaiting Input</p>
-                <p className="text-sm text-muted-foreground">Select an asset from the sidebar to compile its dossier.</p>
+            <Card className="h-[420px] flex items-center justify-center bg-card/40 backdrop-blur-md border-dashed border-2 border-border/60 rounded-2xl">
+              <div className="text-center space-y-2">
+                <Search className="h-10 w-10 text-muted-foreground/40 mx-auto" />
+                <p className="text-base font-bold text-foreground">Awaiting Asset Selection</p>
+                <p className="text-xs text-muted-foreground">Select a ticker from the explorer sidebar to compile its dossier.</p>
               </div>
             </Card>
           )}
@@ -870,8 +1119,28 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
           queryClient.invalidateQueries({ queryKey: ['allAutonomousReports'] });
         }}
       />
+
+      {/* Portfolio Fit & Category Benchmark Modal */}
+      <PortfolioFitModal
+        isOpen={isFitModalOpen}
+        onClose={() => setIsFitModalOpen(false)}
+        symbol={selectedSymbol}
+        onOpenNote={(sym) => {
+          setSelectedSymbol(sym);
+          setIsNoteModalOpen(true);
+        }}
+        onOpenTradeIdea={(sym, thesis) => {
+          setIdeaModalState({ open: true, initialThesis: thesis });
+        }}
+      />
+
+      {/* Trade Idea Writing Modal */}
+      <IdeaModal
+        isOpen={ideaModalState.open}
+        onClose={() => setIdeaModalState({ open: false })}
+        initialSymbol={selectedSymbol}
+        initialContent={ideaModalState.initialThesis}
+      />
     </div>
   );
 }
-
-

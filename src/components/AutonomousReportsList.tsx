@@ -22,7 +22,8 @@ import {
   PlusCircle,
   Clock,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Bot
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -309,6 +310,11 @@ export function AutonomousReportsList({
                             Target: {String(scorecard.priceTarget).startsWith('$') ? scorecard.priceTarget : `$${scorecard.priceTarget}`}
                           </span>
                         )}
+
+                        <Badge className="bg-blue-950/60 text-blue-300 border border-blue-500/30 text-[9px] font-mono flex items-center gap-1">
+                          <Bot className="w-2.5 h-2.5" />
+                          Autonomous Deep Research Agent
+                        </Badge>
 
                         <span className="text-[11px] text-muted-foreground flex items-center gap-1">
                           <Clock className="w-3 h-3" /> {dateStr}

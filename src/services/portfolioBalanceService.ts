@@ -47,6 +47,10 @@ export interface BrokerAccountBalance {
   equitiesCount: number;
   equitiesValue: number;
   longDerivativeValue?: number;
+  netLiquidatingValueGBP?: number;
+  cashGBP?: number;
+  investedGBP?: number;
+  unrealizedPnLGBP?: number;
   shortDerivativeValue?: number;
   longEquityValue?: number;
   shortEquityValue?: number;
@@ -58,9 +62,34 @@ export interface BrokerAccountBalance {
   rawMetrics?: Record<string, any>;
 }
 
+export interface CurrencyBalance {
+  currency: string;
+  cash: number;
+  positionsMarketValue: number;
+  unrealizedPnL: number;
+  fxRateToUSD: number;
+  cashUSD: number;
+  positionsMarketValueUSD: number;
+  unrealizedPnLUSD: number;
+  netLiqUSD: number;
+  holdingsCount: number;
+}
+
+export interface IBKRAccountDetails extends BrokerAccountBalance {
+  accountKey: string; // e.g. 'account1', 'account2', or specific account number
+  baseCurrency: string;
+  currencies: Record<string, CurrencyBalance>;
+}
+
+export interface IBKRCombinedBalance extends BrokerAccountBalance {
+  accounts: IBKRAccountDetails[];
+  currencies: Record<string, CurrencyBalance>;
+}
+
 export interface PortfolioAllocation {
   ibkrSharePercent: number;
   tastySharePercent: number;
+  trading212SharePercent?: number;
   optionsAllocationPercent: number;
   equitiesAllocationPercent: number;
   cashAllocationPercent: number;
@@ -84,9 +113,11 @@ export interface PortfolioBalancesData {
     marginCushion?: number;
     allocation?: PortfolioAllocation;
   };
+  currencies?: Record<string, CurrencyBalance>;
   brokers: {
-    ibkr: BrokerAccountBalance;
+    ibkr: IBKRCombinedBalance;
     tastytrade: BrokerAccountBalance;
+    trading212?: BrokerAccountBalance;
   };
 }
 
