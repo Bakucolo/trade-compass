@@ -47,6 +47,7 @@ import { AIIdeaGeneratorModal } from './AIIdeaGeneratorModal';
 import { IdeaDetailModal } from './IdeaDetailModal';
 import { TradeStructureModal } from './TradeStructureModal';
 import { AddThemeModal } from './AddThemeModal';
+import { OptionsTradeAgentModal } from './trades/OptionsTradeAgentModal';
 import {
   MarketThemeDefinition,
   getAllMarketThemes,
@@ -83,6 +84,7 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
   // Modal States
   const [isWriteModalOpen, setIsWriteModalOpen] = useState(false);
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
+  const [isOptionsAgentModalOpen, setIsOptionsAgentModalOpen] = useState(false);
   const [selectedIdeaForDetail, setSelectedIdeaForDetail] = useState<TradeIdea | null>(null);
   const [selectedIdeaForStructure, setSelectedIdeaForStructure] = useState<TradeIdea | null>(null);
   const [ideaToEdit, setIdeaToEdit] = useState<TradeIdea | null>(null);
@@ -222,11 +224,24 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2.5 flex-wrap">
+          {/* Options Trade Agent Button */}
           <Button
-            onClick={() => setIsAIModalOpen(true)}
-            className="gap-2 text-xs font-bold bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/35 transition-all"
+            onClick={() => setIsOptionsAgentModalOpen(true)}
+            className="gap-2 text-xs font-bold bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-700 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-600/25 transition-all"
+            title="Scan options strategies, IV Rank / IV Percentile, POP win rates, Spreads & Condors"
           >
             <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+            <span>Options Trade Agent</span>
+            <Badge className="bg-purple-500/30 text-purple-200 text-[9px] px-1.5 py-0 font-mono font-bold border border-purple-400/40">
+              AI Strategies
+            </Badge>
+          </Button>
+
+          <Button
+            onClick={() => setIsAIModalOpen(true)}
+            className="gap-2 text-xs font-bold bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-700 hover:to-slate-800 text-white border border-border/70 shadow-sm transition-all"
+          >
+            <Bot className="w-4 h-4 text-purple-400" />
             <span>Summon AI Hunter</span>
           </Button>
 
@@ -641,6 +656,13 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
           setAvailableThemes(getAllMarketThemes());
           setSelectedThemeId(savedTheme.id);
         }}
+      />
+
+      {/* AI Options Strategy & Trade Agent Modal */}
+      <OptionsTradeAgentModal
+        isOpen={isOptionsAgentModalOpen}
+        onClose={() => setIsOptionsAgentModalOpen(false)}
+        onNavigateToResearch={onNavigateToResearch}
       />
     </div>
   );

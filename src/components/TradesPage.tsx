@@ -43,11 +43,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from './ui/dialog';
-import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
-import { OptionsTradeAgentModal } from './trades/OptionsTradeAgentModal';
 import { BuyingPowerAnalyserModal } from './portfolio/BuyingPowerAnalyserModal';
-import { OptionsTradeOpportunity } from '@/services/optionsTradeAgentService';
 
 interface TradesPageProps {
   onNavigateToResearch?: (symbol: string) => void;
@@ -70,7 +66,6 @@ export function TradesPage({ onNavigateToResearch }: TradesPageProps = {}) {
   // Modal States
   const [selectedTrade, setSelectedTrade] = useState<UnifiedTrade | null>(null);
   const [isLogModalOpen, setIsLogModalOpen] = useState<boolean>(false);
-  const [isOptionsAgentModalOpen, setIsOptionsAgentModalOpen] = useState<boolean>(false);
   const [isBuyingPowerModalOpen, setIsBuyingPowerModalOpen] = useState<boolean>(false);
   const [newTrade, setNewTrade] = useState<Partial<UnifiedTrade>>({
     broker: 'Manual',
@@ -345,20 +340,6 @@ export function TradesPage({ onNavigateToResearch }: TradesPageProps = {}) {
 
         {/* Action Controls */}
         <div className="flex items-center gap-2 flex-wrap">
-          {/* AI Options Trade Finding Agent */}
-          <Button
-            size="sm"
-            onClick={() => setIsOptionsAgentModalOpen(true)}
-            className="h-9 text-xs gap-1.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-700 hover:from-purple-500 hover:to-indigo-500 text-white font-bold shadow-lg shadow-purple-600/25 transition-all"
-            title="Scan options strategies, IV Rank / IV Percentile, and quantitative win rates"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
-            <span>Options Trade Agent</span>
-            <Badge className="bg-purple-500/30 text-purple-200 text-[9px] px-1.5 py-0 font-mono font-bold border border-purple-400/40">
-              AI Strategies
-            </Badge>
-          </Button>
-
           {/* Buying Power Analyser Button */}
           <Button
             variant="outline"
@@ -1063,14 +1044,6 @@ export function TradesPage({ onNavigateToResearch }: TradesPageProps = {}) {
           </DialogContent>
         </Dialog>
       )}
-
-      {/* Options Strategy & Trade Finding Agent Modal */}
-      <OptionsTradeAgentModal
-        isOpen={isOptionsAgentModalOpen}
-        onClose={() => setIsOptionsAgentModalOpen(false)}
-        onSelectTradeToLog={handleSelectTradeToLog}
-        onNavigateToResearch={onNavigateToResearch}
-      />
 
       {/* Buying Power & Margin Risk Analyser Modal */}
       <BuyingPowerAnalyserModal
