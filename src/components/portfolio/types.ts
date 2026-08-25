@@ -24,13 +24,14 @@ export interface UnifiedPosition {
     accountName?: string; // e.g. 'IBKR ISA', 'IBKR GIA', 'Trading 212 ISA', 'Tastytrade Margin'
     accountBadge?: string;
     assetType: 'Stock' | 'Option' | 'Crypto' | 'Other';
-    // Option Specifics
+    // Option & Greeks Specifics
     strike?: number;
     expiry?: string;
     dte?: number;
     optionType?: 'Call' | 'Put' | 'C' | 'P';
     underlyingSymbol?: string;
     underlyingPrice?: number;
+    delta?: number;
     currency?: string;
     // Thematic & Style
     investmentStyle?: 'Growth' | 'Value' | 'Dividend' | 'Defensive' | 'Speculative' | 'Blend';

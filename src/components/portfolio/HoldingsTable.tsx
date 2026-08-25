@@ -60,6 +60,7 @@ interface HoldingsTableProps {
 type SortKey = 
     | 'symbol' 
     | 'quantity' 
+    | 'delta'
     | 'marketValue' 
     | 'dayChange' 
     | 'unrealizedPL' 
@@ -213,6 +214,90 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
         return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     };
 
+    // --- Standard Normal Cumulative Distribution Function for Black-Scholes Delta ---
+    const normalCDF = (x: number): number => {
+        const a1 = 0.254829592;
+        const a2 = -0.284496736;
+        const a3 = 1.421413741;
+        const a4 = -1.453152027;
+        const a5 = 1.061405429;
+        const p = 0.3275911;
+
+        const sign = x < 0 ? -1 : 1;
+        const absX = Math.abs(x) / Math.sqrt(2.0);
+        const t = 1.0 / (1.0 + p * absX);
+        const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX);
+        return 0.5 * (1.0 + sign * y);
+    };
+
+    // --- Calculate Delta per unit and Total Net Position Delta ---
+    const calculatePositionDelta = (pos: UnifiedPosition) => {
+        const isOption = pos.assetType === 'Option';
+        const qty = pos.quantity || 0;
+
+        if (!isOption) {
+            // Equity position: Delta is +1.00 per long share, -1.00 per short share
+            const unitDelta = qty >= 0 ? 1.0 : -1.0;
+            const netPositionDelta = qty;
+            return {
+                unitDelta,
+                netPositionDelta,
+                isOption: false,
+                deltaLabel: `${netPositionDelta >= 0 ? '+' : ''}${Math.round(netPositionDelta).toLocaleString()}Δ`,
+                unitLabel: `${qty >= 0 ? '+' : '-'}1.00Δ/sh`
+            };
+        }
+
+        // Option contract position
+        if (pos.delta !== undefined && !isNaN(pos.delta)) {
+            const unitDelta = pos.delta;
+            const netPositionDelta = qty * 100 * unitDelta;
+            return {
+                unitDelta: Math.round(unitDelta * 100) / 100,
+                netPositionDelta: Math.round(netPositionDelta * 10) / 10,
+                isOption: true,
+                deltaLabel: `${netPositionDelta >= 0 ? '+' : ''}${Math.round(netPositionDelta).toLocaleString()}Δ`,
+                unitLabel: `${unitDelta >= 0 ? '+' : ''}${unitDelta.toFixed(2)}Δ/ct`
+            };
+        }
+
+        const isCall = pos.optionType === 'Call' || pos.optionType === 'C';
+        const strike = pos.strike;
+        const underlyingPrice = pos.underlyingPrice || pos.currentPrice;
+        const dte = getDTE(pos.expiry) ?? 30;
+
+        let unitDelta = isCall ? 0.50 : -0.50; // Fallback ATM delta
+
+        if (strike && underlyingPrice && strike > 0 && underlyingPrice > 0) {
+            if (dte <= 0) {
+                unitDelta = isCall ? (underlyingPrice > strike ? 1.0 : 0.0) : (underlyingPrice < strike ? -1.0 : 0.0);
+            } else {
+                const t = Math.max(0.001, dte / 365.0);
+                const v = 0.40; // Default implied volatility estimate ~40%
+                const r = 0.045; // Risk-free rate 4.5%
+                const d1 = (Math.log(underlyingPrice / strike) + (r + (v * v) / 2.0) * t) / (v * Math.sqrt(t));
+
+                if (isCall) {
+                    unitDelta = Math.max(0.01, Math.min(0.99, normalCDF(d1)));
+                } else {
+                    unitDelta = Math.max(-0.99, Math.min(-0.01, normalCDF(d1) - 1.0));
+                }
+            }
+        }
+
+        const netPositionDelta = qty * 100 * unitDelta;
+        const roundedNet = Math.round(netPositionDelta * 10) / 10;
+        const roundedUnit = Math.round(unitDelta * 100) / 100;
+
+        return {
+            unitDelta: roundedUnit,
+            netPositionDelta: roundedNet,
+            isOption: true,
+            deltaLabel: `${roundedNet >= 0 ? '+' : ''}${Math.round(roundedNet).toLocaleString()}Δ`,
+            unitLabel: `${roundedUnit >= 0 ? '+' : ''}${roundedUnit.toFixed(2)}Δ/ct`
+        };
+    };
+
     // --- Helper to format option expiration date into human readable text e.g. "Sep 18, 2026" ---
     const formatExpiryHuman = (expiryStr?: string): string => {
         if (!expiryStr) return '—';
@@ -285,6 +370,12 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
         if (!list || !Array.isArray(list)) return [];
         return [...list].sort((a, b) => {
             if (!a || !b) return 0;
+            if (sortConfig.key === 'delta') {
+                const deltaA = calculatePositionDelta(a).netPositionDelta;
+                const deltaB = calculatePositionDelta(b).netPositionDelta;
+                return sortConfig.direction === 'asc' ? deltaA - deltaB : deltaB - deltaA;
+            }
+
             if (sortConfig.key === 'risky') {
                 const getRiskScore = (p: UnifiedPosition) => {
                     let isITM = 1;
@@ -358,10 +449,11 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
             const query = searchQuery.toLowerCase();
             result = result.filter(p => 
                 p && (
-                    (p.symbol && p.symbol.toLowerCase().includes(query)) || 
-                    (p.description && p.description.toLowerCase().includes(query)) ||
+                    p.symbol.toLowerCase().includes(query) ||
                     (p.underlyingSymbol && p.underlyingSymbol.toLowerCase().includes(query)) ||
+                    (p.description && p.description.toLowerCase().includes(query)) ||
                     (p.investmentStyle && p.investmentStyle.toLowerCase().includes(query)) ||
+                    (p.primaryTheme && p.primaryTheme.toLowerCase().includes(query)) ||
                     (p.themes && p.themes.some(t => t.toLowerCase().includes(query)))
                 )
             );
@@ -423,6 +515,7 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
         const totalValue = optionsPositions.reduce((sum, p) => sum + p.marketValue, 0);
         const totalUnrealizedPL = optionsPositions.reduce((sum, p) => sum + p.unrealizedPL, 0);
         const totalDayPL = optionsPositions.reduce((sum, p) => sum + p.dayChange, 0);
+        const totalNetDelta = optionsPositions.reduce((sum, p) => sum + calculatePositionDelta(p).netPositionDelta, 0);
         const shortCount = optionsPositions.filter(p => p.quantity < 0).length;
         const longCount = optionsPositions.filter(p => p.quantity > 0).length;
         const nearExpiryCount = optionsPositions.filter(p => {
@@ -435,7 +528,7 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
             return isCall ? (p.underlyingPrice > p.strike) : (p.underlyingPrice < p.strike);
         }).length;
 
-        return { totalValue, totalUnrealizedPL, totalDayPL, shortCount, longCount, nearExpiryCount, itmCount };
+        return { totalValue, totalUnrealizedPL, totalDayPL, totalNetDelta, shortCount, longCount, nearExpiryCount, itmCount };
     }, [optionsPositions]);
 
     // --- Metrics for Equities Section ---
@@ -443,7 +536,8 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
         const totalValue = equitiesPositions.reduce((sum, p) => sum + p.marketValue, 0);
         const totalUnrealizedPL = equitiesPositions.reduce((sum, p) => sum + p.unrealizedPL, 0);
         const totalDayPL = equitiesPositions.reduce((sum, p) => sum + p.dayChange, 0);
-        return { totalValue, totalUnrealizedPL, totalDayPL };
+        const totalNetDelta = equitiesPositions.reduce((sum, p) => sum + calculatePositionDelta(p).netPositionDelta, 0);
+        return { totalValue, totalUnrealizedPL, totalDayPL, totalNetDelta };
     }, [equitiesPositions]);
 
     // --- Handlers ---
@@ -691,6 +785,36 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                         {pos.quantity > 0 ? `+${pos.quantity}` : pos.quantity}
                         {isOption && <span className="text-[10px] text-muted-foreground ml-0.5">x100</span>}
                     </div>
+                </TableCell>
+
+                {/* Delta (Δ) Column */}
+                <TableCell className="text-right">
+                    {(() => {
+                        const deltaInfo = calculatePositionDelta(pos);
+                        const isPositive = deltaInfo.netPositionDelta > 0;
+                        const isNegative = deltaInfo.netPositionDelta < 0;
+
+                        return (
+                            <div 
+                                className="flex flex-col items-end min-w-[75px]" 
+                                title={`Position Net Delta: ${deltaInfo.deltaLabel} (${deltaInfo.unitLabel})\n${
+                                    isOption 
+                                        ? `A $1.00 move in underlying results in ~$${Math.abs(deltaInfo.netPositionDelta).toFixed(1)} change in contract value.` 
+                                        : `1.00Δ per share. Net portfolio exposure is ${deltaInfo.deltaLabel}.`
+                                }`}
+                            >
+                                <div className={cn(
+                                    "font-mono text-sm font-black flex items-center justify-end gap-0.5",
+                                    isPositive ? "text-emerald-400" : isNegative ? "text-rose-400" : "text-slate-400"
+                                )}>
+                                    <span>{deltaInfo.deltaLabel}</span>
+                                </div>
+                                <div className="text-[9.5px] font-mono text-muted-foreground/80 tracking-tight">
+                                    {deltaInfo.unitLabel}
+                                </div>
+                            </div>
+                        );
+                    })()}
                 </TableCell>
 
                 {/* Strike & Option Type / Distance */}
@@ -1200,6 +1324,13 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                             </div>
 
                             <div className="px-3 py-1.5 rounded-xl bg-card/60 border border-border/40 font-mono">
+                                <span className="text-[10px] text-muted-foreground block uppercase font-bold">Net Delta (&Delta;)</span>
+                                <span className={cn("text-sm font-black", optionsMetrics.totalNetDelta >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                                    {optionsMetrics.totalNetDelta >= 0 ? '+' : ''}{Math.round(optionsMetrics.totalNetDelta).toLocaleString()} &Delta;
+                                </span>
+                            </div>
+
+                            <div className="px-3 py-1.5 rounded-xl bg-card/60 border border-border/40 font-mono">
                                 <span className="text-[10px] text-muted-foreground block uppercase font-bold">Expiring &le; 14d</span>
                                 <span className="text-sm font-black text-amber-400">
                                     {optionsMetrics.nearExpiryCount} Contracts
@@ -1221,6 +1352,9 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                                     </TableHead>
                                     <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('quantity')}>
                                         <div className="flex items-center justify-end">Contracts <SortIcon columnKey="quantity" /></div>
+                                    </TableHead>
+                                    <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('delta')}>
+                                        <div className="flex items-center justify-end text-cyan-300 font-bold">Delta (&Delta;) <SortIcon columnKey="delta" /></div>
                                     </TableHead>
                                     <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('risky')}>
                                         <div className="flex items-center justify-end">Strike & Moneyness <SortIcon columnKey="risky" /></div>
@@ -1246,7 +1380,7 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                             <TableBody>
                                 {optionsPositions.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={12} className="text-center py-8 text-muted-foreground text-sm">
+                                        <TableCell colSpan={13} className="text-center py-8 text-muted-foreground text-sm">
                                             No active option contracts match the selected filters.
                                         </TableCell>
                                     </TableRow>
@@ -1303,6 +1437,13 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                             </div>
 
                             <div className="px-3 py-1.5 rounded-xl bg-card/60 border border-border/40 font-mono">
+                                <span className="text-[10px] text-muted-foreground block uppercase font-bold">Net Delta (&Delta;)</span>
+                                <span className={cn("text-sm font-black", equitiesMetrics.totalNetDelta >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                                    {equitiesMetrics.totalNetDelta >= 0 ? '+' : ''}{Math.round(equitiesMetrics.totalNetDelta).toLocaleString()} &Delta;
+                                </span>
+                            </div>
+
+                            <div className="px-3 py-1.5 rounded-xl bg-card/60 border border-border/40 font-mono">
                                 <span className="text-[10px] text-muted-foreground block uppercase font-bold">Today's Move</span>
                                 <span className={cn("text-sm font-black", equitiesMetrics.totalDayPL >= 0 ? "text-emerald-400" : "text-rose-400")}>
                                     {equitiesMetrics.totalDayPL >= 0 ? '+' : ''}${equitiesMetrics.totalDayPL.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1324,6 +1465,9 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                                     </TableHead>
                                     <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('quantity')}>
                                         <div className="flex items-center justify-end">Shares <SortIcon columnKey="quantity" /></div>
+                                    </TableHead>
+                                    <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('delta')}>
+                                        <div className="flex items-center justify-end text-cyan-300 font-bold">Delta (&Delta;) <SortIcon columnKey="delta" /></div>
                                     </TableHead>
                                     <TableHead className="text-right">Type</TableHead>
                                     <TableHead className="text-right">Live Quote</TableHead>
@@ -1347,7 +1491,7 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                             <TableBody>
                                 {equitiesPositions.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={12} className="text-center py-8 text-muted-foreground text-sm">
+                                        <TableCell colSpan={13} className="text-center py-8 text-muted-foreground text-sm">
                                             No equity positions match the selected filters.
                                         </TableCell>
                                     </TableRow>
@@ -1382,6 +1526,9 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                                     <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('quantity')}>
                                         <div className="flex items-center justify-end">Pos <SortIcon columnKey="quantity" /></div>
                                     </TableHead>
+                                    <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('delta')}>
+                                        <div className="flex items-center justify-end text-cyan-300 font-bold">Delta (&Delta;) <SortIcon columnKey="delta" /></div>
+                                    </TableHead>
                                     <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('risky')}>
                                         <div className="flex items-center justify-end">Risk / Strike <SortIcon columnKey="risky" /></div>
                                     </TableHead>
@@ -1406,7 +1553,7 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                             <TableBody>
                                 {allSortedPositions.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={12} className="text-center py-8 text-muted-foreground text-sm">
+                                        <TableCell colSpan={13} className="text-center py-8 text-muted-foreground text-sm">
                                             No positions match the selected filters.
                                         </TableCell>
                                     </TableRow>
