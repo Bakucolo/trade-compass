@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import {
   Lightbulb,
@@ -29,6 +29,9 @@ import {
   ListTree,
   ChevronDown,
   ChevronUp,
+  X,
+  Check,
+  Tag,
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -43,10 +46,11 @@ import { IdeaModal } from './IdeaModal';
 import { AIIdeaGeneratorModal } from './AIIdeaGeneratorModal';
 import { IdeaDetailModal } from './IdeaDetailModal';
 import { TradeStructureModal } from './TradeStructureModal';
+import { AddThemeModal } from './AddThemeModal';
 import {
-  MARKET_THEMES,
-  DEFAULT_THEME,
   MarketThemeDefinition,
+  getAllMarketThemes,
+  DEFAULT_THEME,
   getIdeaMarketTheme,
   calculatePotentialROI,
 } from '@/utils/ideaThemeUtils';
@@ -68,6 +72,14 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
   const [viewMode, setViewMode] = useState<IdeaViewMode>('GRID');
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
+  // Market Themes dynamic state
+  const [availableThemes, setAvailableThemes] = useState<MarketThemeDefinition[]>(() => getAllMarketThemes());
+  const [isAddThemeModalOpen, setIsAddThemeModalOpen] = useState(false);
+  const [themeToEdit, setThemeToEdit] = useState<MarketThemeDefinition | null>(null);
+
+  // Deletion inline confirm state
+  const [deletingIdeaId, setDeletingIdeaId] = useState<string | null>(null);
+
   // Modal States
   const [isWriteModalOpen, setIsWriteModalOpen] = useState(false);
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
@@ -84,19 +96,28 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
 
   const deleteMutation = useDeleteTradeIdea();
 
+  // Listen to custom market themes updates
+  useEffect(() => {
+    const handleThemesUpdate = () => {
+      setAvailableThemes(getAllMarketThemes());
+    };
+    window.addEventListener('market-themes-updated', handleThemesUpdate);
+    return () => window.removeEventListener('market-themes-updated', handleThemesUpdate);
+  }, []);
+
   // Map each idea with its classified Market Theme and potential ROI
   const ideasWithTheme = useMemo(() => {
     return rawIdeas.map((idea) => ({
       ...idea,
-      marketTheme: getIdeaMarketTheme(idea),
+      marketTheme: getIdeaMarketTheme(idea, availableThemes),
       potentialROI: calculatePotentialROI(idea),
     }));
-  }, [rawIdeas]);
+  }, [rawIdeas, availableThemes]);
 
   // Aggregate theme counts across the loaded dataset
   const themeCounts = useMemo(() => {
     const counts: Record<string, number> = { ALL: rawIdeas.length };
-    for (const theme of MARKET_THEMES) {
+    for (const theme of availableThemes) {
       counts[theme.id] = 0;
     }
     counts[DEFAULT_THEME.id] = 0;
@@ -106,7 +127,7 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
       counts[themeId] = (counts[themeId] || 0) + 1;
     }
     return counts;
-  }, [ideasWithTheme, rawIdeas.length]);
+  }, [ideasWithTheme, rawIdeas.length, availableThemes]);
 
   // Filter ideas by selected Market Theme
   const filteredIdeas = useMemo(() => {
@@ -140,14 +161,14 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
   const groupedIdeas = useMemo(() => {
     const groups: { theme: MarketThemeDefinition; items: typeof sortedIdeas }[] = [];
 
-    for (const theme of [...MARKET_THEMES, DEFAULT_THEME]) {
+    for (const theme of [...availableThemes, DEFAULT_THEME]) {
       const items = sortedIdeas.filter((idea) => idea.marketTheme.id === theme.id);
       if (items.length > 0) {
         groups.push({ theme, items });
       }
     }
     return groups;
-  }, [sortedIdeas]);
+  }, [sortedIdeas, availableThemes]);
 
   // Aggregate stats from the full list
   const bullishCount = rawIdeas.filter((i) => i.type === 'BULLISH').length;
@@ -165,6 +186,16 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
     setIsWriteModalOpen(true);
   };
 
+  const handleDeleteClick = async (ideaId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await deleteMutation.mutateAsync(ideaId);
+      setDeletingIdeaId(null);
+    } catch (err: any) {
+      console.error('Failed to delete idea:', err);
+    }
+  };
+
   const handleCardClick = (idea: TradeIdea) => {
     setSelectedIdeaForDetail(idea);
   };
@@ -179,144 +210,148 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
               <Lightbulb className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="text-3xl font-bold tracking-tight text-foreground glow-text-white">
-                Trading Ideas Pipeline
+              <h1 className="text-2xl font-extrabold tracking-tight text-foreground flex items-center gap-2">
+                Trade Ideas & AI Hunter
               </h1>
-              <p className="text-sm text-muted-foreground">
-                Discover high-conviction trade setups filtered by market themes, macro catalysts & autonomous AI agent scans.
+              <p className="text-xs text-muted-foreground">
+                High-conviction asymmetric trading theses, autonomous AI market scanning & multi-leg execution structuring
               </p>
             </div>
           </div>
         </div>
 
-        {/* Dual Primary Actions: 1) AI Idea Hunter 2) Manual Writing */}
+        {/* Action Buttons */}
         <div className="flex items-center gap-2.5 flex-wrap">
-          {/* AI Idea Hunter Agent Button */}
           <Button
             onClick={() => setIsAIModalOpen(true)}
-            className="h-10 px-4 gap-2 font-bold text-xs bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/40 transition-all"
+            className="gap-2 text-xs font-bold bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/35 transition-all"
           >
             <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
-            AI Idea Hunter
+            <span>Summon AI Hunter</span>
           </Button>
 
-          {/* Write Idea Button */}
           <Button
-            variant="default"
             onClick={() => {
               setIdeaToEdit(null);
               setIsWriteModalOpen(true);
             }}
-            className="h-10 px-4 gap-2 font-semibold text-xs shadow-md"
+            className="gap-2 text-xs font-bold shadow-sm"
           >
             <Plus className="w-4 h-4" />
-            Write Trade Idea
+            <span>Write Idea</span>
           </Button>
         </div>
       </div>
 
-      {/* Stats Ribbon */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3.5">
-        <Card className="bg-card/50 backdrop-blur-md border-border/60 hover:border-primary/30 transition-all">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-0.5">
-                Total Ideas
-              </p>
-              <p className="text-2xl font-black font-mono text-foreground">{rawIdeas.length}</p>
+      {/* KPI Overview Strip */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {/* Total Ideas */}
+        <div className="p-4 rounded-2xl bg-card/60 backdrop-blur-xl border border-border/70 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Total Ideas</span>
+            <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+              <Layers className="w-3.5 h-3.5" />
             </div>
-            <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
-              <Layers className="w-5 h-5" />
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-black text-foreground font-mono">{rawIdeas.length}</span>
+            <span className="text-[11px] text-muted-foreground">{activeCount} active</span>
+          </div>
+        </div>
 
-        <Card className="bg-card/50 backdrop-blur-md border-border/60 hover:border-emerald-500/30 transition-all">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-400/90 mb-0.5">
-                Bullish
-              </p>
-              <p className="text-2xl font-black font-mono text-emerald-400">{bullishCount}</p>
+        {/* Bullish vs Bearish */}
+        <div className="p-4 rounded-2xl bg-card/60 backdrop-blur-xl border border-border/70 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Sentiment Split</span>
+            <div className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+              <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />
             </div>
-            <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400">
-              <TrendingUp className="w-5 h-5" />
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+          <div className="mt-2 flex items-baseline gap-3">
+            <span className="text-2xl font-black text-emerald-400 font-mono">
+              {bullishCount}
+              <span className="text-xs font-normal text-muted-foreground ml-1">Bull</span>
+            </span>
+            <span className="text-2xl font-black text-rose-400 font-mono">
+              {bearishCount}
+              <span className="text-xs font-normal text-muted-foreground ml-1">Bear</span>
+            </span>
+          </div>
+        </div>
 
-        <Card className="bg-card/50 backdrop-blur-md border-border/60 hover:border-rose-500/30 transition-all">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-rose-400/90 mb-0.5">
-                Bearish
-              </p>
-              <p className="text-2xl font-black font-mono text-rose-400">{bearishCount}</p>
+        {/* AI Agent Generated */}
+        <div className="p-4 rounded-2xl bg-card/60 backdrop-blur-xl border border-purple-500/20 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-purple-300 uppercase tracking-wider">AI Generated</span>
+            <div className="w-7 h-7 rounded-lg bg-purple-500/10 flex items-center justify-center text-purple-400">
+              <Bot className="w-3.5 h-3.5" />
             </div>
-            <div className="p-2.5 rounded-xl bg-rose-500/10 text-rose-400">
-              <TrendingDown className="w-5 h-5" />
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-black text-purple-300 font-mono">{aiCount}</span>
+            <span className="text-[11px] text-purple-300/70">
+              {rawIdeas.length > 0 ? `${Math.round((aiCount / rawIdeas.length) * 100)}%` : '0%'} of ideas
+            </span>
+          </div>
+        </div>
 
-        <Card className="bg-card/50 backdrop-blur-md border-border/60 hover:border-purple-500/30 transition-all">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-purple-400/90 mb-0.5">
-                AI Agent
-              </p>
-              <p className="text-2xl font-black font-mono text-purple-400">{aiCount}</p>
+        {/* Market Themes Count */}
+        <div className="p-4 rounded-2xl bg-card/60 backdrop-blur-xl border border-border/70 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Market Themes</span>
+            <div className="w-7 h-7 rounded-lg bg-cyan-500/10 flex items-center justify-center text-cyan-400">
+              <Compass className="w-3.5 h-3.5" />
             </div>
-            <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-400">
-              <Bot className="w-5 h-5" />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="col-span-2 sm:col-span-1 bg-card/50 backdrop-blur-md border-border/60 hover:border-primary/30 transition-all">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-0.5">
-                Active Setups
-              </p>
-              <p className="text-2xl font-black font-mono text-foreground">{activeCount}</p>
-            </div>
-            <div className="p-2.5 rounded-xl bg-accent text-muted-foreground">
-              <Target className="w-5 h-5" />
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-black text-cyan-400 font-mono">{availableThemes.length}</span>
+            <span className="text-[11px] text-muted-foreground">thematic universes</span>
+          </div>
+        </div>
       </div>
 
-      {/* Market Themes Horizontal Filter Bar */}
+      {/* ================= MARKET THEMES BAR ================= */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-            <Compass className="w-3.5 h-3.5 text-primary" /> Filter by Market Theme
+            <Compass className="w-3.5 h-3.5 text-primary" /> Filter by Market Theme / Universe
           </label>
-          <span className="text-[11px] text-muted-foreground font-mono">
-            Showing {sortedIdeas.length} of {rawIdeas.length} ideas
-          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setThemeToEdit(null);
+              setIsAddThemeModalOpen(true);
+            }}
+            className="h-6 text-[11px] px-2 text-cyan-300 hover:text-cyan-200 hover:bg-cyan-500/10 gap-1 font-semibold"
+          >
+            <Plus className="w-3 h-3" /> Add Theme / Universe
+          </Button>
         </div>
 
-        <div className="flex items-center gap-2 overflow-x-auto pb-1.5 scrollbar-thin">
-          {/* ALL Themes Chip */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-thin">
+          {/* ALL THEMES CHIP */}
           <button
             type="button"
             onClick={() => setSelectedThemeId('ALL')}
             className={cn(
-              'px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-2 border',
+              'px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 flex items-center gap-2 border',
               selectedThemeId === 'ALL'
-                ? 'bg-primary text-primary-foreground border-primary shadow-md'
+                ? 'bg-primary text-primary-foreground border-primary shadow-sm'
                 : 'bg-card/60 text-muted-foreground hover:text-foreground border-border/60 hover:bg-accent/40'
             )}
           >
-            <span>🌐 All Themes</span>
+            <Compass className="w-3.5 h-3.5" />
+            <span>All Themes</span>
             <Badge
-              variant="secondary"
+              variant="outline"
               className={cn(
                 'text-[10px] px-1.5 py-0 h-4 font-mono font-bold',
-                selectedThemeId === 'ALL' ? 'bg-primary-foreground/20 text-white' : 'bg-background/80 text-muted-foreground'
+                selectedThemeId === 'ALL'
+                  ? 'bg-primary-foreground/20 text-primary-foreground border-transparent'
+                  : 'bg-background/50 border-border/60 text-muted-foreground'
               )}
             >
               {themeCounts.ALL || 0}
@@ -324,10 +359,9 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
           </button>
 
           {/* Theme-Specific Chips */}
-          {MARKET_THEMES.map((theme) => {
+          {availableThemes.map((theme) => {
             const count = themeCounts[theme.id] || 0;
             const isSelected = selectedThemeId === theme.id;
-            const Icon = theme.icon;
 
             return (
               <button
@@ -343,6 +377,9 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
               >
                 <span>{theme.emoji}</span>
                 <span>{theme.shortName}</span>
+                {theme.isCustom && (
+                  <span className="text-[9px] px-1 rounded bg-purple-500/20 text-purple-300 font-mono">Custom</span>
+                )}
                 <Badge
                   variant="outline"
                   className={cn(
@@ -363,85 +400,67 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
       {/* Filter, Sort & Search Toolbar */}
       <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between bg-card/60 backdrop-blur-md p-3.5 rounded-2xl border border-border/60 shadow-sm">
         {/* Search */}
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
           <Input
-            placeholder="Search by symbol, theme, catalyst, thesis, or #tag..."
+            placeholder="Search ideas by symbol, catalyst, keywords or tags..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10 bg-background/60 border-border/60 focus:border-primary/50 text-xs h-9"
+            className="pl-9 h-9 text-xs bg-background/50 border-border/60 focus:border-primary/50"
           />
         </div>
 
-        {/* Filters & Sorting Group */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Sentiment Filter Tabs */}
-          <div className="flex items-center bg-background/70 p-1 rounded-xl border border-border/60">
-            {(['ALL', 'BULLISH', 'BEARISH', 'NEUTRAL'] as const).map((type) => (
-              <button
-                key={type}
-                type="button"
-                onClick={() => setFilterType(type)}
-                className={cn(
-                  'px-2.5 py-1 rounded-lg text-xs font-semibold transition-all capitalize',
-                  filterType === type
-                    ? 'bg-primary text-primary-foreground shadow-sm'
-                    : 'text-muted-foreground hover:text-foreground'
-                )}
-              >
-                {type.toLowerCase()}
-              </button>
-            ))}
-          </div>
-
-          {/* Sort By Dropdown */}
-          <div className="flex items-center gap-1.5 bg-background/80 border border-border/60 rounded-xl px-2.5 h-9">
-            <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as IdeaSortOption)}
-              className="bg-transparent text-xs font-semibold text-foreground focus:outline-none cursor-pointer pr-1"
-            >
-              <option value="CONFIDENCE">🎯 Confidence Score</option>
-              <option value="DATE">📅 Date (Newest)</option>
-              <option value="POTENTIAL_ROI">🚀 Highest Upside ROI</option>
-              <option value="THEME">🏷️ Market Theme (A–Z)</option>
-              <option value="SYMBOL">🔤 Symbol (A–Z)</option>
-            </select>
-          </div>
+        {/* Filter Badges & Sort Controls */}
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {/* Sentiment Filter */}
+          <select
+            value={filterType}
+            onChange={(e) => setFilterType(e.target.value as any)}
+            className="bg-background/80 border border-border/70 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-foreground focus:outline-none cursor-pointer"
+          >
+            <option value="ALL">All Sentiments</option>
+            <option value="BULLISH">🟢 Bullish Only</option>
+            <option value="BEARISH">🔴 Bearish Only</option>
+            <option value="NEUTRAL">⚪ Neutral Only</option>
+          </select>
 
           {/* Source Filter */}
           <select
             value={filterSource}
             onChange={(e) => setFilterSource(e.target.value as any)}
-            className="bg-background/80 border border-border/60 rounded-xl px-3 py-1.5 text-xs font-semibold text-foreground focus:outline-none cursor-pointer h-9"
+            className="bg-background/80 border border-border/70 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-foreground focus:outline-none cursor-pointer"
           >
             <option value="ALL">All Sources</option>
-            <option value="AI_AGENT">🤖 AI Agent</option>
-            <option value="MANUAL">✍️ Manual</option>
+            <option value="AI_AGENT">🤖 AI Agent Only</option>
+            <option value="MANUAL">👤 Manual Only</option>
           </select>
 
-          {/* Status Filter */}
-          <select
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value as any)}
-            className="bg-background/80 border border-border/60 rounded-xl px-3 py-1.5 text-xs font-semibold text-foreground focus:outline-none cursor-pointer h-9"
-          >
-            <option value="ALL">All Statuses</option>
-            <option value="ACTIVE">🟢 Active</option>
-            <option value="WATCHING">👀 Watching</option>
-            <option value="PLAYED_OUT">✅ Played Out</option>
-            <option value="ARCHIVED">📦 Archived</option>
-          </select>
+          {/* Sort By */}
+          <div className="flex items-center gap-1.5 bg-background/80 border border-border/70 rounded-xl px-2 py-1">
+            <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground" />
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="bg-transparent text-xs font-semibold text-foreground focus:outline-none cursor-pointer pr-1"
+            >
+              <option value="CONFIDENCE">Highest Confidence</option>
+              <option value="POTENTIAL_ROI">Max Potential ROI %</option>
+              <option value="DATE">Newest First</option>
+              <option value="THEME">Market Theme</option>
+              <option value="SYMBOL">Ticker (A–Z)</option>
+            </select>
+          </div>
 
-          {/* View Mode Toggle */}
-          <div className="flex items-center bg-background/70 p-0.5 rounded-xl border border-border/60 h-9">
+          {/* View Mode Toggle: Grid vs Grouped */}
+          <div className="flex items-center bg-background/80 p-0.5 rounded-xl border border-border/70">
             <button
               type="button"
               onClick={() => setViewMode('GRID')}
               className={cn(
-                'p-1.5 rounded-lg text-xs transition-all',
-                viewMode === 'GRID' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                'p-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1',
+                viewMode === 'GRID'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
               )}
               title="Standard Grid View"
             >
@@ -451,8 +470,10 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
               type="button"
               onClick={() => setViewMode('GROUPED')}
               className={cn(
-                'p-1.5 rounded-lg text-xs transition-all',
-                viewMode === 'GROUPED' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                'p-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1',
+                viewMode === 'GROUPED'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
               )}
               title="Group by Market Theme"
             >
@@ -462,40 +483,37 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
         </div>
       </div>
 
-      {/* Ideas Content */}
+      {/* Ideas Content Grid / Groups */}
       {isLoading ? (
-        <div className="flex flex-col items-center justify-center py-20 space-y-4">
-          <Loader2 className="w-10 h-10 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground animate-pulse font-medium">
-            Fetching trade theses & live market valuations...
-          </p>
+        <div className="py-24 flex flex-col items-center justify-center gap-3">
+          <Loader2 className="w-8 h-8 text-primary animate-spin" />
+          <p className="text-sm font-semibold text-muted-foreground">Loading trading ideas & catalysts...</p>
         </div>
-      ) : isError ? (
-        <Card className="p-8 text-center bg-destructive/5 border-destructive/20">
-          <p className="text-destructive font-semibold mb-2">Failed to load trade ideas</p>
-          <Button variant="outline" size="sm" onClick={() => refetch()} className="text-xs">
-            Retry
-          </Button>
-        </Card>
       ) : sortedIdeas.length === 0 ? (
-        <Card className="p-12 text-center bg-card/30 border-dashed border-2 border-border/60">
-          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mx-auto mb-4">
-            <Lightbulb className="w-7 h-7" />
+        <Card className="p-12 text-center border-dashed border-border/80 bg-card/40">
+          <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mx-auto mb-3">
+            <Lightbulb className="w-6 h-6" />
           </div>
-          <h3 className="text-lg font-bold text-foreground mb-1">No Trade Ideas Found</h3>
-          <p className="text-sm text-muted-foreground max-w-md mx-auto mb-6">
-            {searchQuery || filterType !== 'ALL' || filterSource !== 'ALL' || selectedThemeId !== 'ALL'
-              ? 'No trade ideas matched your active filters. Try clearing theme filters or broadening your search.'
-              : 'Start your trading pipeline by deploying the AI Idea Hunter or writing your first investment thesis.'}
+          <h3 className="font-bold text-base text-foreground mb-1">No Trade Ideas Found</h3>
+          <p className="text-xs text-muted-foreground max-w-md mx-auto mb-6">
+            {searchQuery || selectedThemeId !== 'ALL' || filterType !== 'ALL'
+              ? 'No ideas match the active filters or theme query. Try resetting filters or search terms.'
+              : 'Your idea vault is currently empty. Deploy the Autonomous AI Idea Hunter or write a thesis manually.'}
           </p>
           <div className="flex items-center justify-center gap-3">
-            {selectedThemeId !== 'ALL' && (
+            {(searchQuery || selectedThemeId !== 'ALL' || filterType !== 'ALL') && (
               <Button
                 variant="outline"
-                onClick={() => setSelectedThemeId('ALL')}
+                size="sm"
+                onClick={() => {
+                  setSearchQuery('');
+                  setSelectedThemeId('ALL');
+                  setFilterType('ALL');
+                  setFilterSource('ALL');
+                }}
                 className="text-xs"
               >
-                Clear Theme Filter
+                Reset Filters
               </Button>
             )}
             <Button
@@ -523,7 +541,7 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
         <div className="space-y-8">
           {groupedIdeas.map(({ theme, items }) => {
             const isCollapsed = collapsedGroups[theme.id];
-            const Icon = theme.icon;
+            const Icon = theme.icon || Compass;
 
             return (
               <div key={theme.id} className="space-y-4">
@@ -539,7 +557,7 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
                 >
                   <div className="flex items-center gap-3">
                     <div className={cn('p-2 rounded-xl bg-gradient-to-br text-white shadow-sm', theme.colorClass.gradient)}>
-                      <Icon className="w-4 h-4" />
+                      <span className="text-base">{theme.emoji}</span>
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
@@ -610,6 +628,20 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
           idea={selectedIdeaForStructure}
         />
       )}
+
+      {/* Add / Edit Theme Modal */}
+      <AddThemeModal
+        isOpen={isAddThemeModalOpen}
+        onClose={() => {
+          setIsAddThemeModalOpen(false);
+          setThemeToEdit(null);
+        }}
+        initialTheme={themeToEdit}
+        onThemeSaved={(savedTheme) => {
+          setAvailableThemes(getAllMarketThemes());
+          setSelectedThemeId(savedTheme.id);
+        }}
+      />
     </div>
   );
 
@@ -619,6 +651,7 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
     const isBearish = idea.type === 'BEARISH';
     const isAIGenerated = idea.source === 'AI_AGENT';
     const theme = idea.marketTheme;
+    const isConfirmingDelete = deletingIdeaId === idea.id;
 
     const tagsList = idea.tags
       ? idea.tags.split(',').map((t) => t.trim()).filter(Boolean)
@@ -775,7 +808,7 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
               </div>
             </div>
 
-            {/* Meta: Source, R:R, Potential ROI & Quick Edit */}
+            {/* Meta: Source, R:R, Potential ROI & Quick Actions with DELETE BUTTON */}
             <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1">
               <div className="flex items-center gap-1.5 flex-wrap">
                 {isAIGenerated ? (
@@ -813,27 +846,69 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
                 )}
               </div>
 
-              {/* Quick Actions on Card */}
+              {/* Quick Actions on Card: Structure, Edit, and DELETE BUTTON */}
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedIdeaForStructure(idea);
-                  }}
-                  className="p-1 hover:bg-purple-500/20 rounded text-purple-300 hover:text-purple-200 transition-colors"
-                  title="Structure Trade with AI (Stocks, Options, Collars, Spreads)"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => handleEditClick(idea, e)}
-                  className="p-1 hover:bg-accent rounded text-muted-foreground hover:text-foreground"
-                  title="Edit Idea"
-                >
-                  <Edit3 className="w-3.5 h-3.5" />
-                </button>
+                {isConfirmingDelete ? (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex items-center gap-1 bg-rose-950/80 border border-rose-500/50 rounded px-1.5 py-0.5 animate-in fade-in"
+                  >
+                    <span className="text-[10px] text-rose-300 font-bold">Delete?</span>
+                    <button
+                      type="button"
+                      onClick={(e) => handleDeleteClick(idea.id, e)}
+                      disabled={deleteMutation.isPending}
+                      className="p-0.5 hover:bg-rose-600 rounded text-rose-200 hover:text-white"
+                      title="Confirm Delete"
+                    >
+                      <Check className="w-3 h-3 text-rose-300" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeletingIdeaId(null);
+                      }}
+                      className="p-0.5 hover:bg-accent rounded text-muted-foreground hover:text-foreground"
+                      title="Cancel"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedIdeaForStructure(idea);
+                      }}
+                      className="p-1 hover:bg-purple-500/20 rounded text-purple-300 hover:text-purple-200 transition-colors"
+                      title="Structure Trade with AI (Stocks, Options, Collars, Spreads)"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => handleEditClick(idea, e)}
+                      className="p-1 hover:bg-accent rounded text-muted-foreground hover:text-foreground transition-colors"
+                      title="Edit Idea"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeletingIdeaId(idea.id);
+                      }}
+                      className="p-1 hover:bg-rose-500/20 rounded text-muted-foreground hover:text-rose-400 transition-colors"
+                      title="Delete Idea"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 

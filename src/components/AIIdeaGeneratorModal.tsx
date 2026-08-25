@@ -33,9 +33,18 @@ import {
   Check,
   RotateCcw,
   SlidersHorizontal,
+  Plus,
+  Target,
+  Edit2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useGenerateAIIdeas } from '@/services/ideaService';
+import {
+  MarketThemeDefinition,
+  getAllMarketThemes,
+  BUILT_IN_THEMES,
+} from '@/utils/ideaThemeUtils';
+import { AddThemeModal } from './AddThemeModal';
 
 export interface InstructionPreset {
   id: string;
@@ -44,6 +53,7 @@ export interface InstructionPreset {
   sentiment?: 'ANY' | 'BULLISH' | 'BEARISH';
   timeframe?: 'SHORT_TERM' | 'SWING' | 'LONG_TERM';
   themeId?: string;
+  universeTickers?: string[];
   isBuiltIn?: boolean;
   createdAt: string;
 }
@@ -56,6 +66,7 @@ const BUILT_IN_PRESETS: InstructionPreset[] = [
     sentiment: 'BULLISH',
     timeframe: 'SWING',
     themeId: 'value-fcf',
+    universeTickers: ['BRK-B', 'META', 'GOOGL', 'AAPL'],
     isBuiltIn: true,
     createdAt: '2026-01-01',
   },
@@ -66,6 +77,7 @@ const BUILT_IN_PRESETS: InstructionPreset[] = [
     sentiment: 'ANY',
     timeframe: 'SHORT_TERM',
     themeId: 'options-catalyst',
+    universeTickers: ['NVDA', 'TSLA', 'AMZN', 'META'],
     isBuiltIn: true,
     createdAt: '2026-01-01',
   },
@@ -75,7 +87,8 @@ const BUILT_IN_PRESETS: InstructionPreset[] = [
     prompt: 'Identify momentum leaders consolidating near 52-week highs with heavy accumulation volume, low float, and expanding margins.',
     sentiment: 'BULLISH',
     timeframe: 'SWING',
-    themeId: 'momentum-beta',
+    themeId: 'momentum-breakout',
+    universeTickers: ['TSLA', 'COIN', 'MSTR', 'RKLB'],
     isBuiltIn: true,
     createdAt: '2026-01-01',
   },
@@ -86,6 +99,7 @@ const BUILT_IN_PRESETS: InstructionPreset[] = [
     sentiment: 'BULLISH',
     timeframe: 'LONG_TERM',
     themeId: 'ai-semi',
+    universeTickers: ['NVDA', 'AVGO', 'TSM', 'AMD', 'MRVL', 'PLTR'],
     isBuiltIn: true,
     createdAt: '2026-01-01',
   },
@@ -95,7 +109,8 @@ const BUILT_IN_PRESETS: InstructionPreset[] = [
     prompt: 'Look for companies with decelerating revenue, negative operating margins, high debt refinancing maturities, and deteriorating technicals.',
     sentiment: 'BEARISH',
     timeframe: 'SWING',
-    themeId: 'value-fcf',
+    themeId: 'macro-defense',
+    universeTickers: ['TLT', 'GLD', 'LMT'],
     isBuiltIn: true,
     createdAt: '2026-01-01',
   },
@@ -107,49 +122,6 @@ interface AIIdeaGeneratorModalProps {
   onSuccess?: () => void;
 }
 
-const STRATEGY_THEMES = [
-  {
-    id: 'ai-semi',
-    name: 'AI Infrastructure & Blackwell Supercycle',
-    icon: Cpu,
-    color: 'from-purple-500 to-indigo-500',
-    description: 'Datacenter capex, custom ASICs, optical transceivers, and semiconductor supply chain.',
-    themeQuery: 'AI & Semiconductor Infrastructure',
-  },
-  {
-    id: 'value-fcf',
-    name: 'High Free Cash Flow & Value Inflection',
-    icon: DollarSign,
-    color: 'from-emerald-500 to-teal-500',
-    description: 'Undervalued companies with high FCF yield, low debt-to-equity, and share buyback catalysts.',
-    themeQuery: 'High Free Cash Flow & Value Inflection',
-  },
-  {
-    id: 'momentum-beta',
-    name: 'High Beta & Technical Breakout',
-    icon: Flame,
-    color: 'from-amber-500 to-rose-500',
-    description: 'Momentum runners consolidating above 20/50 EMAs with high short interest or volatility.',
-    themeQuery: 'High Beta, Momentum & Technical Breakouts',
-  },
-  {
-    id: 'options-catalyst',
-    name: 'Options Asymmetry & Earnings Play',
-    icon: Activity,
-    color: 'from-blue-500 to-cyan-500',
-    description: 'Upcoming catalyst mispricing, IV skew anomalies, and earnings event contracts.',
-    themeQuery: 'Options Volatility & Earnings Mispricing',
-  },
-  {
-    id: 'clean-energy',
-    name: 'Energy Transition & Critical Materials',
-    icon: Zap,
-    color: 'from-green-500 to-emerald-600',
-    description: 'Nuclear SMRs, uranium, grid electrification, power storage, and copper/lithium producers.',
-    themeQuery: 'Energy Transition & Critical Materials',
-  },
-];
-
 const PRESETS_STORAGE_KEY = 'tradeflow_ai_idea_presets';
 
 export function AIIdeaGeneratorModal({
@@ -157,11 +129,16 @@ export function AIIdeaGeneratorModal({
   onClose,
   onSuccess,
 }: AIIdeaGeneratorModalProps) {
+  const [availableThemes, setAvailableThemes] = useState<MarketThemeDefinition[]>(() => getAllMarketThemes());
   const [selectedThemeId, setSelectedThemeId] = useState<string>('ai-semi');
   const [sentiment, setSentiment] = useState<'ANY' | 'BULLISH' | 'BEARISH'>('BULLISH');
   const [timeframe, setTimeframe] = useState<'SHORT_TERM' | 'SWING' | 'LONG_TERM'>('SWING');
   const [count, setCount] = useState<number>(2);
   const [customPrompt, setCustomPrompt] = useState<string>('');
+  const [customTickersInput, setCustomTickersInput] = useState<string>('');
+
+  // Add Theme Modal State
+  const [isAddThemeModalOpen, setIsAddThemeModalOpen] = useState(false);
 
   // Preset Management State
   const [presets, setPresets] = useState<InstructionPreset[]>(() => {
@@ -184,7 +161,23 @@ export function AIIdeaGeneratorModal({
 
   const generateMutation = useGenerateAIIdeas();
 
-  const activeTheme = STRATEGY_THEMES.find((t) => t.id === selectedThemeId);
+  // Listen to custom theme updates
+  useEffect(() => {
+    const handleThemesUpdate = () => {
+      setAvailableThemes(getAllMarketThemes());
+    };
+    window.addEventListener('market-themes-updated', handleThemesUpdate);
+    return () => window.removeEventListener('market-themes-updated', handleThemesUpdate);
+  }, []);
+
+  const activeTheme = availableThemes.find((t) => t.id === selectedThemeId) || availableThemes[0];
+
+  // Auto-sync custom tickers input when theme changes if tickers input is empty
+  useEffect(() => {
+    if (activeTheme?.universeTickers && activeTheme.universeTickers.length > 0) {
+      setCustomTickersInput(activeTheme.universeTickers.join(', '));
+    }
+  }, [selectedThemeId]);
 
   // Apply a preset
   const handleApplyPreset = (preset: InstructionPreset) => {
@@ -193,14 +186,22 @@ export function AIIdeaGeneratorModal({
     if (preset.sentiment) setSentiment(preset.sentiment);
     if (preset.timeframe) setTimeframe(preset.timeframe);
     if (preset.themeId) {
-      const exists = STRATEGY_THEMES.some((t) => t.id === preset.themeId);
+      const exists = availableThemes.some((t) => t.id === preset.themeId);
       if (exists) setSelectedThemeId(preset.themeId);
+    }
+    if (preset.universeTickers && preset.universeTickers.length > 0) {
+      setCustomTickersInput(preset.universeTickers.join(', '));
     }
   };
 
   // Save current instructions as a new preset
   const handleSavePreset = () => {
     if (!customPrompt.trim() || !newPresetTitle.trim()) return;
+
+    const parsedTickers = customTickersInput
+      .split(/[, ]+/)
+      .map((t) => t.trim().toUpperCase())
+      .filter(Boolean);
 
     const newPreset: InstructionPreset = {
       id: `user-preset-${Date.now()}`,
@@ -209,6 +210,7 @@ export function AIIdeaGeneratorModal({
       sentiment,
       timeframe,
       themeId: selectedThemeId,
+      universeTickers: parsedTickers,
       isBuiltIn: false,
       createdAt: new Date().toISOString(),
     };
@@ -240,12 +242,18 @@ export function AIIdeaGeneratorModal({
 
   const handleGenerate = async () => {
     try {
+      const tickers = customTickersInput
+        .split(/[, ]+/)
+        .map((t) => t.trim().toUpperCase())
+        .filter(Boolean);
+
       await generateMutation.mutateAsync({
-        theme: activeTheme?.themeQuery || 'High Conviction Tactical Ideas',
+        theme: activeTheme ? `${activeTheme.name} (${activeTheme.shortName})` : 'High Conviction Tactical Ideas',
         customPrompt: customPrompt.trim(),
         sentiment,
         timeframe,
         count,
+        tickers: tickers.length > 0 ? tickers : undefined,
       });
 
       if (onSuccess) onSuccess();
@@ -256,9 +264,14 @@ export function AIIdeaGeneratorModal({
     }
   };
 
+  const parsedTickers = customTickersInput
+    .split(/[, ]+/)
+    .map((t) => t.trim().toUpperCase())
+    .filter(Boolean);
+
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && !generateMutation.isPending && onClose()}>
-      <DialogContent className="sm:max-w-[760px] max-h-[92vh] flex flex-col p-0 gap-0 overflow-hidden bg-card/95 backdrop-blur-2xl border border-primary/20 shadow-2xl">
+      <DialogContent className="sm:max-w-[780px] max-h-[92vh] flex flex-col p-0 gap-0 overflow-hidden bg-card/95 backdrop-blur-2xl border border-primary/20 shadow-2xl">
         {/* Header */}
         <DialogHeader className="p-6 pb-4 border-b border-border/50 bg-gradient-to-r from-purple-950/40 via-background to-indigo-950/40">
           <div className="flex items-center gap-3">
@@ -281,14 +294,27 @@ export function AIIdeaGeneratorModal({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-thin">
-          {/* Strategy Theme Cards */}
+          {/* Strategy Theme & Scanning Universe Header with Add Theme Button */}
           <div className="space-y-2.5">
-            <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              <Compass className="w-3.5 h-3.5 text-primary" /> Select Market Theme / Scanning Universe
-            </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {STRATEGY_THEMES.map((theme) => {
-                const Icon = theme.icon;
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <Compass className="w-3.5 h-3.5 text-primary" /> Select Market Theme / Scanning Universe
+              </label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setIsAddThemeModalOpen(true)}
+                className="h-6 text-[11px] px-2 text-cyan-300 border-cyan-500/30 hover:bg-cyan-500/10 gap-1 font-semibold"
+              >
+                <Plus className="w-3 h-3" /> Add Custom Theme / Universe
+              </Button>
+            </div>
+
+            {/* Theme Cards Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[220px] overflow-y-auto pr-1 scrollbar-thin">
+              {availableThemes.map((theme) => {
+                const Icon = theme.icon || Compass;
                 const isSelected = selectedThemeId === theme.id;
                 return (
                   <button
@@ -296,35 +322,69 @@ export function AIIdeaGeneratorModal({
                     type="button"
                     onClick={() => setSelectedThemeId(theme.id)}
                     className={cn(
-                      'p-3.5 rounded-xl text-left transition-all duration-300 border flex flex-col justify-between relative overflow-hidden group',
+                      'p-3 rounded-xl text-left transition-all duration-300 border flex flex-col justify-between relative overflow-hidden group',
                       isSelected
                         ? 'bg-primary/10 border-primary/40 shadow-[0_0_20px_rgba(var(--primary),0.15)] ring-1 ring-primary/30'
                         : 'bg-background/40 border-border/50 hover:bg-accent/40 hover:border-border/80'
                     )}
                   >
-                    <div className="flex items-center gap-2.5 mb-1.5">
+                    <div className="flex items-center gap-2 mb-1">
                       <div
                         className={cn(
-                          'p-2 rounded-lg bg-gradient-to-br text-white shadow-sm',
-                          theme.color
+                          'p-1.5 rounded-lg bg-gradient-to-br text-white shadow-sm flex items-center justify-center text-xs',
+                          theme.colorClass.gradient
                         )}
                       >
-                        <Icon className="w-4 h-4" />
+                        <span className="text-xs">{theme.emoji}</span>
                       </div>
-                      <span className="font-bold text-xs text-foreground tracking-tight">
+                      <span className="font-bold text-xs text-foreground tracking-tight line-clamp-1">
                         {theme.name}
                       </span>
+                      {theme.isCustom && (
+                        <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-purple-500/40 text-purple-300">
+                          Custom
+                        </Badge>
+                      )}
                     </div>
-                    <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      {theme.description}
+                    <p className="text-[10.5px] text-muted-foreground line-clamp-2 leading-relaxed">
+                      {theme.description || 'Target specific sector and universe setup.'}
                     </p>
                     {isSelected && (
-                      <CheckCircle2 className="w-4 h-4 text-primary absolute top-3 right-3" />
+                      <CheckCircle2 className="w-4 h-4 text-primary absolute top-2.5 right-2.5" />
                     )}
                   </button>
                 );
               })}
             </div>
+          </div>
+
+          {/* Scanning Universe Ticker Basket */}
+          <div className="space-y-2 bg-accent/15 p-3.5 rounded-xl border border-border/50">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <Target className="w-3.5 h-3.5 text-cyan-400" /> Active Candidate Stocks / Universe
+              </label>
+              <span className="text-[10px] text-muted-foreground">Comma or space separated tickers</span>
+            </div>
+            <Input
+              placeholder="e.g. NVDA, AMD, TSM, AVGO, PLTR (or leave empty to let agent choose candidates)"
+              value={customTickersInput}
+              onChange={(e) => setCustomTickersInput(e.target.value)}
+              className="h-8 text-xs font-mono font-bold bg-background/80 border-cyan-500/30 focus:border-cyan-400 uppercase"
+            />
+            {parsedTickers.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {parsedTickers.map((t) => (
+                  <Badge
+                    key={t}
+                    variant="outline"
+                    className="font-mono text-[9.5px] font-bold bg-cyan-500/10 text-cyan-300 border-cyan-500/30 px-1.5 py-0"
+                  >
+                    {t}
+                  </Badge>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Parameters Grid: Sentiment, Timeframe, Number of Ideas */}
@@ -412,7 +472,7 @@ export function AIIdeaGeneratorModal({
                     variant="ghost"
                     size="sm"
                     onClick={() => setIsSavingPreset((prev) => !prev)}
-                    className="h-6 text-[11px] px-2 text-purple-300 hover:text-purple-200 hover:bg-purple-500/10 gap-1"
+                    className="h-6 text-[11px] px-2 text-purple-300 hover:text-purple-200 hover:bg-purple-500/10 gap-1 font-semibold"
                   >
                     <BookmarkPlus className="w-3 h-3" />
                     <span>{isSavingPreset ? 'Close' : 'Save As Preset'}</span>
@@ -440,7 +500,7 @@ export function AIIdeaGeneratorModal({
             <div className="space-y-1.5">
               <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
                 <Bookmark className="w-3 h-3 text-purple-400" />
-                <span className="font-semibold">Quick Instruction Presets:</span>
+                <span className="font-semibold">Saved Instructions Library:</span>
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {presets.map((preset) => {
@@ -476,29 +536,29 @@ export function AIIdeaGeneratorModal({
 
             {/* Save Preset Inline Input */}
             {isSavingPreset && (
-              <div className="p-3 bg-purple-950/20 rounded-xl border border-purple-800/40 space-y-2 animate-in fade-in slide-in-from-top-1">
+              <div className="p-3.5 bg-purple-950/25 rounded-xl border border-purple-800/40 space-y-2.5 animate-in fade-in slide-in-from-top-1">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
                     <BookmarkPlus className="w-3.5 h-3.5" /> Save Custom Instructions Preset
                   </span>
-                  <span className="text-[10px] text-muted-foreground">Will be saved locally for one-click re-use</span>
+                  <span className="text-[10px] text-muted-foreground">Includes prompt, theme, sentiment & scanning universe</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Input
-                    placeholder="e.g., Strict 3:1 R:R & High Free Cash Flow"
+                    placeholder="e.g. Strict 3:1 R:R & High Free Cash Flow Yield"
                     value={newPresetTitle}
                     onChange={(e) => setNewPresetTitle(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSavePreset()}
-                    className="h-8 text-xs bg-background/80 border-purple-500/40 focus:border-purple-400 flex-1"
+                    className="h-8 text-xs bg-background/80 border-purple-500/40 focus:border-purple-400 flex-1 font-semibold"
                   />
                   <Button
                     type="button"
                     size="sm"
                     onClick={handleSavePreset}
                     disabled={!newPresetTitle.trim() || !customPrompt.trim()}
-                    className="h-8 text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white gap-1.5 px-3"
+                    className="h-8 text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white gap-1.5 px-3 shadow-md"
                   >
-                    <Check className="w-3.5 h-3.5" /> Save
+                    <Check className="w-3.5 h-3.5" /> Save Preset
                   </Button>
                   <Button
                     type="button"
@@ -539,7 +599,7 @@ export function AIIdeaGeneratorModal({
                   Agent actively querying live quotes and evaluating catalysts...
                 </p>
                 <p className="text-[11px] text-purple-300/70 mt-0.5">
-                  Calculating entry ranges, stop loss invalidations, and assembling trade briefs.
+                  Scanning candidate universe, calculating entry ranges, and assembling trade briefs.
                 </p>
               </div>
             </div>
@@ -576,6 +636,18 @@ export function AIIdeaGeneratorModal({
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      {/* Add / Manage Theme Modal */}
+      <AddThemeModal
+        isOpen={isAddThemeModalOpen}
+        onClose={() => setIsAddThemeModalOpen(false)}
+        onThemeSaved={(newTheme) => {
+          setSelectedThemeId(newTheme.id);
+          if (newTheme.universeTickers && newTheme.universeTickers.length > 0) {
+            setCustomTickersInput(newTheme.universeTickers.join(', '));
+          }
+        }}
+      />
     </Dialog>
   );
 }
