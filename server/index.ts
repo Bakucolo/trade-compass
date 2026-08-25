@@ -58,6 +58,12 @@ import {
   evaluateStockScorecard,
   compareStockScorecards,
 } from './services/scorecardService';
+import {
+  fetchTrading212Cash,
+  fetchTrading212AccountInfo,
+  fetchTrading212Portfolio,
+  syncTrading212HoldingsToDB,
+} from './services/trading212Service';
 import { oddLotTenderService } from './services/oddLotTenderService';
 
 const prisma = new PrismaClient({
@@ -80,7 +86,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// IBKR Connection Settings
+// IBKR Connection Settings & Account Numbers
+export const IBKR_ISA_ACCOUNT = 'U14522424';
+export const IBKR_GIA_ACCOUNT = 'U15491236';
 const IB_HOST = '127.0.0.1';
 const IB_PORTS = [7497, 7496, 4001, 4002];
 
@@ -181,9 +189,7 @@ const setupEventListeners = (ibInstance: IBApi) => {
     console.error(`IBKR Error: ${err.message} (Code: ${code}, ReqId: ${reqId})`);
   });
 
-const IBKR_ISA_ACCOUNT = 'U14522424';
-const IBKR_GIA_ACCOUNT = 'U15491236';
-const conIdAccountMap = new Map<string, string>();
+  const conIdAccountMap = new Map<string, string>();
 
 let positionWriteQueue = Promise.resolve();
 const queuePositionUpdate = (task: () => Promise<void>) => {
@@ -787,35 +793,6 @@ app.get('/api/portfolio/balances', async (req, res) => {
     };
 
     const ibkrAccountsList = [acctISA, acctGIA];
-        grossPositionValue: acct2NetLiqUSD,
-        regTEquity: acct2NetLiqUSD,
-        regTMargin: 0,
-        sma: 0,
-        cushion: 100,
-        marginUtilization: 0,
-        leverage: 1.0,
-        unrealizedPnL: acct2UnPnLUSD,
-        dayPnL: acct2DayPnLUSD,
-        realizedPnL: 0,
-        optionsCount: 0,
-        optionsValue: 0,
-        equitiesCount: ibkrCadHoldings.length,
-        equitiesValue: acct2PosValUSD,
-        currencies: acct2Currencies,
-        dayTrading: {
-          dayTradesRemaining: -1,
-          dayTradesRemainingT1: -1,
-          dayTradesRemainingT2: -1,
-          dayTradesRemainingT3: -1,
-          dayTradesRemainingT4: -1,
-        },
-        accruedCash: 0,
-        accruedDividend: 0,
-        rawMetrics: {}
-      };
-
-      ibkrAccountsList = [acctISA, acctGIA];
-    }
 
     // Combined IBKR Aggregate in USD
     const ibkrCombinedCurrencies = buildCurrencyBreakdown(ibkrHoldings);
