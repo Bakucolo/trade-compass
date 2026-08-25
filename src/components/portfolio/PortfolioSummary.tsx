@@ -476,17 +476,20 @@ export function PortfolioSummary({
               <div className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
                 <span className="text-xs font-bold text-foreground">IBKR ISA</span>
+                <Badge variant="outline" className="text-[9px] px-1 py-0 font-mono text-amber-300/80 border-amber-500/30">
+                  U14522424
+                </Badge>
               </div>
               <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/40 text-[9px] font-mono font-bold">
-                TAX-FREE (GBP)
+                TAX-FREE
               </Badge>
             </div>
             <div className={cn("text-xl font-black font-mono text-amber-300", isPrivacyMode && "blur-sm")}>
-              {formatCurr(ibkrAccounts.find(a => a.accountKey === 'ibkr_isa' || a.accountNumber?.includes('ISA'))?.netLiquidatingValue ?? (ibkrTotalNetCombined * 0.4))}
+              {formatCurr(ibkrAccounts.find(a => a.accountKey === 'ibkr_isa' || a.accountNumber === 'U14522424' || a.accountNumber?.includes('ISA'))?.netLiquidatingValue ?? (ibkrTotalNetCombined * 0.4))}
             </div>
             <div className="text-[11px] text-muted-foreground flex items-center justify-between font-mono pt-1">
               <span>Stocks & Shares ISA</span>
-              <span className="text-emerald-400 font-bold">{ibkrAccounts.find(a => a.accountKey === 'ibkr_isa')?.equitiesCount ?? 'Cash Equities'}</span>
+              <span className="text-emerald-400 font-bold">{ibkrAccounts.find(a => a.accountKey === 'ibkr_isa' || a.accountNumber === 'U14522424')?.equitiesCount ?? 'Cash Equities'}</span>
             </div>
           </div>
           <div className="pt-2 mt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-muted-foreground font-mono">
@@ -502,13 +505,16 @@ export function PortfolioSummary({
               <div className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-purple-400" />
                 <span className="text-xs font-bold text-foreground">IBKR GIA</span>
+                <Badge variant="outline" className="text-[9px] px-1 py-0 font-mono text-purple-300/80 border-purple-500/30">
+                  U15491236
+                </Badge>
               </div>
               <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/40 text-[9px] font-mono font-bold">
-                MARGIN (USD)
+                MARGIN
               </Badge>
             </div>
             <div className={cn("text-xl font-black font-mono text-purple-300", isPrivacyMode && "blur-sm")}>
-              {formatCurr(ibkrAccounts.find(a => a.accountKey === 'ibkr_gia' || a.accountNumber?.includes('GIA'))?.netLiquidatingValue ?? (ibkrTotalNetCombined * 0.6))}
+              {formatCurr(ibkrAccounts.find(a => a.accountKey === 'ibkr_gia' || a.accountNumber === 'U15491236' || a.accountNumber?.includes('GIA'))?.netLiquidatingValue ?? (ibkrTotalNetCombined * 0.6))}
             </div>
             <div className="text-[11px] text-muted-foreground flex items-center justify-between font-mono pt-1">
               <span>Global Margin & Options</span>
@@ -517,7 +523,7 @@ export function PortfolioSummary({
           </div>
           <div className="pt-2 mt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-muted-foreground font-mono">
             <span>Buying Power:</span>
-            <span className="text-cyan-300 font-bold">{formatCurr(ibkrAccounts.find(a => a.accountKey === 'ibkr_gia')?.buyingPower ?? (ibkrBP))}</span>
+            <span className="text-cyan-300 font-bold">{formatCurr(ibkrAccounts.find(a => a.accountKey === 'ibkr_gia' || a.accountNumber === 'U15491236')?.buyingPower ?? (ibkrBP))}</span>
           </div>
         </div>
 

@@ -181,111 +181,43 @@ const setupEventListeners = (ibInstance: IBApi) => {
     console.error(`IBKR Error: ${err.message} (Code: ${code}, ReqId: ${reqId})`);
   });
 
-  let positionWriteQueue = Promise.resolve();
-  const queuePositionUpdate = (task: () => Promise<void>) => {
-    positionWriteQueue = positionWriteQueue.then(task).catch(err => {
-      console.error('Queued position update error:', err);
-    });
-    return positionWriteQueue;
-  };
+const IBKR_ISA_ACCOUNT = 'U14522424';
+const IBKR_GIA_ACCOUNT = 'U15491236';
+const conIdAccountMap = new Map<string, string>();
 
-  // 1. Position feed
-  ibInstance.on(EventName.position, (account: string, contract: Contract, pos: number, avgCost: number) => {
-    queuePositionUpdate(async () => {
-      try {
-        if (pos === 0) {
-          // Remove position if quantity is 0
-          await prisma.holding.deleteMany({
-            where: {
-              broker: { name: 'Interactive Brokers' },
-              brokerSpecificId: contract.conId?.toString()
-            }
-          });
-        } else {
-          const broker = await prisma.broker.findUnique({ where: { name: 'Interactive Brokers' } });
-          if (!broker) return;
-
-          const isOption = contract.secType === 'OPT';
-          const conIdStr = contract.conId?.toString() || `${contract.symbol}_${contract.secType}`;
-          const curr = contract.currency || 'USD';
-
-          await prisma.holding.upsert({
-            where: {
-              brokerId_brokerSpecificId: {
-                brokerId: broker.id,
-                brokerSpecificId: conIdStr
-              }
-            },
-            update: {
-              quantity: pos,
-              averageCost: avgCost,
-              currency: curr,
-              updatedAt: new Date()
-            },
-            create: {
-              brokerId: broker.id,
-              brokerSpecificId: conIdStr,
-              symbol: contract.symbol || 'UNKNOWN',
-              assetType: isOption ? 'OPTION' : 'EQUITY',
-              description: contract.localSymbol,
-              quantity: pos,
-              averageCost: avgCost,
-              currentPrice: 0,
-              marketValue: 0,
-              dayPnL: 0,
-              dayPnLPercent: 0,
-              unrealizedPnL: 0,
-              unrealizedPnLPercent: 0,
-              strikePrice: contract.strike,
-              expiryDate: contract.lastTradeDateOrContractMonth,
-              optionType: contract.right, // "C" or "P"
-              underlyingSymbol: contract.symbol,
-              currency: curr
-            }
-          });
-
-          // Request single PnL stream for this contract if conId exists
-          if (contract.conId && account) {
-            const reqId = Math.floor(Math.random() * 900000) + 100000;
-            pnlReqConIdMap.set(reqId, contract.conId.toString());
-            try {
-              ibInstance.reqPnLSingle(reqId, account, null, contract.conId);
-            } catch (pnlErr) {
-              console.error('Failed to reqPnLSingle for conId:', contract.conId, pnlErr);
-            }
-          }
-        }
-      } catch (err: any) {
-        console.error('Error in IBKR position processing:', err?.message || err);
-      }
-    });
+let positionWriteQueue = Promise.resolve();
+const queuePositionUpdate = (task: () => Promise<void>) => {
+  positionWriteQueue = positionWriteQueue.then(task).catch(err => {
+    console.error('Queued position update error:', err);
   });
+  return positionWriteQueue;
+};
 
-  // 2. Real-time portfolio update feed (delivers real market prices and unrealized PnL for options/stocks)
-  ibInstance.on(EventName.updatePortfolio, (contract: Contract, position: number, marketPrice: number, marketValue: number, averageCost?: number, unrealizedPNL?: number, realizedPNL?: number, accountName?: string) => {
-    queuePositionUpdate(async () => {
-      try {
+// 1. Position feed
+ibInstance.on(EventName.position, (account: string, contract: Contract, pos: number, avgCost: number) => {
+  queuePositionUpdate(async () => {
+    try {
+      const acct = account || (contract.secType === 'OPT' ? IBKR_GIA_ACCOUNT : IBKR_ISA_ACCOUNT);
+      if (contract.conId) {
+        conIdAccountMap.set(contract.conId.toString(), acct);
+      }
+      const conIdBase = contract.conId?.toString() || `${contract.symbol}_${contract.secType}`;
+      const conIdStr = `${acct}_${conIdBase}`;
+
+      if (pos === 0) {
+        // Remove position if quantity is 0
+        await prisma.holding.deleteMany({
+          where: {
+            broker: { name: 'Interactive Brokers' },
+            brokerSpecificId: { in: [conIdStr, conIdBase] }
+          }
+        });
+      } else {
         const broker = await prisma.broker.findUnique({ where: { name: 'Interactive Brokers' } });
         if (!broker) return;
 
         const isOption = contract.secType === 'OPT';
-        const multiplier = isOption ? 100 : 1;
-        const avgCost = averageCost ?? 0;
         const curr = contract.currency || 'USD';
-
-        // Adjust GBX (pence) to GBP if marketPrice is in pence (>100) and averageCost is in pounds (<50)
-        let normalizedPrice = marketPrice;
-        if (curr === 'GBX' && marketPrice > 50 && avgCost < 50) {
-          normalizedPrice = marketPrice / 100;
-        }
-
-        const unPnL = unrealizedPNL !== undefined ? unrealizedPNL : (marketValue - (avgCost * position * multiplier));
-        // Calculate percentage using initial cost basis: |marketValue - unPnL|
-        const costBasis = Math.abs(marketValue - unPnL);
-        const unPnLPct = costBasis > 0 ? (unPnL / costBasis) * 100 : 0;
-        const conIdStr = contract.conId?.toString() || `${contract.symbol}_${contract.secType}`;
-
-        const finalPrice = normalizedPrice > 0 ? normalizedPrice : (position !== 0 && marketValue ? Math.abs(marketValue / (position * multiplier)) : avgCost);
 
         await prisma.holding.upsert({
           where: {
@@ -295,12 +227,8 @@ const setupEventListeners = (ibInstance: IBApi) => {
             }
           },
           update: {
-            quantity: position,
-            averageCost: avgCost || undefined,
-            currentPrice: finalPrice,
-            marketValue: marketValue || 0,
-            unrealizedPnL: unPnL,
-            unrealizedPnLPercent: unPnLPct,
+            quantity: pos,
+            averageCost: avgCost,
             currency: curr,
             updatedAt: new Date()
           },
@@ -310,26 +238,114 @@ const setupEventListeners = (ibInstance: IBApi) => {
             symbol: contract.symbol || 'UNKNOWN',
             assetType: isOption ? 'OPTION' : 'EQUITY',
             description: contract.localSymbol,
-            quantity: position,
+            quantity: pos,
             averageCost: avgCost,
-            currentPrice: finalPrice,
-            marketValue: marketValue,
+            currentPrice: 0,
+            marketValue: 0,
             dayPnL: 0,
             dayPnLPercent: 0,
-            unrealizedPnL: unPnL,
-            unrealizedPnLPercent: unPnLPct,
+            unrealizedPnL: 0,
+            unrealizedPnLPercent: 0,
             strikePrice: contract.strike,
             expiryDate: contract.lastTradeDateOrContractMonth,
-            optionType: contract.right,
+            optionType: contract.right, // "C" or "P"
             underlyingSymbol: contract.symbol,
             currency: curr
           }
         });
-      } catch (err: any) {
-        console.error('Error in IBKR updatePortfolio processing:', err?.message || err);
+
+        // Request single PnL stream for this contract if conId exists
+        if (contract.conId && acct) {
+          const reqId = Math.floor(Math.random() * 900000) + 100000;
+          pnlReqConIdMap.set(reqId, conIdStr);
+          try {
+            ibInstance.reqPnLSingle(reqId, acct, null, contract.conId);
+          } catch (pnlErr) {
+            console.error('Failed to reqPnLSingle for conId:', contract.conId, pnlErr);
+          }
+        }
       }
-    });
+    } catch (err: any) {
+      console.error('Error in IBKR position processing:', err?.message || err);
+    }
   });
+});
+
+// 2. Real-time portfolio update feed (delivers real market prices and unrealized PnL for options/stocks)
+ibInstance.on(EventName.updatePortfolio, (contract: Contract, position: number, marketPrice: number, marketValue: number, averageCost?: number, unrealizedPNL?: number, realizedPNL?: number, accountName?: string) => {
+  queuePositionUpdate(async () => {
+    try {
+      const broker = await prisma.broker.findUnique({ where: { name: 'Interactive Brokers' } });
+      if (!broker) return;
+
+      const isOption = contract.secType === 'OPT';
+      const multiplier = isOption ? 100 : 1;
+      const avgCost = averageCost ?? 0;
+      const curr = contract.currency || 'USD';
+
+      // Adjust GBX (pence) to GBP if marketPrice is in pence (>100) and averageCost is in pounds (<50)
+      let normalizedPrice = marketPrice;
+      if (curr === 'GBX' && marketPrice > 50 && avgCost < 50) {
+        normalizedPrice = marketPrice / 100;
+      }
+
+      const unPnL = unrealizedPNL !== undefined ? unrealizedPNL : (marketValue - (avgCost * position * multiplier));
+      // Calculate percentage using initial cost basis: |marketValue - unPnL|
+      const costBasis = Math.abs(marketValue - unPnL);
+      const unPnLPct = costBasis > 0 ? (unPnL / costBasis) * 100 : 0;
+
+      const acct = accountName || (contract.conId ? conIdAccountMap.get(contract.conId.toString()) : undefined) || (isOption ? IBKR_GIA_ACCOUNT : IBKR_ISA_ACCOUNT);
+      if (contract.conId && acct) {
+        conIdAccountMap.set(contract.conId.toString(), acct);
+      }
+      const conIdBase = contract.conId?.toString() || `${contract.symbol}_${contract.secType}`;
+      const conIdStr = `${acct}_${conIdBase}`;
+
+      const finalPrice = normalizedPrice > 0 ? normalizedPrice : (position !== 0 && marketValue ? Math.abs(marketValue / (position * multiplier)) : avgCost);
+
+      await prisma.holding.upsert({
+        where: {
+          brokerId_brokerSpecificId: {
+            brokerId: broker.id,
+            brokerSpecificId: conIdStr
+          }
+        },
+        update: {
+          quantity: position,
+          averageCost: avgCost || undefined,
+          currentPrice: finalPrice,
+          marketValue: marketValue || 0,
+          unrealizedPnL: unPnL,
+          unrealizedPnLPercent: unPnLPct,
+          currency: curr,
+          updatedAt: new Date()
+        },
+        create: {
+          brokerId: broker.id,
+          brokerSpecificId: conIdStr,
+          symbol: contract.symbol || 'UNKNOWN',
+          assetType: isOption ? 'OPTION' : 'EQUITY',
+          description: contract.localSymbol,
+          quantity: position,
+          averageCost: avgCost,
+          currentPrice: finalPrice,
+          marketValue: marketValue,
+          dayPnL: 0,
+          dayPnLPercent: 0,
+          unrealizedPnL: unPnL,
+          unrealizedPnLPercent: unPnLPct,
+          strikePrice: contract.strike,
+          expiryDate: contract.lastTradeDateOrContractMonth,
+          optionType: contract.right,
+          underlyingSymbol: contract.symbol,
+          currency: curr
+        }
+      });
+    } catch (err: any) {
+      console.error('Error in IBKR updatePortfolio processing:', err?.message || err);
+    }
+  });
+});
 
   // 3. Real-time PnL single feed
   ibInstance.on(EventName.pnlSingle, (reqId: number, pos: number, dailyPnL: number, unrealizedPnL: number | undefined, realizedPnL: number | undefined, value: number) => {
@@ -615,7 +631,29 @@ app.get('/api/portfolio', async (req, res) => {
     include: { broker: true }
   });
 
-  res.json(holdings);
+  const enriched = holdings.map(h => {
+    const isIbkr = h.broker?.name === 'Interactive Brokers' || !h.broker;
+    if (!isIbkr) return h;
+
+    const isExplicitIsa = h.brokerSpecificId.includes(IBKR_ISA_ACCOUNT);
+    const isExplicitGia = h.brokerSpecificId.includes(IBKR_GIA_ACCOUNT);
+
+    const isIsa = isExplicitIsa || (!isExplicitGia && h.assetType !== 'OPTION' && h.quantity > 0);
+    const acctNum = isIsa ? IBKR_ISA_ACCOUNT : IBKR_GIA_ACCOUNT;
+    const acctType = isIsa ? 'ISA' : 'GIA';
+    const acctName = isIsa ? `IBKR ISA (${IBKR_ISA_ACCOUNT})` : `IBKR GIA (${IBKR_GIA_ACCOUNT})`;
+    const acctBadge = isIsa ? 'IBKR (ISA)' : 'IBKR (GIA)';
+
+    return {
+      ...h,
+      accountNumber: acctNum,
+      accountType: acctType,
+      accountName: acctName,
+      accountBadge: acctBadge
+    };
+  });
+
+  res.json(enriched);
 });
 
 // Comprehensive Multi-Account Broker Balances & Multi-Currency Endpoint
@@ -628,156 +666,127 @@ app.get('/api/portfolio/balances', async (req, res) => {
     const ibkrHoldings = holdings.filter(h => h.broker?.name === 'Interactive Brokers' || !h.broker);
     const tastyHoldings = holdings.filter(h => h.broker?.name === 'Tastytrade');
 
-    // Partition IBKR Holdings: CAD (Registered/Tax-Advantaged) vs Global/USD (Margin & Derivatives)
-    const ibkrCadHoldings = ibkrHoldings.filter(h => (h.currency || '').toUpperCase() === 'CAD');
-    const ibkrGlobalHoldings = ibkrHoldings.filter(h => (h.currency || '').toUpperCase() !== 'CAD');
+    // Partition IBKR Holdings: ISA (U14522424) vs GIA (U15491236)
+    const ibkrIsaHoldings = ibkrHoldings.filter(h => {
+      if (h.brokerSpecificId.includes(IBKR_ISA_ACCOUNT)) return true;
+      if (h.brokerSpecificId.includes(IBKR_GIA_ACCOUNT)) return false;
+      return h.assetType !== 'OPTION' && h.quantity > 0;
+    });
+    const ibkrGiaHoldings = ibkrHoldings.filter(h => !ibkrIsaHoldings.includes(h));
 
-    // Build Individual Accounts for IBKR
-    let ibkrAccountsList: any[] = [];
+    // Live TWS account telemetry lookup
+    const isaLiveAcct = ibkrAccountValues.get(IBKR_ISA_ACCOUNT) || Array.from(ibkrAccountValues.values()).find(a => a.accountName === IBKR_ISA_ACCOUNT || a.accountName?.toLowerCase().includes('isa'));
+    const giaLiveAcct = ibkrAccountValues.get(IBKR_GIA_ACCOUNT) || Array.from(ibkrAccountValues.values()).find(a => a.accountName === IBKR_GIA_ACCOUNT || a.accountName?.toLowerCase().includes('gia')) || Array.from(ibkrAccountValues.values())[0];
 
-    if (ibkrAccountValues.size >= 2) {
-      // Live TWS returned 2+ distinct managed accounts
-      let acctIdx = 1;
-      for (const [acctId, acctData] of ibkrAccountValues.entries()) {
-        const acctHoldings = acctIdx === 1 ? ibkrGlobalHoldings : ibkrCadHoldings;
-        const acctCurrencies = buildCurrencyBreakdown(acctHoldings);
-        const acctNetUSD = acctData.netLiq > 0 ? acctData.netLiq : Object.values(acctCurrencies).reduce((s, c: any) => s + c.netLiqUSD, 0);
+    // --- ACCOUNT 1: IBKR ISA (U14522424) ---
+    const acctISACurrencies = buildCurrencyBreakdown(ibkrIsaHoldings);
+    const isaPosValUSD = Object.values(acctISACurrencies).reduce((s, c: any) => s + c.positionsMarketValueUSD, 0);
+    const isaUnPnLUSD = Object.values(acctISACurrencies).reduce((s, c: any) => s + c.unrealizedPnLUSD, 0);
+    const isaDayPnLUSD = ibkrIsaHoldings.reduce((s, h) => s + (h.dayPnL || 0) * getFxRateToUSD(h.currency), 0);
+    const isaNetLiqUSD = isaLiveAcct?.netLiq && isaLiveAcct.netLiq > 0 ? isaLiveAcct.netLiq : isaPosValUSD;
+    const isaBP = isaLiveAcct?.buyingPower && isaLiveAcct.buyingPower > 0 ? isaLiveAcct.buyingPower : Math.max(0, isaNetLiqUSD * 0.5);
 
-        ibkrAccountsList.push({
-          name: `Interactive Brokers - ${acctId}`,
-          status: isConnected ? 'connected' : 'disconnected',
-          accountKey: `ibkr_acct_${acctIdx}`,
-          accountNumber: acctId,
-          accountType: acctData.accountType || (acctIdx === 1 ? 'Margin Account' : 'Cash / Registered'),
-          nickname: acctIdx === 1 ? 'Global Trading Margin' : 'Canadian Growth',
-          currency: acctData.currency || (acctIdx === 1 ? 'USD' : 'CAD'),
-          baseCurrency: acctData.currency || (acctIdx === 1 ? 'USD' : 'CAD'),
-          netLiquidatingValue: acctNetUSD,
-          cash: acctData.cash,
-          buyingPower: acctData.buyingPower || (acctNetUSD * 0.5),
-          derivativeBuyingPower: acctData.buyingPower || (acctNetUSD * 0.5),
-          equityBuyingPower: acctData.buyingPower || (acctNetUSD * 0.5),
-          availableFunds: acctData.availableFunds || (acctNetUSD * 0.5),
-          excessLiquidity: acctData.excessLiquidity || (acctNetUSD * 0.3),
-          maintMargin: acctData.maintMargin || (acctNetUSD * 0.25),
-          initMargin: acctData.initMargin || (acctNetUSD * 0.5),
-          equityWithLoanValue: acctData.equityWithLoanValue || acctNetUSD,
-          grossPositionValue: acctData.grossPositionValue || acctNetUSD,
-          regTEquity: acctData.regTEquity || acctNetUSD,
-          regTMargin: acctData.regTMargin || (acctNetUSD * 0.5),
-          sma: acctData.sma || 0,
-          cushion: acctData.cushion > 0 ? acctData.cushion * 100 : 45,
-          marginUtilization: acctNetUSD > 0 ? Math.min(100, (acctData.maintMargin / acctNetUSD) * 100) : 25,
-          leverage: acctData.leverage || 1.0,
-          unrealizedPnL: Object.values(acctCurrencies).reduce((s, c: any) => s + c.unrealizedPnLUSD, 0),
-          dayPnL: acctHoldings.reduce((sum, h) => sum + (h.dayPnL || 0) * getFxRateToUSD(h.currency), 0),
-          realizedPnL: acctData.realizedPnL || 0,
-          optionsCount: acctHoldings.filter(h => h.assetType === 'OPTION').length,
-          optionsValue: acctHoldings.filter(h => h.assetType === 'OPTION').reduce((sum, h) => sum + (h.marketValue || 0) * getFxRateToUSD(h.currency), 0),
-          equitiesCount: acctHoldings.filter(h => h.assetType !== 'OPTION').length,
-          equitiesValue: acctHoldings.filter(h => h.assetType !== 'OPTION').reduce((sum, h) => sum + (h.marketValue || 0) * getFxRateToUSD(h.currency), 0),
-          currencies: acctCurrencies,
-          dayTrading: {
-            dayTradesRemaining: acctData.dayTradesRemaining,
-            dayTradesRemainingT1: acctData.dayTradesRemainingT1,
-            dayTradesRemainingT2: acctData.dayTradesRemainingT2,
-            dayTradesRemainingT3: acctData.dayTradesRemainingT3,
-            dayTradesRemainingT4: acctData.dayTradesRemainingT4,
-          },
-          accruedCash: acctData.accruedCash,
-          accruedDividend: acctData.accruedDividend,
-          rawMetrics: acctData.rawMetrics || {}
-        });
-        acctIdx++;
-      }
-    } else {
-      // Create the 2 distinct IBKR Accounts: IBKR ISA and IBKR GIA
-      const firstAcctData = ibkrAccountValues.size > 0 ? Array.from(ibkrAccountValues.values())[0] : null;
-      const firstAcctNum = firstAcctData?.accountName || 'IBKR-GIA';
+    const acctISA: any = {
+      name: 'Interactive Brokers (ISA)',
+      status: isConnected ? 'connected' : 'disconnected',
+      accountKey: 'ibkr_isa',
+      accountNumber: IBKR_ISA_ACCOUNT,
+      accountType: 'Stocks & Shares ISA (Tax-Free)',
+      nickname: 'IBKR ISA (Stocks & Shares)',
+      currency: 'GBP',
+      baseCurrency: 'GBP',
+      netLiquidatingValue: isaNetLiqUSD,
+      cash: isaLiveAcct?.cash || 0,
+      buyingPower: isaBP,
+      derivativeBuyingPower: 0,
+      equityBuyingPower: isaBP,
+      availableFunds: isaBP,
+      excessLiquidity: isaNetLiqUSD,
+      maintMargin: 0,
+      initMargin: 0,
+      equityWithLoanValue: isaNetLiqUSD,
+      grossPositionValue: isaPosValUSD,
+      regTEquity: isaNetLiqUSD,
+      regTMargin: 0,
+      sma: 0,
+      cushion: 100,
+      marginUtilization: 0,
+      leverage: 1.0,
+      unrealizedPnL: isaUnPnLUSD,
+      dayPnL: isaDayPnLUSD,
+      realizedPnL: isaLiveAcct?.realizedPnL || 0,
+      optionsCount: 0,
+      optionsValue: 0,
+      equitiesCount: ibkrIsaHoldings.filter(h => h.assetType !== 'OPTION').length,
+      equitiesValue: isaPosValUSD,
+      currencies: acctISACurrencies,
+      dayTrading: {
+        dayTradesRemaining: 3,
+        dayTradesRemainingT1: 3,
+        dayTradesRemainingT2: 3,
+        dayTradesRemainingT3: 3,
+        dayTradesRemainingT4: 3,
+      },
+      accruedCash: isaLiveAcct?.accruedCash || 0,
+      accruedDividend: isaLiveAcct?.accruedDividend || 0,
+      rawMetrics: isaLiveAcct?.rawMetrics || {}
+    };
 
-      // --- ACCOUNT 1: IBKR GIA (General Investment Account - Multi-Currency Margin & Options) ---
-      const acct1Currencies = buildCurrencyBreakdown(ibkrGlobalHoldings);
-      const acct1PosValUSD = Object.values(acct1Currencies).reduce((s, c: any) => s + c.positionsMarketValueUSD, 0);
-      const acct1UnPnLUSD = Object.values(acct1Currencies).reduce((s, c: any) => s + c.unrealizedPnLUSD, 0);
-      const acct1DayPnLUSD = ibkrGlobalHoldings.reduce((s, h) => s + (h.dayPnL || 0) * getFxRateToUSD(h.currency), 0);
-      const acct1NetLiqUSD = acct1PosValUSD;
-      const acct1Maint = Math.max(0, acct1NetLiqUSD * 0.28);
-      const acct1Excess = Math.max(0, acct1NetLiqUSD * 0.35);
-      const acct1BP = Math.max(0, acct1NetLiqUSD * 0.55);
+    // --- ACCOUNT 2: IBKR GIA (U15491236) ---
+    const acctGIACurrencies = buildCurrencyBreakdown(ibkrGiaHoldings);
+    const giaPosValUSD = Object.values(acctGIACurrencies).reduce((s, c: any) => s + c.positionsMarketValueUSD, 0);
+    const giaUnPnLUSD = Object.values(acctGIACurrencies).reduce((s, c: any) => s + c.unrealizedPnLUSD, 0);
+    const giaDayPnLUSD = ibkrGiaHoldings.reduce((s, h) => s + (h.dayPnL || 0) * getFxRateToUSD(h.currency), 0);
+    const giaNetLiqUSD = giaLiveAcct?.netLiq && giaLiveAcct.netLiq > 0 ? giaLiveAcct.netLiq : giaPosValUSD;
+    const giaBP = giaLiveAcct?.buyingPower && giaLiveAcct.buyingPower > 0 ? giaLiveAcct.buyingPower : Math.max(0, giaNetLiqUSD * 0.55);
 
-      const acctGIA: any = {
-        name: 'Interactive Brokers (GIA)',
-        status: isConnected ? 'connected' : 'disconnected',
-        accountKey: 'ibkr_gia',
-        accountNumber: 'IBKR-GIA (Margin)',
-        accountType: 'General Investment Account (GIA)',
-        nickname: 'IBKR GIA (Margin & Global)',
-        currency: 'USD',
-        baseCurrency: 'USD',
-        netLiquidatingValue: acct1NetLiqUSD,
-        cash: 0,
-        buyingPower: acct1BP,
-        derivativeBuyingPower: acct1BP,
-        equityBuyingPower: acct1BP * 2,
-        availableFunds: acct1BP,
-        excessLiquidity: acct1Excess,
-        maintMargin: acct1Maint,
-        initMargin: acct1BP,
-        equityWithLoanValue: acct1NetLiqUSD,
-        grossPositionValue: acct1NetLiqUSD,
-        regTEquity: acct1NetLiqUSD,
-        regTMargin: acct1BP,
-        sma: 0,
-        cushion: 55.4,
-        marginUtilization: 28.0,
-        leverage: 1.0,
-        unrealizedPnL: acct1UnPnLUSD,
-        dayPnL: acct1DayPnLUSD,
-        realizedPnL: 0,
-        optionsCount: ibkrGlobalHoldings.filter(h => h.assetType === 'OPTION').length,
-        optionsValue: ibkrGlobalHoldings.filter(h => h.assetType === 'OPTION').reduce((s, h) => s + (h.marketValue || 0) * getFxRateToUSD(h.currency), 0),
-        equitiesCount: ibkrGlobalHoldings.filter(h => h.assetType !== 'OPTION').length,
-        equitiesValue: ibkrGlobalHoldings.filter(h => h.assetType !== 'OPTION').reduce((s, h) => s + (h.marketValue || 0) * getFxRateToUSD(h.currency), 0),
-        currencies: acct1Currencies,
-        dayTrading: {
-          dayTradesRemaining: 3,
-          dayTradesRemainingT1: 3,
-          dayTradesRemainingT2: 3,
-          dayTradesRemainingT3: 3,
-          dayTradesRemainingT4: 3,
-        },
-        accruedCash: 0,
-        accruedDividend: 0,
-        rawMetrics: firstAcctData?.rawMetrics || {}
-      };
+    const acctGIA: any = {
+      name: 'Interactive Brokers (GIA)',
+      status: isConnected ? 'connected' : 'disconnected',
+      accountKey: 'ibkr_gia',
+      accountNumber: IBKR_GIA_ACCOUNT,
+      accountType: 'General Investment Account (Margin)',
+      nickname: 'IBKR GIA (Margin & Global)',
+      currency: 'USD',
+      baseCurrency: 'USD',
+      netLiquidatingValue: giaNetLiqUSD,
+      cash: giaLiveAcct?.cash || 0,
+      buyingPower: giaBP,
+      derivativeBuyingPower: giaBP,
+      equityBuyingPower: giaBP * 2,
+      availableFunds: giaBP,
+      excessLiquidity: giaLiveAcct?.excessLiquidity || Math.max(0, giaNetLiqUSD * 0.35),
+      maintMargin: giaLiveAcct?.maintMargin || Math.max(0, giaNetLiqUSD * 0.28),
+      initMargin: giaLiveAcct?.initMargin || giaBP,
+      equityWithLoanValue: giaLiveAcct?.equityWithLoanValue || giaNetLiqUSD,
+      grossPositionValue: giaPosValUSD,
+      regTEquity: giaNetLiqUSD,
+      regTMargin: giaBP,
+      sma: giaLiveAcct?.sma || 0,
+      cushion: giaLiveAcct?.cushion > 0 ? giaLiveAcct.cushion * 100 : 55.4,
+      marginUtilization: giaNetLiqUSD > 0 && giaLiveAcct?.maintMargin ? (giaLiveAcct.maintMargin / giaNetLiqUSD) * 100 : 28.0,
+      leverage: giaLiveAcct?.leverage || 1.0,
+      unrealizedPnL: giaUnPnLUSD,
+      dayPnL: giaDayPnLUSD,
+      realizedPnL: giaLiveAcct?.realizedPnL || 0,
+      optionsCount: ibkrGiaHoldings.filter(h => h.assetType === 'OPTION').length,
+      optionsValue: ibkrGiaHoldings.filter(h => h.assetType === 'OPTION').reduce((s, h) => s + (h.marketValue || 0) * getFxRateToUSD(h.currency), 0),
+      equitiesCount: ibkrGiaHoldings.filter(h => h.assetType !== 'OPTION').length,
+      equitiesValue: ibkrGiaHoldings.filter(h => h.assetType !== 'OPTION').reduce((s, h) => s + (h.marketValue || 0) * getFxRateToUSD(h.currency), 0),
+      currencies: acctGIACurrencies,
+      dayTrading: {
+        dayTradesRemaining: giaLiveAcct?.dayTradesRemaining ?? 3,
+        dayTradesRemainingT1: giaLiveAcct?.dayTradesRemainingT1 ?? 3,
+        dayTradesRemainingT2: giaLiveAcct?.dayTradesRemainingT2 ?? 3,
+        dayTradesRemainingT3: giaLiveAcct?.dayTradesRemainingT3 ?? 3,
+        dayTradesRemainingT4: giaLiveAcct?.dayTradesRemainingT4 ?? 3,
+      },
+      accruedCash: giaLiveAcct?.accruedCash || 0,
+      accruedDividend: giaLiveAcct?.accruedDividend || 0,
+      rawMetrics: giaLiveAcct?.rawMetrics || {}
+    };
 
-      // --- ACCOUNT 2: IBKR ISA (Stocks & Shares ISA - Tax-Free) ---
-      const acct2Currencies = buildCurrencyBreakdown(ibkrCadHoldings);
-      const acct2PosValUSD = Object.values(acct2Currencies).reduce((s, c: any) => s + c.positionsMarketValueUSD, 0);
-      const acct2UnPnLUSD = Object.values(acct2Currencies).reduce((s, c: any) => s + c.unrealizedPnLUSD, 0);
-      const acct2DayPnLUSD = ibkrCadHoldings.reduce((s, h) => s + (h.dayPnL || 0) * getFxRateToUSD(h.currency), 0);
-      const acct2NetLiqUSD = acct2PosValUSD;
-      const acct2BP = Math.max(0, acct2NetLiqUSD * 0.5);
-
-      const acctISA: any = {
-        name: 'Interactive Brokers (ISA)',
-        status: isConnected ? 'connected' : 'disconnected',
-        accountKey: 'ibkr_isa',
-        accountNumber: 'IBKR-ISA (Tax-Free)',
-        accountType: 'Stocks & Shares ISA',
-        nickname: 'IBKR ISA (Stocks & Shares)',
-        currency: 'GBP',
-        baseCurrency: 'GBP',
-        netLiquidatingValue: acct2NetLiqUSD,
-        cash: 0,
-        buyingPower: acct2BP,
-        derivativeBuyingPower: 0,
-        equityBuyingPower: acct2BP,
-        availableFunds: acct2BP,
-        excessLiquidity: acct2NetLiqUSD,
-        maintMargin: 0,
-        initMargin: 0,
-        equityWithLoanValue: acct2NetLiqUSD,
+    const ibkrAccountsList = [acctISA, acctGIA];
         grossPositionValue: acct2NetLiqUSD,
         regTEquity: acct2NetLiqUSD,
         regTMargin: 0,

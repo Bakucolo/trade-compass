@@ -247,19 +247,21 @@ export function BrokersPage({ onNavigateToResearch }: BrokersPageProps = {}) {
         accountName = 'Trading 212 ISA';
         accountBadge = 'Trading 212';
       } else {
-        // IBKR: Determine ISA vs GIA
-        const isCadOrGbp = p.currency === 'CAD' || p.currency === 'GBP' || p.currency === 'GBX';
-        if (isOption || p.quantity < 0) {
-          accountType = 'GIA';
-          accountName = 'IBKR GIA (Margin)';
-          accountBadge = 'IBKR (GIA)';
-        } else if (isCadOrGbp) {
+        // IBKR: Determine ISA (U14522424) vs GIA (U15491236)
+        const isIsa = p.accountNumber === 'U14522424' ||
+                      p.brokerSpecificId?.includes('U14522424') ||
+                      p.accountName?.includes('U14522424') ||
+                      p.accountName?.includes('ISA') ||
+                      p.accountBadge?.includes('ISA') ||
+                      (p.assetType !== 'OPTION' && p.quantity > 0 && !p.brokerSpecificId?.includes('U15491236') && p.accountNumber !== 'U15491236');
+
+        if (isIsa) {
           accountType = 'ISA';
-          accountName = 'IBKR ISA (Stocks & Shares)';
+          accountName = 'IBKR ISA (U14522424)';
           accountBadge = 'IBKR (ISA)';
         } else {
           accountType = 'GIA';
-          accountName = 'IBKR GIA (Global)';
+          accountName = 'IBKR GIA (U15491236)';
           accountBadge = 'IBKR (GIA)';
         }
       }
@@ -279,6 +281,7 @@ export function BrokersPage({ onNavigateToResearch }: BrokersPageProps = {}) {
         accountType,
         accountName,
         accountBadge,
+        accountNumber: p.broker?.name === 'Tastytrade' ? 'Tastytrade' : p.broker?.name === 'Trading 212' ? 'Trading 212' : (accountType === 'ISA' ? 'U14522424' : 'U15491236'),
         assetType: p.assetType === 'OPTION' ? 'Option' : 'Stock',
         strike: p.strikePrice || undefined,
         optionType: p.assetType === 'OPTION' ? (p.optionType === 'C' || p.optionType === 'Call' ? 'Call' : 'Put') : undefined,

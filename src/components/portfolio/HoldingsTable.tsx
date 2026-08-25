@@ -370,9 +370,9 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
         // 2. Broker / Account Filter
         if (brokerFilter !== 'All') {
             if (brokerFilter === 'IBKR ISA') {
-                result = result.filter(p => p && p.source === 'IBKR' && (p.accountType === 'ISA' || p.accountBadge === 'IBKR (ISA)'));
+                result = result.filter(p => p && p.source === 'IBKR' && (p.accountType === 'ISA' || p.accountBadge === 'IBKR (ISA)' || p.accountNumber === 'U14522424'));
             } else if (brokerFilter === 'IBKR GIA') {
-                result = result.filter(p => p && p.source === 'IBKR' && (p.accountType !== 'ISA' && p.accountBadge !== 'IBKR (ISA)'));
+                result = result.filter(p => p && p.source === 'IBKR' && (p.accountType === 'GIA' || p.accountBadge === 'IBKR (GIA)' || p.accountNumber === 'U15491236' || (p.accountType !== 'ISA' && p.accountBadge !== 'IBKR (ISA)' && p.accountNumber !== 'U14522424')));
             } else if (brokerFilter === 'IBKR') {
                 result = result.filter(p => p && p.source === 'IBKR');
             } else {
@@ -578,12 +578,12 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
 
                                 {/* Broker / Specific Account Badge */}
                                 {pos.source === 'IBKR' ? (
-                                    (pos.accountType === 'ISA' || pos.accountBadge === 'IBKR (ISA)') ? (
-                                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 font-mono font-bold bg-amber-500/15 text-amber-300 border-amber-500/40 shadow-sm" title="Held in Interactive Brokers ISA (Tax-Free)">
+                                    (pos.accountType === 'ISA' || pos.accountBadge === 'IBKR (ISA)' || pos.accountNumber === 'U14522424') ? (
+                                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 font-mono font-bold bg-amber-500/15 text-amber-300 border-amber-500/40 shadow-sm" title="Held in Interactive Brokers ISA (U14522424 - Tax-Free)">
                                             IBKR (ISA)
                                         </Badge>
                                     ) : (
-                                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 font-mono font-bold bg-purple-500/15 text-purple-300 border-purple-500/40 shadow-sm" title="Held in Interactive Brokers GIA (Margin & Global)">
+                                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 font-mono font-bold bg-purple-500/15 text-purple-300 border-purple-500/40 shadow-sm" title="Held in Interactive Brokers GIA (U15491236 - Margin & Global)">
                                             IBKR (GIA)
                                         </Badge>
                                     )
