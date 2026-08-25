@@ -25,7 +25,12 @@ import {
   Bookmark,
   BookmarkPlus,
   Check,
-  X
+  X,
+  Bell,
+  BellRing,
+  BellPlus,
+  ArrowRight,
+  Zap
 } from 'lucide-react';
 import { Card } from './ui/card';
 import { Button } from './ui/button';
@@ -37,6 +42,8 @@ import { useIBKRPortfolio } from '@/services/ibkr';
 import { useTastytradePositions } from '@/services/tastytrade';
 import { useTrading212Positions } from '@/services/trading212';
 import { useStockNotesMap } from '@/services/noteService';
+import { useAlerts, useCreateAlert, PriceAlert } from '@/services/alertService';
+import { PriceAlertModal } from './PriceAlertModal';
 import { StockNoteModal } from './StockNoteModal';
 import { AddToWatchlistModal } from './AddToWatchlistModal';
 import { getCompanyStyleAndThemes, STYLE_CONFIG, getThemeBadgeStyle } from '@/services/stockThematics';
@@ -59,6 +66,21 @@ export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
   const [selectedWatchlistId, setSelectedWatchlistId] = useState<string | null>(() => {
     return localStorage.getItem('graphs_selected_watchlist') || null;
   });
+
+  // Price Alerts Query & Mutations
+  const { data: allAlerts = [] } = useAlerts();
+  const createAlertMutation = useCreateAlert();
+  const [isPriceAlertModalOpen, setIsPriceAlertModalOpen] = useState(false);
+  const [priceAlertModalStock, setPriceAlertModalStock] = useState<{
+    symbol: string;
+    price: number;
+    name?: string;
+    editAlert?: PriceAlert | null;
+  } | null>(null);
+
+  // Quick Custom Alert Inline State
+  const [quickAlertPrice, setQuickAlertPrice] = useState<string>('');
+  const [quickAlertCondition, setQuickAlertCondition] = useState<'ABOVE' | 'BELOW'>('ABOVE');
 
   // Add Symbol to Watchlist Mutation
   const addSymbolMutation = useAddSymbolToWatchlist();
@@ -251,6 +273,75 @@ export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
     setIsAddModalOpen(true);
   };
 
+  // Active Alerts on the currently charted symbol
+  const activeStockAlerts = useMemo(() => {
+    return allAlerts.filter(
+      (a) => a.symbol.toUpperCase() === selectedSymbol.toUpperCase() && a.status === 'ACTIVE'
+    );
+  }, [allAlerts, selectedSymbol]);
+
+  const openPriceAlertModal = (
+    sym: string,
+    price?: number,
+    name?: string,
+    editAlert?: PriceAlert | null
+  ) => {
+    setPriceAlertModalStock({
+      symbol: sym,
+      price: price || 0,
+      name,
+      editAlert: editAlert || null,
+    });
+    setIsPriceAlertModalOpen(true);
+  };
+
+  const handleQuickPresetAlert = async (pctOffset: number) => {
+    const currentP = activeItemDetails?.price || 0;
+    if (!currentP || !selectedSymbol) {
+      toast.error('Current price not available. Opening custom alert dialog.');
+      openPriceAlertModal(selectedSymbol, 0, activeItemDetails?.name);
+      return;
+    }
+
+    const targetP = Number((currentP * (1 + pctOffset / 100)).toFixed(2));
+    const cond = pctOffset >= 0 ? 'ABOVE' : 'BELOW';
+    const label = pctOffset >= 0 ? `+${pctOffset}% Target` : `${pctOffset}% Pullback`;
+
+    try {
+      await createAlertMutation.mutateAsync({
+        symbol: selectedSymbol.toUpperCase(),
+        targetPrice: targetP,
+        condition: cond,
+        notes: `Quick alert set from Graph (${label}) at $${targetP}`,
+      });
+      toast.success(`Price alert created for ${selectedSymbol.toUpperCase()} at $${targetP.toFixed(2)} (${cond})!`);
+    } catch (err: any) {
+      toast.error(`Failed to create alert: ${err.message}`);
+    }
+  };
+
+  const handleCreateQuickCustomAlert = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const num = parseFloat(quickAlertPrice);
+    if (isNaN(num) || num <= 0) {
+      toast.error('Please enter a valid price for the alert.');
+      return;
+    }
+
+    try {
+      await createAlertMutation.mutateAsync({
+        symbol: selectedSymbol.toUpperCase(),
+        targetPrice: num,
+        condition: quickAlertCondition,
+        notes: `Alert set from Graph at $${num.toFixed(2)}`,
+      });
+      toast.success(`Price alert set for ${selectedSymbol.toUpperCase()} at $${num.toFixed(2)} (${quickAlertCondition})!`);
+      setQuickAlertPrice('');
+    } catch (err: any) {
+      toast.error(`Failed to create alert: ${err.message}`);
+    }
+  };
+
   return (
     <div className="space-y-4 animate-fade-in">
       {/* ================= TOP COMMAND BAR ================= */}
@@ -300,6 +391,19 @@ export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
                   {activeStockNote.sentiment || 'Note'}
                 </button>
               )}
+
+              {/* Active Alerts Pills for this Stock */}
+              {activeStockAlerts.map((alert) => (
+                <button
+                  key={alert.id}
+                  onClick={() => openPriceAlertModal(alert.symbol, activeItemDetails?.price, activeItemDetails?.name, alert)}
+                  className="text-[10px] px-2 py-0.5 rounded-full border border-amber-500/40 bg-amber-500/15 text-amber-300 flex items-center gap-1 transition-all hover:bg-amber-500/25 cursor-pointer font-mono font-bold shadow-sm"
+                  title={`Alert set at $${alert.targetPrice.toFixed(2)} (${alert.condition === 'ABOVE' ? 'Above' : 'Below'}). Click to manage.`}
+                >
+                  <Bell className="w-3 h-3 text-amber-400" />
+                  <span>${alert.targetPrice.toFixed(2)} ({alert.condition === 'ABOVE' ? '▲' : '▼'})</span>
+                </button>
+              ))}
             </div>
 
             <p className="text-xs text-muted-foreground mt-0.5 max-w-md truncate">
@@ -349,6 +453,28 @@ export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
               <span>+ Add to Watchlist</span>
             </Button>
           )}
+
+          {/* Price Alert Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => openPriceAlertModal(selectedSymbol, activeItemDetails?.price, activeItemDetails?.name)}
+            className={cn(
+              "h-9 px-3.5 gap-1.5 font-bold text-xs shadow-sm transition-all",
+              activeStockAlerts.length > 0
+                ? "bg-amber-500/15 text-amber-300 border-amber-500/40 hover:bg-amber-500/25"
+                : "border-amber-500/30 hover:border-amber-500/50 text-amber-300 hover:bg-amber-500/10"
+            )}
+            title={`Set or manage price alerts for ${selectedSymbol}`}
+          >
+            <Bell className={cn("w-3.5 h-3.5 text-amber-400", activeStockAlerts.length > 0 && "animate-pulse")} />
+            <span>Price Alert</span>
+            {activeStockAlerts.length > 0 && (
+              <Badge className="bg-amber-500/30 text-amber-200 border-amber-500/50 text-[9px] px-1.5 py-0 font-mono font-bold">
+                {activeStockAlerts.length}
+              </Badge>
+            )}
+          </Button>
 
           {/* Open in Research Section */}
           <Button
@@ -595,19 +721,33 @@ export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
                         </div>
                       </div>
 
-                      {/* Right: Live Price & Day Change */}
-                      <div className="text-right font-mono shrink-0 pl-1">
-                        <span className="font-bold text-xs text-foreground block">
-                          ${item.price > 0 ? item.price.toFixed(2) : '-'}
-                        </span>
-                        {item.changePercent !== 0 && (
-                          <span className={cn(
-                            "text-[10px] font-semibold flex items-center justify-end gap-0.5",
-                            item.changePercent >= 0 ? "text-emerald-400" : "text-rose-400"
-                          )}>
-                            {item.changePercent >= 0 ? '+' : ''}{item.changePercent.toFixed(2)}%
+                      {/* Right: Live Price & Day Change & Quick Alert */}
+                      <div className="flex items-center gap-2 font-mono shrink-0 pl-1">
+                        <div className="text-right">
+                          <span className="font-bold text-xs text-foreground block">
+                            ${item.price > 0 ? item.price.toFixed(2) : '-'}
                           </span>
-                        )}
+                          {item.changePercent !== 0 && (
+                            <span className={cn(
+                              "text-[10px] font-semibold flex items-center justify-end gap-0.5",
+                              item.changePercent >= 0 ? "text-emerald-400" : "text-rose-400"
+                            )}>
+                              {item.changePercent >= 0 ? '+' : ''}{item.changePercent.toFixed(2)}%
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Quick Alert Bell button on row */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openPriceAlertModal(item.symbol, item.price, item.name);
+                          }}
+                          className="p-1.5 rounded-lg hover:bg-amber-500/20 text-muted-foreground hover:text-amber-300 opacity-40 group-hover:opacity-100 transition-all cursor-pointer"
+                          title={`Set price alert for ${item.symbol}`}
+                        >
+                          <Bell className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   );
@@ -627,13 +767,122 @@ export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
           </div>
         )}
 
-        {/* ================= MAIN TRADINGVIEW ADVANCED CHART ================= */}
-        <div className="flex-1 flex flex-col min-w-0">
+        {/* ================= MAIN TRADINGVIEW ADVANCED CHART & QUICK-ALERT TOOLBAR ================= */}
+        <div className="flex-1 flex flex-col min-w-0 space-y-3">
+          
+          {/* ================= GRAPH QUICK-ALERT PRESET BAR ================= */}
+          <div className="glass-card rounded-2xl p-3 px-4 border border-border/70 bg-card/80 backdrop-blur-xl flex flex-wrap items-center justify-between gap-3 shadow-md">
+            {/* Left: Quick Target Presets based on live price */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-amber-300 mr-1">
+                <Bell className="w-4 h-4 text-amber-400 animate-pulse" />
+                <span>Quick Price Alert:</span>
+              </div>
+
+              {activeItemDetails && activeItemDetails.price > 0 ? (
+                <div className="flex items-center gap-1.5 flex-wrap font-mono text-xs">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleQuickPresetAlert(5)}
+                    disabled={createAlertMutation.isPending}
+                    className="h-7 text-[11px] px-2.5 bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20 hover:text-emerald-200 shadow-sm"
+                    title={`Set alert at +5% ($${(activeItemDetails.price * 1.05).toFixed(2)})`}
+                  >
+                    <TrendingUp className="w-3 h-3 mr-1 text-emerald-400" />
+                    +5% (${(activeItemDetails.price * 1.05).toFixed(2)})
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleQuickPresetAlert(10)}
+                    disabled={createAlertMutation.isPending}
+                    className="h-7 text-[11px] px-2.5 bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20 hover:text-emerald-200 shadow-sm"
+                    title={`Set alert at +10% ($${(activeItemDetails.price * 1.10).toFixed(2)})`}
+                  >
+                    <TrendingUp className="w-3 h-3 mr-1 text-emerald-400" />
+                    +10% (${(activeItemDetails.price * 1.10).toFixed(2)})
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleQuickPresetAlert(-5)}
+                    disabled={createAlertMutation.isPending}
+                    className="h-7 text-[11px] px-2.5 bg-rose-500/10 border-rose-500/30 text-rose-300 hover:bg-rose-500/20 hover:text-rose-200 shadow-sm"
+                    title={`Set alert at -5% ($${(activeItemDetails.price * 0.95).toFixed(2)})`}
+                  >
+                    <TrendingDown className="w-3 h-3 mr-1 text-rose-400" />
+                    -5% (${(activeItemDetails.price * 0.95).toFixed(2)})
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleQuickPresetAlert(-10)}
+                    disabled={createAlertMutation.isPending}
+                    className="h-7 text-[11px] px-2.5 bg-rose-500/10 border-rose-500/30 text-rose-300 hover:bg-rose-500/20 hover:text-rose-200 shadow-sm"
+                    title={`Set alert at -10% ($${(activeItemDetails.price * 0.90).toFixed(2)})`}
+                  >
+                    <TrendingDown className="w-3 h-3 mr-1 text-rose-400" />
+                    -10% (${(activeItemDetails.price * 0.90).toFixed(2)})
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+
+            {/* Right: Quick Custom Price Input & Full Modal Button */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <form onSubmit={handleCreateQuickCustomAlert} className="flex items-center gap-1.5">
+                <div className="relative w-28">
+                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-mono text-muted-foreground">$</span>
+                  <Input
+                    type="number"
+                    step="any"
+                    placeholder="Target $"
+                    value={quickAlertPrice}
+                    onChange={(e) => setQuickAlertPrice(e.target.value)}
+                    className="h-7 pl-6 pr-2 text-xs font-mono bg-slate-900/80 border-border/70 focus:border-amber-500/60"
+                  />
+                </div>
+
+                <select
+                  value={quickAlertCondition}
+                  onChange={(e) => setQuickAlertCondition(e.target.value as 'ABOVE' | 'BELOW')}
+                  className="h-7 text-[11px] font-semibold bg-slate-900/90 text-foreground border border-border/70 rounded-lg px-1.5 focus:outline-none cursor-pointer"
+                >
+                  <option value="ABOVE">▲ Above</option>
+                  <option value="BELOW">▼ Below</option>
+                </select>
+
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={createAlertMutation.isPending || !quickAlertPrice}
+                  className="h-7 px-2.5 text-xs font-bold bg-amber-500 hover:bg-amber-600 text-slate-950 shadow-sm"
+                >
+                  Set
+                </Button>
+              </form>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => openPriceAlertModal(selectedSymbol, activeItemDetails?.price, activeItemDetails?.name)}
+                className="h-7 px-2.5 text-xs font-semibold border-amber-500/30 text-amber-300 hover:bg-amber-500/10 gap-1"
+              >
+                <BellPlus className="w-3 h-3" />
+                <span>Custom Alert</span>
+              </Button>
+            </div>
+          </div>
+
           <TradingViewChart
             symbol={selectedSymbol}
             theme="dark"
             interval="D"
-            className="flex-1 h-full min-h-[700px]"
+            className="flex-1 h-full min-h-[680px]"
           />
         </div>
       </div>
@@ -645,6 +894,16 @@ export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
         symbol={selectedSymbol}
         stockName={activeItemDetails?.name}
         currentPrice={activeItemDetails?.price}
+      />
+
+      {/* Price Alert Modal */}
+      <PriceAlertModal
+        open={isPriceAlertModalOpen}
+        onOpenChange={setIsPriceAlertModalOpen}
+        initialSymbol={priceAlertModalStock?.symbol || selectedSymbol}
+        initialPrice={priceAlertModalStock?.price || activeItemDetails?.price || 0}
+        initialStockName={priceAlertModalStock?.name || activeItemDetails?.name}
+        editAlert={priceAlertModalStock?.editAlert}
       />
 
       {/* Add To Watchlist Modal */}
