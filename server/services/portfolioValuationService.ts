@@ -74,13 +74,14 @@ export interface PortfolioValuationAuditResult {
 }
 
 // Timeout helper for resilient Yahoo Finance calls
-async function fetchWithTimeout<T>(promise: Promise<T>, ms = 2500, fallback: T): Promise<T> {
+async function fetchWithTimeout<T>(promise: Promise<T>, ms = 3000, fallback: T): Promise<T> {
   let timer: any;
+  const safePromise = promise.catch(() => fallback);
   const timeoutPromise = new Promise<T>((resolve) => {
     timer = setTimeout(() => resolve(fallback), ms);
   });
   try {
-    const res = await Promise.race([promise, timeoutPromise]);
+    const res = await Promise.race([safePromise, timeoutPromise]);
     clearTimeout(timer);
     return res;
   } catch (err) {
@@ -381,7 +382,9 @@ export async function runPortfolioValuationAgent(
       if (match) rootSymbol = match[0];
     }
 
-    if (!rootSymbol || rootSymbol.length > 8) continue;
+    const CURRENCY_CASH_SYMBOLS = new Set(['USD', 'GBP', 'EUR', 'CAD', 'CHF', 'AUD', 'NZD', 'JPY', 'HKD', 'SGD', 'CASH']);
+    if (CURRENCY_CASH_SYMBOLS.has(rootSymbol)) continue;
+    if (!rootSymbol || rootSymbol.length > 8 || !/^[A-Z0-9.\-=^]+$/.test(rootSymbol)) continue;
 
     const broker = pos.source || pos.broker?.name || 'IBKR';
     const curr = (pos.currency || 'USD').toUpperCase();
@@ -538,6 +541,7 @@ ${undervaluedList.length} holdings are currently trading below fair value, ${fai
     logToFile(`[ValuationAgent] DB persistence warning: ${err?.message || err}`);
   }
 
+  result.id = result.id || `val-${Date.now()}`;
   const durationSec = ((Date.now() - auditStartTime) / 1000).toFixed(1);
   logToFile(`[ValuationAgent] Valuation analysis completed in ${durationSec}s.`);
 

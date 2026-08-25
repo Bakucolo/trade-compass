@@ -76,15 +76,15 @@ export function PortfolioValuationModal({
   // On open, load latest audit or auto-run if none exist
   useEffect(() => {
     if (isOpen) {
-      if (!activeReport) {
-        if (auditHistory.length > 0 && !runMutation.isPending) {
+      if (auditHistory.length > 0) {
+        if (!activeReport) {
           setActiveReport(auditHistory[0]);
-        } else if (!runMutation.isPending) {
-          handleRunValuation();
         }
+      } else if (!isLoadingHistory && !runMutation.isPending && !activeReport) {
+        handleRunValuation();
       }
     }
-  }, [isOpen]);
+  }, [isOpen, auditHistory, isLoadingHistory]);
 
   const handleRunValuation = async () => {
     try {
