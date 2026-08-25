@@ -356,7 +356,11 @@ export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
 
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-black font-mono tracking-tight text-foreground glow-text-white">
+              <h1
+                onClick={() => onNavigateToResearch && onNavigateToResearch(selectedSymbol)}
+                className="text-2xl font-black font-mono tracking-tight text-foreground glow-text-white cursor-pointer hover:text-primary transition-colors flex items-center gap-1.5"
+                title={`Click to analyse ${selectedSymbol} in Research section`}
+              >
                 {selectedSymbol}
               </h1>
 
@@ -476,16 +480,16 @@ export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
             )}
           </Button>
 
-          {/* Open in Research Section */}
+          {/* Analyse in Research Section Button */}
           <Button
             size="sm"
             onClick={() => onNavigateToResearch && onNavigateToResearch(selectedSymbol)}
-            className="h-9 px-3.5 gap-1.5 font-bold text-xs bg-gradient-to-r from-primary to-cyan-600 hover:from-primary/90 hover:to-cyan-500 text-white shadow-md transition-all"
-            title="Open comprehensive Research Dossier"
+            className="h-9 px-4 gap-2 font-bold text-xs bg-gradient-to-r from-cyan-600 via-primary to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/35 transition-all cursor-pointer"
+            title={`Analyse ${selectedSymbol} in Research section`}
           >
-            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-            <span>Research Dossier</span>
-            <ExternalLink className="w-3 h-3 opacity-70 ml-0.5" />
+            <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+            <span>Analyse in Research</span>
+            <ExternalLink className="w-3 h-3 opacity-80 ml-0.5" />
           </Button>
 
           {/* Notes Modal */}
@@ -602,7 +606,7 @@ export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 pt-0.5">
+                  <div className="grid grid-cols-3 gap-1.5 pt-0.5">
                     <Button
                       type="button"
                       size="sm"
@@ -615,6 +619,16 @@ export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
                       )}
                     >
                       <TrendingUp className="w-3 h-3" /> Chart
+                    </Button>
+
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => onNavigateToResearch && onNavigateToResearch(searchedCleanTicker)}
+                      className="h-7 text-xs font-bold bg-gradient-to-r from-cyan-600 to-primary hover:from-cyan-500 hover:to-primary text-white gap-1 shadow-sm"
+                      title={`Analyse ${searchedCleanTicker} in Research`}
+                    >
+                      <Sparkles className="w-3 h-3 text-amber-300" /> Research
                     </Button>
 
                     <Button
@@ -747,6 +761,18 @@ export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
                           title={`Set price alert for ${item.symbol}`}
                         >
                           <Bell className="w-3.5 h-3.5" />
+                        </button>
+
+                        {/* Quick Analyse in Research button on row */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onNavigateToResearch && onNavigateToResearch(item.symbol);
+                          }}
+                          className="p-1.5 rounded-lg hover:bg-cyan-500/20 text-muted-foreground hover:text-cyan-300 opacity-40 group-hover:opacity-100 transition-all cursor-pointer"
+                          title={`Analyse ${item.symbol} in Research section`}
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </div>
