@@ -11,6 +11,8 @@ import { PerformanceLeaderboard } from './portfolio/PerformanceLeaderboard';
 import { HoldingsTable } from './portfolio/HoldingsTable';
 import { PortfolioAuditModal } from './portfolio/PortfolioAuditModal';
 import { PortfolioValuationModal } from './portfolio/PortfolioValuationModal';
+import { CriticalDefenseModal } from './portfolio/CriticalDefenseModal';
+import { PositionAdvisorModal } from './portfolio/PositionAdvisorModal';
 import { UnifiedPosition } from './portfolio/types';
 import { getCompanyStyleAndThemes } from '../services/stockThematics';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -86,6 +88,9 @@ export function BrokersPage({ onNavigateToResearch }: BrokersPageProps = {}) {
 
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [isValuationModalOpen, setIsValuationModalOpen] = useState(false);
+  const [isDefenseModalOpen, setIsDefenseModalOpen] = useState(false);
+  const [advisorPosition, setAdvisorPosition] = useState<UnifiedPosition | null>(null);
+  const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
   const [isAgentDrawerOpen, setIsAgentDrawerOpen] = useState(false);
   const { data: agentData } = useAgentActivities(10);
   const hasRunningAgent = agentData?.activities?.some(a => a.status === 'RUNNING');
@@ -402,6 +407,30 @@ export function BrokersPage({ onNavigateToResearch }: BrokersPageProps = {}) {
     ? (totals.dailyPL / (totals.netLiquidValue - totals.dailyPL)) * 100
     : 0;
 
+  // Critical Defense Count
+  const criticalCount = useMemo(() => {
+    return unifiedPositions.filter(pos => {
+      if (!pos) return false;
+      const isOption = pos.assetType === 'Option';
+      const isShort = (pos.quantity || 0) < 0;
+      const isLosing = (pos.unrealizedPL || 0) < 0;
+      
+      let isITM = false;
+      let distance = Infinity;
+      if (isOption && pos.underlyingPrice && pos.strike) {
+        distance = Math.abs((pos.underlyingPrice - pos.strike) / pos.strike) * 100;
+        const isCall = pos.optionType === 'Call' || pos.optionType === 'C';
+        isITM = isCall ? (pos.underlyingPrice > pos.strike) : (pos.underlyingPrice < pos.strike);
+      }
+
+      const isSevereEquityLoss = !isOption && ((pos.unrealizedPLPercent || 0) <= -20 || (pos.unrealizedPL || 0) <= -500);
+      const isShortOptionDanger = isOption && isShort && (isITM || distance <= 5) && isLosing;
+      const isHeavyOptionLoss = isOption && (pos.unrealizedPL || 0) <= -300;
+
+      return isSevereEquityLoss || isShortOptionDanger || isHeavyOptionLoss;
+    }).length;
+  }, [unifiedPositions]);
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       {/* Header & Controls */}
@@ -411,6 +440,28 @@ export function BrokersPage({ onNavigateToResearch }: BrokersPageProps = {}) {
           <p className="text-muted-foreground">Real-time cross-brokerage analysis</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Critical Defense Center Button (Top of Page) */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsDefenseModalOpen(true)}
+            className={cn(
+              "h-9 text-xs font-bold gap-1.5 transition-all shadow-sm",
+              criticalCount > 0
+                ? "bg-rose-500/15 text-rose-300 border-rose-500/40 hover:bg-rose-500/25 shadow-[0_0_12px_rgba(244,63,94,0.25)]"
+                : "bg-background/60 text-muted-foreground border-border/70 hover:bg-accent/40"
+            )}
+            title="Open Critical Defense Center"
+          >
+            <ShieldAlert className={cn("w-3.5 h-3.5", criticalCount > 0 ? "text-rose-400" : "text-muted-foreground")} />
+            <span>Critical Defense</span>
+            {criticalCount > 0 && (
+              <Badge className="bg-rose-500 text-white text-[10px] font-mono px-1.5 py-0 h-4 ml-0.5 animate-pulse">
+                {criticalCount}
+              </Badge>
+            )}
+          </Button>
+
           {/* Balances Collapsible Toggle Button */}
           <Button
             variant="outline"
@@ -606,6 +657,27 @@ export function BrokersPage({ onNavigateToResearch }: BrokersPageProps = {}) {
       <AgentActivityDrawer
         isOpen={isAgentDrawerOpen}
         onClose={() => setIsAgentDrawerOpen(false)}
+      />
+
+      {/* AI Position Defense Advisor Modal */}
+      <PositionAdvisorModal
+        position={advisorPosition}
+        isOpen={isAdvisorOpen}
+        onClose={() => {
+          setIsAdvisorOpen(false);
+          setAdvisorPosition(null);
+        }}
+      />
+
+      {/* Critical Position Defense Center Modal */}
+      <CriticalDefenseModal
+        isOpen={isDefenseModalOpen}
+        onClose={() => setIsDefenseModalOpen(false)}
+        positions={unifiedPositions}
+        onOpenAdvisorForPosition={(pos) => {
+          setAdvisorPosition(pos);
+          setIsAdvisorOpen(true);
+        }}
       />
 
       <div className="text-xs text-muted-foreground text-center pt-4">

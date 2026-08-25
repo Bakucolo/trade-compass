@@ -17,6 +17,8 @@ import { WatchlistCard } from './WatchlistCard';
 import { IdeasCard } from './IdeasCard';
 import { AIIdeaGeneratorModal } from './AIIdeaGeneratorModal';
 import { BuyingPowerAnalyserModal } from './portfolio/BuyingPowerAnalyserModal';
+import { CriticalDefenseModal } from './portfolio/CriticalDefenseModal';
+import { PositionAdvisorModal } from './portfolio/PositionAdvisorModal';
 import { ThemeSwitcherButton } from './ThemeSwitcherButton';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -53,6 +55,9 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
   });
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
   const [isBuyingPowerModalOpen, setIsBuyingPowerModalOpen] = useState(false);
+  const [isDefenseModalOpen, setIsDefenseModalOpen] = useState(false);
+  const [advisorPosition, setAdvisorPosition] = useState<any>(null);
+  const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
   const [isBalancesOpen, setIsBalancesOpen] = useState(false);
 
   // Queries
@@ -179,6 +184,30 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
   const netLiq = balancesData?.total?.netLiquidatingValue || 248800;
   const dayPnL = balancesData?.total?.dayPnL || 0;
 
+  // Critical Defense Count
+  const criticalCount = useMemo(() => {
+    return allPositions.filter((pos: any) => {
+      if (!pos) return false;
+      const isOption = pos.assetType === 'Option' || pos.assetType === 'OPTION';
+      const isShort = (pos.quantity || 0) < 0;
+      const isLosing = (pos.unrealizedPL || pos.totalPnL || 0) < 0;
+      
+      let isITM = false;
+      let distance = Infinity;
+      if (isOption && pos.underlyingPrice && pos.strike) {
+        distance = Math.abs((pos.underlyingPrice - pos.strike) / pos.strike) * 100;
+        const isCall = pos.optionType === 'Call' || pos.optionType === 'C';
+        isITM = isCall ? (pos.underlyingPrice > pos.strike) : (pos.underlyingPrice < pos.strike);
+      }
+
+      const isSevereEquityLoss = !isOption && (((pos.unrealizedPLPercent || pos.totalPnLPercent || 0) <= -20) || ((pos.unrealizedPL || pos.totalPnL || 0) <= -500));
+      const isShortOptionDanger = isOption && isShort && (isITM || distance <= 5) && isLosing;
+      const isHeavyOptionLoss = isOption && ((pos.unrealizedPL || pos.totalPnL || 0) <= -300);
+
+      return isSevereEquityLoss || isShortOptionDanger || isHeavyOptionLoss;
+    }).length;
+  }, [allPositions]);
+
   const isIBConnected = ibStatus?.connected ?? true;
   const hasRunningAgent = agentData?.activities?.some((a) => a.status === 'RUNNING');
 
@@ -215,20 +244,42 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
 
         {/* Header Action Controls */}
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Broker Status Badges */}
-          <div className="flex items-center gap-1.5 bg-card/70 border border-border/70 rounded-xl px-3 h-9 text-xs font-mono">
-            <span className="flex items-center gap-1 text-emerald-400">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          {/* Critical Defense Center Button (Top of Page) */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsDefenseModalOpen(true)}
+            className={cn(
+              "h-9 text-xs font-bold gap-1.5 transition-all shadow-sm",
+              criticalCount > 0
+                ? "bg-rose-500/15 text-rose-300 border-rose-500/40 hover:bg-rose-500/25 shadow-[0_0_12px_rgba(244,63,94,0.25)]"
+                : "bg-background/60 text-muted-foreground border-border/70 hover:bg-accent/40"
+            )}
+            title="Open Critical Defense Center"
+          >
+            <ShieldAlert className={cn("w-3.5 h-3.5", criticalCount > 0 ? "text-rose-400" : "text-muted-foreground")} />
+            <span>Critical Defense</span>
+            {criticalCount > 0 && (
+              <Badge className="bg-rose-500 text-white text-[10px] font-mono px-1.5 py-0 h-4 ml-0.5 animate-pulse">
+                {criticalCount}
+              </Badge>
+            )}
+          </Button>
+
+          {/* Broker Connectivity Badges */}
+          <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 bg-card/60 rounded-xl border border-border/60 text-[11px] font-mono">
+            <span className="flex items-center gap-1">
+              <span className={cn('w-2 h-2 rounded-full', isIBConnected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400')} />
               IBKR
             </span>
             <span className="text-muted-foreground">•</span>
-            <span className="flex items-center gap-1 text-emerald-400">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               Tastytrade
             </span>
             <span className="text-muted-foreground">•</span>
-            <span className={cn("flex items-center gap-1", isT212Connected ? "text-emerald-400" : "text-zinc-500")}>
-              <span className={cn("w-2 h-2 rounded-full", isT212Connected ? "bg-emerald-500" : "bg-zinc-500")} />
+            <span className="flex items-center gap-1">
+              <span className={cn('w-2 h-2 rounded-full', isT212Connected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-400')} />
               Trading 212
             </span>
           </div>
@@ -432,6 +483,27 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
         isOpen={isBuyingPowerModalOpen}
         onClose={() => setIsBuyingPowerModalOpen(false)}
         onNavigateToTrades={() => goToTab('trades')}
+      />
+
+      {/* AI Position Defense Advisor Modal */}
+      <PositionAdvisorModal
+        position={advisorPosition}
+        isOpen={isAdvisorOpen}
+        onClose={() => {
+          setIsAdvisorOpen(false);
+          setAdvisorPosition(null);
+        }}
+      />
+
+      {/* Critical Position Defense Center Modal */}
+      <CriticalDefenseModal
+        isOpen={isDefenseModalOpen}
+        onClose={() => setIsDefenseModalOpen(false)}
+        positions={allPositions}
+        onOpenAdvisorForPosition={(pos) => {
+          setAdvisorPosition(pos);
+          setIsAdvisorOpen(true);
+        }}
       />
     </div>
   );
