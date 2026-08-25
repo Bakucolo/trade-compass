@@ -30,6 +30,7 @@ import { fetchGrowthAndValuationDossier } from './services/growthValuationServic
 import { fetchInvestorRelationsDossier } from './services/investorRelationsService';
 import { generateTradeStructures } from './services/tradeStructurerService';
 import { diagnoseEconomicCycle, generateMacroStockPicks } from './services/economicCycleService';
+import { optionsTradeAgentService } from './services/optionsTradeAgentService';
 import {
   scanHoldingsAndWatchlistsForDips,
   diagnoseStockDip,
@@ -5003,6 +5004,19 @@ app.delete('/api/ideas/:id', async (req, res) => {
     res.json({ success: true, message: 'Trade idea deleted successfully.' });
   } catch (error: any) {
     logToFile(`Error deleting idea ${req.params.id}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/trades/options-agent/scan - AI Options Trade Finding Agent
+app.post('/api/trades/options-agent/scan', async (req, res) => {
+  try {
+    const filters = req.body || {};
+    logToFile(`[Options Agent] Scanning options trade opportunities (strategy: ${filters.strategyCategory || 'ALL'}, minIVP: ${filters.minIVP ?? 0})...`);
+    const result = await optionsTradeAgentService.scanOpportunities(filters);
+    res.json(result);
+  } catch (error: any) {
+    logToFile(`[Options Agent] Error scanning options trades: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });

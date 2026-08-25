@@ -70,7 +70,7 @@ const Index = () => {
       case 'alerts':
         return <AlertsPage onNavigateToResearch={handleNavigateToResearch} />;
       case 'trades':
-        return <TradesPage />;
+        return <TradesPage onNavigateToResearch={handleNavigateToResearch} />;
       case 'ideas':
         return <IdeasPage onNavigateToResearch={handleNavigateToResearch} />;
       case 'research':

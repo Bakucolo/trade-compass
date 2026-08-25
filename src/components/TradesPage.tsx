@@ -35,7 +35,6 @@ import {
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Badge } from './ui/badge';
-import { Card, CardContent } from './ui/card';
 import {
   Dialog,
   DialogContent,
@@ -45,8 +44,14 @@ import {
 } from './ui/dialog';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { OptionsTradeAgentModal } from './trades/OptionsTradeAgentModal';
+import { OptionsTradeOpportunity } from '@/services/optionsTradeAgentService';
 
-export function TradesPage() {
+interface TradesPageProps {
+  onNavigateToResearch?: (symbol: string) => void;
+}
+
+export function TradesPage({ onNavigateToResearch }: TradesPageProps = {}) {
   // Filter States
   const [search, setSearch] = useState('');
   const [broker, setBroker] = useState<string>('all');
@@ -63,6 +68,7 @@ export function TradesPage() {
   // Modal States
   const [selectedTrade, setSelectedTrade] = useState<UnifiedTrade | null>(null);
   const [isLogModalOpen, setIsLogModalOpen] = useState<boolean>(false);
+  const [isOptionsAgentModalOpen, setIsOptionsAgentModalOpen] = useState<boolean>(false);
   const [newTrade, setNewTrade] = useState<Partial<UnifiedTrade>>({
     broker: 'Manual',
     symbol: '',
@@ -164,6 +170,33 @@ export function TradesPage() {
     } catch (err: any) {
       toast.error(err.message || 'Failed to delete trade.');
     }
+  };
+
+  const handleSelectTradeToLog = (opp: OptionsTradeOpportunity) => {
+    const primaryLeg = opp.legs[0];
+    const expCompact = opp.targetExpiration.replace(/-/g, '').slice(2);
+    const strikeFormatted = (primaryLeg.strike * 1000).toString().padStart(8, '0');
+    const occSymbol = `${opp.symbol.padEnd(6, ' ')}${expCompact}${primaryLeg.optionType === 'CALL' ? 'C' : 'P'}${strikeFormatted}`;
+
+    setNewTrade({
+      broker: 'Manual',
+      symbol: occSymbol,
+      underlyingSymbol: opp.symbol,
+      assetType: 'OPTION',
+      optionType: primaryLeg.optionType,
+      strikePrice: primaryLeg.strike,
+      expiryDate: opp.targetExpiration,
+      action: primaryLeg.action === 'SELL' ? 'SELL_TO_OPEN' : 'BUY_TO_OPEN',
+      side: primaryLeg.action,
+      positionEffect: primaryLeg.action === 'SELL' ? 'SHORT' : 'LONG',
+      quantity: 1,
+      price: primaryLeg.mid,
+      totalValue: opp.netPremiumTotal,
+      valueEffect: opp.netEffect,
+      commission: 0,
+      description: `${opp.strategyName} on ${opp.symbol}`
+    });
+    setIsLogModalOpen(true);
   };
 
   const handleExportCSV = () => {
@@ -309,12 +342,26 @@ export function TradesPage() {
 
         {/* Action Controls */}
         <div className="flex items-center gap-2 flex-wrap">
+          {/* AI Options Trade Finding Agent */}
+          <Button
+            size="sm"
+            onClick={() => setIsOptionsAgentModalOpen(true)}
+            className="h-9 text-xs gap-1.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-700 hover:from-purple-500 hover:to-indigo-500 text-white font-bold shadow-lg shadow-purple-600/25 transition-all"
+            title="Scan options strategies, IV Rank / IV Percentile, and quantitative win rates"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+            <span>Options Trade Agent</span>
+            <Badge className="bg-purple-500/30 text-purple-200 text-[9px] px-1.5 py-0 font-mono font-bold border border-purple-400/40">
+              AI Strategies
+            </Badge>
+          </Button>
+
           <Button
             variant="default"
             size="sm"
             onClick={handleSync}
             disabled={syncMutation.isPending || isFetching}
-            className="h-9 text-xs gap-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold shadow-md"
+            className="h-9 text-xs gap-1.5 bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-700 hover:to-slate-800 text-white font-semibold border border-border/70 shadow-sm"
           >
             <RefreshCw className={cn("w-3.5 h-3.5", (syncMutation.isPending || isFetching) && "animate-spin")} />
             <span>{syncMutation.isPending ? 'Syncing Fills...' : 'Sync Live Fills'}</span>
@@ -1001,6 +1048,14 @@ export function TradesPage() {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Options Strategy & Trade Finding Agent Modal */}
+      <OptionsTradeAgentModal
+        isOpen={isOptionsAgentModalOpen}
+        onClose={() => setIsOptionsAgentModalOpen(false)}
+        onSelectTradeToLog={handleSelectTradeToLog}
+        onNavigateToResearch={onNavigateToResearch}
+      />
     </div>
   );
 }
