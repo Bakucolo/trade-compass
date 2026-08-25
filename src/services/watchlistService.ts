@@ -211,3 +211,100 @@ export function useRemoveSymbolFromWatchlist() {
     },
   });
 }
+
+// Bulk Add / Resolve Types
+export interface ResolvedBulkEntry {
+  rawInput: string;
+  symbol: string;
+  name: string;
+  currentPrice: number | null;
+  dayChangePercent: number | null;
+  targetPrice: number | null;
+  condition: 'ABOVE' | 'BELOW';
+  notes: string;
+  sector?: string;
+  isValid: boolean;
+  error?: string;
+}
+
+export interface ResolveBulkResponse {
+  results: ResolvedBulkEntry[];
+  parsedCount: number;
+  validCount: number;
+}
+
+// Resolve freeform text into tickers, names, prices & alert conditions
+export async function resolveBulkEntries(text: string): Promise<ResolveBulkResponse> {
+  const res = await fetch(`${API_BASE}/resolve-bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || 'Failed to resolve bulk entries');
+  }
+  return res.json();
+}
+
+// Bulk add symbols to an existing watchlist
+export async function bulkAddSymbolsToWatchlist(
+  watchlistId: string,
+  symbols: string[]
+): Promise<{ success: boolean; addedCount: number; existingCount: number; totalSymbols: number; symbols: string[] }> {
+  const res = await fetch(`${API_BASE}/${watchlistId}/symbols/bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ symbols }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || 'Failed to bulk add symbols');
+  }
+  return res.json();
+}
+
+// Bulk create a new watchlist with initial symbols
+export async function bulkCreateWatchlist(name: string, symbols: string[]): Promise<WatchlistSummary> {
+  const res = await fetch(`${API_BASE}/bulk-create`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, symbols }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || 'Failed to create watchlist');
+  }
+  return res.json();
+}
+
+export function useResolveBulkEntries() {
+  return useMutation({
+    mutationFn: (text: string) => resolveBulkEntries(text),
+  });
+}
+
+export function useBulkAddSymbolsToWatchlist() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ watchlistId, symbols }: { watchlistId: string; symbols: string[] }) =>
+      bulkAddSymbolsToWatchlist(watchlistId, symbols),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['watchlists'] });
+      queryClient.invalidateQueries({ queryKey: ['watchlistData', variables.watchlistId] });
+      queryClient.invalidateQueries({ queryKey: ['market-dips-radar'] });
+    },
+  });
+}
+
+export function useBulkCreateWatchlist() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, symbols }: { name: string; symbols: string[] }) =>
+      bulkCreateWatchlist(name, symbols),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['watchlists'] });
+      queryClient.invalidateQueries({ queryKey: ['market-dips-radar'] });
+    },
+  });
+}

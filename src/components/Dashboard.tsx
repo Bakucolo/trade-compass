@@ -38,6 +38,9 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+import { usePortfolioQuotes } from '@/services/usePortfolioQuotes';
+import { parseTrading212Ticker } from '../../server/services/trading212Service';
+
 interface DashboardProps {
   onNavigateTab?: (tab: string) => void;
   onNavigateToResearch?: (symbol: string) => void;
@@ -58,6 +61,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
   const { data: ibStatus } = useIBKRStatus();
   const { data: t212Status } = useTrading212Status();
   const { data: agentData } = useAgentActivities(5);
+  const { data: portfolioQuotes = {} } = usePortfolioQuotes();
 
   const isT212Connected = t212Status?.connected || balancesData?.brokers?.trading212?.status === 'connected' || false;
 
@@ -71,39 +75,77 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
 
   // Combine and deduplicate positions across all 3 brokers for dashboard widgets
   const allPositions = useMemo(() => {
-    const raw = [...ibkrPositions, ...tastyPositions, ...t212Positions];
-    return raw.map((p: any) => {
-      const sym = (p.underlyingSymbol || p.symbol || p.ticker || '').toUpperCase();
+    // /api/portfolio already provides the unified database holdings across all connected brokers
+    // If DB is populated, use it as primary source to prevent duplication
+    const baseList = ibkrPositions.length > 0 ? ibkrPositions : [...tastyPositions, ...t212Positions];
+    
+    // Deduplicate by broker + symbol to guarantee 1 entry per asset
+    const seenMap = new Map<string, any>();
+
+    baseList.forEach((p: any) => {
+      let rawSym = (p.underlyingSymbol || p.symbol || p.ticker || '').toUpperCase();
+      if (!rawSym) return;
+
+      // Clean symbol (e.g. FLEX_US_EQ -> FLEX, BURl_EQ -> BUR.L, APFl_EQ -> APF.L)
+      let cleanSym = rawSym;
+      if (rawSym.endsWith('_US_EQ')) {
+        cleanSym = rawSym.replace('_US_EQ', '');
+      } else if (rawSym.endsWith('_CA_EQ')) {
+        cleanSym = rawSym.replace('_CA_EQ', '') + '.TO';
+      } else if (rawSym.endsWith('L_EQ') || rawSym.endsWith('P_EQ')) {
+        cleanSym = rawSym.replace(/[LP]_EQ$/, '') + '.L';
+      } else if (rawSym.endsWith('_EQ')) {
+        cleanSym = rawSym.replace('_EQ', '');
+      }
+
+      const brokerSource = p.broker?.name || (p.source || (p.ticker ? 'Trading 212' : 'IBKR'));
+      const dedupKey = `${brokerSource}-${cleanSym}-${p.assetType || 'STK'}-${p.strikePrice || p.strike || ''}-${p.expiryDate || p.expiry || ''}`;
+
+      if (seenMap.has(dedupKey)) return;
+
       const isOption = p.assetType === 'OPTION' || p.assetType === 'Option';
       const qty = p.quantity || p.shares || 0;
       const multiplier = isOption ? 100 : 1;
       const avgCost = p.averageCost || p.averagePrice || 0;
-      const curPrice = p.currentPrice > 0 ? p.currentPrice : (p.marketValue && qty !== 0 ? Math.abs(p.marketValue / (qty * multiplier)) : avgCost);
-      const mktVal = Math.abs(p.marketValue || (qty * curPrice * multiplier) || 0);
+      let curPrice = p.currentPrice > 0 ? p.currentPrice : (p.marketValue && qty !== 0 ? Math.abs(p.marketValue / (qty * multiplier)) : avgCost);
+      let mktVal = Math.abs(p.marketValue || (qty * curPrice * multiplier) || 0);
+
+      // Look up live session quote
+      const quote = portfolioQuotes[cleanSym] || portfolioQuotes[rawSym];
 
       // Unrealized Total Return
       let unPnL = p.unrealizedPnL ?? p.unrealizedPL ?? p.ppl ?? (mktVal - (qty * avgCost * multiplier));
       const costBasis = Math.abs(mktVal - unPnL) || (qty * avgCost * multiplier) || 1;
       let unPnLPct = p.unrealizedPnLPercent ?? p.unrealizedPLPercent ?? (costBasis > 0 ? (unPnL / costBasis) * 100 : 0);
 
-      // Day Performance
+      // Day Performance (strictly 1-day session)
       let dPnL = p.dayPnL ?? p.dayChange ?? p.dailyPnL ?? 0;
       let dPnLPct = p.dayPnLPercent ?? p.dayChangePercent ?? p.dailyChangePercent ?? 0;
 
-      // Cross-fill missing day figures if one is present
+      // If day figures were 0 in DB (e.g. Trading 212 or off-hours) and we have a live quote:
+      if (quote && (dPnL === 0 || dPnLPct === 0)) {
+        const isUKPence = quote.currency === 'GBp' || (p.currency === 'GBP' && cleanSym.endsWith('.L'));
+        const nativeChange = isUKPence ? (quote.change / 100) : quote.change;
+        if (dPnL === 0 && nativeChange !== 0 && qty !== 0) {
+          dPnL = nativeChange * qty * multiplier;
+        }
+        if (dPnLPct === 0 && quote.changesPercentage !== undefined && !isNaN(quote.changesPercentage)) {
+          dPnLPct = quote.changesPercentage;
+        }
+      }
+
+      // If one of dPnL or dPnLPct is non-zero, cross-fill
       if (dPnL === 0 && dPnLPct !== 0 && mktVal > 0) {
         dPnL = mktVal * (dPnLPct / 100);
       } else if (dPnLPct === 0 && dPnL !== 0 && mktVal > 0) {
         dPnLPct = (dPnL / mktVal) * 100;
       }
 
-      const brokerSource = p.broker?.name || (p.source || (p.ticker ? 'Trading 212' : 'IBKR'));
-
-      return {
-        id: p.id || `${sym}-${brokerSource}`,
-        symbol: sym,
-        name: p.description || p.name || `${sym} Holding`,
-        description: p.description || p.name || `${sym} Holding`,
+      seenMap.set(dedupKey, {
+        id: p.id || `${cleanSym}-${brokerSource}`,
+        symbol: cleanSym,
+        name: quote?.name || p.description || p.name || `${cleanSym} Holding`,
+        description: quote?.name || p.description || p.name || `${cleanSym} Holding`,
         quantity: qty,
         averageCost: avgCost,
         currentPrice: curPrice,
@@ -120,15 +162,17 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
         unrealizedPLPercent: unPnLPct,
         source: brokerSource,
         assetType: isOption ? 'Option' : 'Stock',
-        currency: p.currency || 'USD',
-        underlyingSymbol: p.underlyingSymbol || sym,
+        currency: p.currency || (quote?.currency === 'GBp' ? 'GBP' : quote?.currency) || 'USD',
+        underlyingSymbol: p.underlyingSymbol || cleanSym,
         underlyingPrice: p.underlyingPrice || curPrice || 0,
         strike: p.strikePrice || p.strike || undefined,
         optionType: p.optionType || undefined,
         expiry: p.expiryDate || p.expiry || undefined,
-      };
+      });
     });
-  }, [ibkrPositions, tastyPositions, t212Positions]);
+
+    return Array.from(seenMap.values());
+  }, [ibkrPositions, tastyPositions, t212Positions, portfolioQuotes]);
 
   const netLiq = balancesData?.total?.netLiquidatingValue || 248800;
   const dayPnL = balancesData?.total?.dayPnL || 0;

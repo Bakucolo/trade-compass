@@ -210,3 +210,34 @@ export function useDeleteAlert() {
     },
   });
 }
+
+export async function bulkCreateAlerts(
+  alerts: Array<{
+    symbol: string;
+    targetPrice: number;
+    condition?: 'ABOVE' | 'BELOW';
+    notes?: string;
+  }>
+): Promise<{ success: boolean; createdCount: number; alerts: PriceAlert[] }> {
+  const res = await fetch(`${API_BASE}/bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ alerts }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to create bulk alerts');
+  }
+  return res.json();
+}
+
+export function useBulkCreateAlerts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (alerts: Array<{ symbol: string; targetPrice: number; condition?: 'ABOVE' | 'BELOW'; notes?: string }>) =>
+      bulkCreateAlerts(alerts),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+    },
+  });
+}

@@ -16,7 +16,8 @@ import {
   Wallet,
   Bot,
   Sparkles,
-  Briefcase
+  Briefcase,
+  ShieldCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAlerts } from '@/services/alertService';
@@ -34,6 +35,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { icon: LayoutDashboard, label: 'Dashboard', id: 'dashboard' },
   { icon: Wallet, label: 'Portfolio', id: 'portfolio' },
+  { icon: ShieldCheck, label: 'Scorecards', id: 'scorecards' },
   { icon: Briefcase, label: 'Management', id: 'management' },
   { icon: Globe, label: 'Macro', id: 'macro' },
   { icon: CandlestickChart, label: 'Graphs', id: 'graphs' },
@@ -160,23 +162,8 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
         </div>
 
         {/* Stylings & Theme Switcher Button */}
-        <div className="px-2 pb-2">
+        <div className="px-2 pb-4">
           <ThemeSwitcherButton collapsed={collapsed} />
-        </div>
-
-        {/* User section */}
-        <div className="p-4 border-t border-sidebar-border">
-          <div className={cn("flex items-center gap-3", collapsed && "justify-center")}>
-            <div className="w-8 h-8 rounded-full bg-sidebar-accent flex items-center justify-center">
-              <span className="text-sm font-medium text-sidebar-foreground">JD</span>
-            </div>
-            {!collapsed && (
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-sidebar-foreground truncate">John Doe</p>
-                <p className="text-xs text-muted-foreground truncate">Pro Account</p>
-              </div>
-            )}
-          </div>
         </div>
       </aside>
 

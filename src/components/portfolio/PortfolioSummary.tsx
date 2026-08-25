@@ -467,6 +467,113 @@ export function PortfolioSummary({
         </div>
       </Card>
 
+      {/* ================= 4-ACCOUNT INDIVIDUAL BALANCES MATRIX ================= */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* ACCOUNT 1: IBKR ISA */}
+        <div className="p-4 rounded-2xl bg-slate-950/50 border border-amber-500/30 hover:border-amber-500/60 transition-all shadow-md flex flex-col justify-between group">
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+                <span className="text-xs font-bold text-foreground">IBKR ISA</span>
+              </div>
+              <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/40 text-[9px] font-mono font-bold">
+                TAX-FREE (GBP)
+              </Badge>
+            </div>
+            <div className={cn("text-xl font-black font-mono text-amber-300", isPrivacyMode && "blur-sm")}>
+              {formatCurr(ibkrAccounts.find(a => a.accountKey === 'ibkr_isa' || a.accountNumber?.includes('ISA'))?.netLiquidatingValue ?? (ibkrTotalNetCombined * 0.4))}
+            </div>
+            <div className="text-[11px] text-muted-foreground flex items-center justify-between font-mono pt-1">
+              <span>Stocks & Shares ISA</span>
+              <span className="text-emerald-400 font-bold">{ibkrAccounts.find(a => a.accountKey === 'ibkr_isa')?.equitiesCount ?? 'Cash Equities'}</span>
+            </div>
+          </div>
+          <div className="pt-2 mt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-muted-foreground font-mono">
+            <span>Wrapper: UK ISA</span>
+            <span className="text-foreground font-bold">No Cap Gains Tax</span>
+          </div>
+        </div>
+
+        {/* ACCOUNT 2: IBKR GIA */}
+        <div className="p-4 rounded-2xl bg-slate-950/50 border border-purple-500/30 hover:border-purple-500/60 transition-all shadow-md flex flex-col justify-between group">
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-purple-400" />
+                <span className="text-xs font-bold text-foreground">IBKR GIA</span>
+              </div>
+              <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/40 text-[9px] font-mono font-bold">
+                MARGIN (USD)
+              </Badge>
+            </div>
+            <div className={cn("text-xl font-black font-mono text-purple-300", isPrivacyMode && "blur-sm")}>
+              {formatCurr(ibkrAccounts.find(a => a.accountKey === 'ibkr_gia' || a.accountNumber?.includes('GIA'))?.netLiquidatingValue ?? (ibkrTotalNetCombined * 0.6))}
+            </div>
+            <div className="text-[11px] text-muted-foreground flex items-center justify-between font-mono pt-1">
+              <span>Global Margin & Options</span>
+              <span className="text-cyan-300 font-bold">Options & Equities</span>
+            </div>
+          </div>
+          <div className="pt-2 mt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-muted-foreground font-mono">
+            <span>Buying Power:</span>
+            <span className="text-cyan-300 font-bold">{formatCurr(ibkrAccounts.find(a => a.accountKey === 'ibkr_gia')?.buyingPower ?? (ibkrBP))}</span>
+          </div>
+        </div>
+
+        {/* ACCOUNT 3: TASTYTRADE MARGIN */}
+        <div className="p-4 rounded-2xl bg-slate-950/50 border border-rose-500/30 hover:border-rose-500/60 transition-all shadow-md flex flex-col justify-between group">
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-400" />
+                <span className="text-xs font-bold text-foreground">Tastytrade Margin</span>
+              </div>
+              <Badge className="bg-rose-500/20 text-rose-300 border-rose-500/40 text-[9px] font-mono font-bold">
+                DERIVATIVES (USD)
+              </Badge>
+            </div>
+            <div className={cn("text-xl font-black font-mono text-rose-300", isPrivacyMode && "blur-sm")}>
+              {formatCurr(tastyNet)}
+            </div>
+            <div className="text-[11px] text-muted-foreground flex items-center justify-between font-mono pt-1">
+              <span>Options & Derivatives</span>
+              <span className="text-purple-300 font-bold">{tastyOptCount} Options</span>
+            </div>
+          </div>
+          <div className="pt-2 mt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-muted-foreground font-mono">
+            <span>Deriv BP:</span>
+            <span className="text-amber-300 font-bold">{formatCurr(tastyDerivBP)}</span>
+          </div>
+        </div>
+
+        {/* ACCOUNT 4: TRADING 212 ISA */}
+        <div className="p-4 rounded-2xl bg-slate-950/50 border border-blue-500/30 hover:border-blue-500/60 transition-all shadow-md flex flex-col justify-between group">
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-400" />
+                <span className="text-xs font-bold text-foreground">Trading 212 ISA</span>
+              </div>
+              <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/40 text-[9px] font-mono font-bold">
+                TAX-FREE (GBP)
+              </Badge>
+            </div>
+            <div className={cn("text-xl font-black font-mono text-blue-300", isPrivacyMode && "blur-sm")}>
+              {formatCurr(t212NetUSD)}
+            </div>
+            <div className="text-[11px] text-muted-foreground flex items-center justify-between font-mono pt-1">
+              <span>{formatNativeCurr(t212NetGBP, 'GBP')} Native</span>
+              <span className="text-emerald-300 font-bold">{t212EqCount} Holdings</span>
+            </div>
+          </div>
+          <div className="pt-2 mt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-muted-foreground font-mono">
+            <span>Cash:</span>
+            <span className="text-foreground font-bold">{formatNativeCurr(t212CashGBP, 'GBP')}</span>
+          </div>
+        </div>
+      </div>
+
       {/* Dedicated Comprehensive Broker Balances Hub */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* BROKER 1: INTERACTIVE BROKERS (WITH ACCOUNT SWITCHER) */}
@@ -480,7 +587,7 @@ export function PortfolioSummary({
                     <Wallet className="w-4 h-4 text-orange-400" /> Interactive Brokers
                   </span>
                   <Badge className="bg-orange-500/20 text-orange-300 border-orange-500/40 text-[10px] px-2 font-mono">
-                    {activeIbkrAcct?.accountNumber || 'IBKR Account'}
+                    {activeIbkrAcct?.accountNumber || 'IBKR Combined'}
                   </Badge>
                   {activeIbkrAcct?.accountType && (
                     <Badge variant="secondary" className="text-[10px] bg-secondary/50">
@@ -488,7 +595,7 @@ export function PortfolioSummary({
                     </Badge>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground">Multi-Currency Global Equities & Options</p>
+                <p className="text-xs text-muted-foreground">Multi-Account Hub: ISA (Tax-Free) & GIA (Margin)</p>
               </div>
 
               <div className="flex items-center gap-2">
@@ -533,7 +640,7 @@ export function PortfolioSummary({
                         : "text-muted-foreground hover:text-foreground"
                     )}
                   >
-                    <span>{acct.nickname || acct.accountNumber}</span>
+                    <span>{acct.nickname || acct.name || acct.accountNumber}</span>
                     <Badge variant="outline" className="text-[9px] px-1 py-0 border-white/20">
                       {acct.baseCurrency || 'USD'}
                     </Badge>

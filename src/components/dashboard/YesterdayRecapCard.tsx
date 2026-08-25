@@ -32,40 +32,24 @@ export function YesterdayRecapCard({
   onNavigateToPortfolio,
   onNavigateToResearch,
 }: YesterdayRecapCardProps) {
-  // Check if any position has active daily P&L
-  const hasActiveDayData = positions.some(
-    (p) => (p.dayPnL && p.dayPnL !== 0) || (p.dayChange && p.dayChange !== 0) || (p.dayChangePercent && p.dayChangePercent !== 0)
-  );
-
-  // Compute normalized performance items
+  // Compute normalized session performance items (strictly 1-day/overnight session)
   const normalizedPositions = positions.map((p) => {
     const sym = (p.underlyingSymbol || p.symbol || '').toUpperCase();
     const mktVal = Math.abs(p.marketValue || 0);
 
-    let returnDollar = 0;
-    let returnPct = 0;
-    let isDayBasis = false;
+    let returnDollar = p.dayPnL ?? p.dayChange ?? p.dailyPnL ?? 0;
+    let returnPct = p.dayPnLPercent ?? p.dayChangePercent ?? p.dailyChangePercent ?? 0;
 
-    const dDollar = p.dayPnL ?? p.dayChange ?? p.dailyPnL ?? 0;
-    const dPct = p.dayPnLPercent ?? p.dayChangePercent ?? p.dailyChangePercent ?? 0;
-
-    if (hasActiveDayData && (dDollar !== 0 || dPct !== 0)) {
-      returnDollar = dDollar !== 0 ? dDollar : (mktVal > 0 ? (mktVal * (dPct / 100)) : 0);
-      returnPct = dPct !== 0 ? dPct : (mktVal > 0 ? (returnDollar / mktVal) * 100 : 0);
-      isDayBasis = true;
-    } else {
-      // If day figures are 0 (e.g. weekend or market closed), use active unrealized PnL
-      returnDollar = p.unrealizedPnL ?? p.unrealizedPL ?? 0;
-      returnPct = p.unrealizedPnLPercent ?? p.unrealizedPLPercent ?? (mktVal > 0 ? (returnDollar / mktVal) * 100 : 0);
-      isDayBasis = false;
+    // Cross-fill if only one metric is available
+    if (returnDollar === 0 && returnPct !== 0 && mktVal > 0) {
+      returnDollar = mktVal * (returnPct / 100);
+    } else if (returnPct === 0 && returnDollar !== 0 && mktVal > 0) {
+      returnPct = (returnDollar / mktVal) * 100;
     }
 
     // Sign consistency & percentage safety
     if (returnDollar < 0 && returnPct > 0) returnPct = -returnPct;
     if (returnDollar > 0 && returnPct < 0) returnPct = Math.abs(returnPct);
-    if (returnPct === 0 && returnDollar !== 0 && mktVal > 0) {
-      returnPct = (returnDollar / mktVal) * 100;
-    }
 
     return {
       symbol: sym,
@@ -75,30 +59,31 @@ export function YesterdayRecapCard({
       marketValue: mktVal,
       returnDollar,
       returnPct,
-      isDayBasis,
       currency: p.currency || 'USD',
     };
   });
 
-  // Top positive driver (highest positive return)
-  const positiveGainers = [...normalizedPositions]
-    .filter((p) => p.returnDollar > 0 || p.returnPct > 0)
-    .sort((a, b) => b.returnDollar - a.returnDollar);
-  const topGainer = positiveGainers[0] || normalizedPositions.sort((a, b) => b.returnDollar - a.returnDollar)[0] || null;
+  // Filter advancing and declining positions in current/prior session
+  const advancers = normalizedPositions.filter((p) => p.returnDollar > 0.001 || p.returnPct > 0.001);
+  const decliners = normalizedPositions.filter((p) => p.returnDollar < -0.001 || p.returnPct < -0.001);
+  const flatCount = normalizedPositions.length - advancers.length - decliners.length;
 
-  // Biggest negative drag (lowest negative return)
-  const negativeLosers = [...normalizedPositions]
-    .filter((p) => p.returnDollar < 0 || p.returnPct < 0)
-    .sort((a, b) => a.returnDollar - b.returnDollar);
-  const topLoser = negativeLosers[0] || (normalizedPositions.length > 1 ? [...normalizedPositions].sort((a, b) => a.returnDollar - b.returnDollar)[0] : null);
+  // Top positive driver (highest session dollar gain or percentage)
+  const topGainer = advancers.length > 0
+    ? [...advancers].sort((a, b) => b.returnDollar - a.returnDollar)[0]
+    : null;
 
-  // Advancing vs Declining
-  const advancers = normalizedPositions.filter((p) => p.returnDollar > 0 || p.returnPct > 0);
-  const decliners = normalizedPositions.filter((p) => p.returnDollar < 0 || p.returnPct < 0);
-  const totalCount = normalizedPositions.length || 1;
-  const advancePercent = Math.min(100, Math.max(0, Math.round((advancers.length / totalCount) * 100)));
+  // Biggest negative drag (lowest session dollar loss)
+  const topLoser = decliners.length > 0
+    ? [...decliners].sort((a, b) => a.returnDollar - b.returnDollar)[0]
+    : null;
 
-  const isNetPositive = yesterdayPnL >= 0 || (topGainer?.returnDollar ?? 0) >= 0;
+  const totalActiveMovers = advancers.length + decliners.length;
+  const advancePercent = totalActiveMovers > 0
+    ? Math.min(100, Math.max(0, Math.round((advancers.length / totalActiveMovers) * 100)))
+    : 50;
+
+  const isNetPositive = yesterdayPnL > 0 || (yesterdayPnL === 0 && advancers.length >= decliners.length);
 
   const fmtCurrency = (val: number, curr = 'USD') => {
     const sym = curr === 'GBP' ? '£' : '$';
@@ -123,7 +108,7 @@ export function YesterdayRecapCard({
               Yesterday & Overnight Market Pulse
             </CardTitle>
             <p className="text-[11px] text-muted-foreground">
-              {hasActiveDayData ? 'Prior session performance & top moving drivers' : 'Core performance drivers & market momentum'}
+              Prior session performance & top moving drivers
             </p>
           </div>
         </div>
@@ -160,7 +145,7 @@ export function YesterdayRecapCard({
       <CardContent className="p-5 space-y-4">
         {/* Top Driver vs Biggest Drag Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {/* Top MVP Driver */}
+          {/* Top Driver */}
           {topGainer ? (
             <div
               onClick={() => onNavigateToResearch && onNavigateToResearch(topGainer.symbol)}
@@ -176,7 +161,7 @@ export function YesterdayRecapCard({
                       {topGainer.symbol}
                     </span>
                     <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 text-[9px] px-1 py-0 h-4 uppercase">
-                      {topGainer.isDayBasis ? 'Top Driver' : 'Portfolio MVP'}
+                      Top Driver
                     </Badge>
                   </div>
                   <p className="text-[11px] text-muted-foreground truncate max-w-[120px]">
@@ -196,7 +181,7 @@ export function YesterdayRecapCard({
             </div>
           ) : (
             <div className="p-3.5 rounded-xl bg-accent/20 border border-border/40 text-center text-xs text-muted-foreground flex items-center justify-center h-16">
-              Scanning portfolio holdings...
+              No advancing positions in session
             </div>
           )}
 
@@ -222,10 +207,7 @@ export function YesterdayRecapCard({
                 </div>
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <span className={cn(
-                      "font-mono font-black text-xs group-hover/card:text-primary transition-colors",
-                      topLoser.returnDollar < 0 ? "text-foreground" : "text-foreground"
-                    )}>
+                    <span className="font-mono font-black text-xs group-hover/card:text-primary transition-colors text-foreground">
                       {topLoser.symbol}
                     </span>
                     <Badge className={cn(
@@ -234,7 +216,7 @@ export function YesterdayRecapCard({
                         ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
                         : "bg-amber-500/20 text-amber-300 border-amber-500/40"
                     )}>
-                      {topLoser.returnDollar < 0 ? 'Lagging Drag' : 'Laggard'}
+                      Lagging Drag
                     </Badge>
                   </div>
                   <p className="text-[11px] text-muted-foreground truncate max-w-[120px]">
@@ -260,7 +242,7 @@ export function YesterdayRecapCard({
             </div>
           ) : (
             <div className="p-3.5 rounded-xl bg-accent/20 border border-border/40 text-center text-xs text-muted-foreground flex items-center justify-center h-16">
-              Scanning portfolio holdings...
+              No declining positions in session
             </div>
           )}
         </div>
@@ -272,10 +254,16 @@ export function YesterdayRecapCard({
               <Activity className="w-3 h-3 text-primary" /> Portfolio Breadth Barometer
             </span>
             <div className="flex items-center gap-2 font-mono font-bold text-[11px]">
-              <span className="text-emerald-400">{advancers.length} Positive</span>
+              <span className="text-emerald-400">{advancers.length} Advancing</span>
               <span className="text-muted-foreground">•</span>
-              <span className="text-rose-400">{decliners.length} Negative</span>
-              <span className="text-muted-foreground">({advancePercent}% Gain Ratio)</span>
+              <span className="text-rose-400">{decliners.length} Declining</span>
+              {flatCount > 0 && (
+                <>
+                  <span className="text-muted-foreground">•</span>
+                  <span className="text-muted-foreground">{flatCount} Flat</span>
+                </>
+              )}
+              <span className="text-muted-foreground">({advancePercent}% Advance Ratio)</span>
             </div>
           </div>
 
@@ -283,12 +271,12 @@ export function YesterdayRecapCard({
             <div
               className="h-full bg-emerald-500 transition-all duration-500"
               style={{ width: `${Math.max(2, advancePercent)}%` }}
-              title={`${advancePercent}% Positive Positions`}
+              title={`${advancePercent}% Advancing Positions`}
             />
             <div
               className="h-full bg-rose-500 transition-all duration-500"
               style={{ width: `${Math.max(2, 100 - advancePercent)}%` }}
-              title={`${100 - advancePercent}% Negative Positions`}
+              title={`${100 - advancePercent}% Declining Positions`}
             />
           </div>
         </div>

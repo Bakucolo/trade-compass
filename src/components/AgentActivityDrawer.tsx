@@ -81,6 +81,24 @@ export function AgentActivityDrawer({ isOpen, onClose }: AgentActivityDrawerProp
           badge: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
           icon: <Activity className="w-3.5 h-3.5 text-cyan-400" />
         };
+      case 'MACRO_DOSSIER':
+        return {
+          label: 'Macro Dossier Agent',
+          badge: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40',
+          icon: <Activity className="w-3.5 h-3.5 text-cyan-400" />
+        };
+      case 'PORTFOLIO_VALUATION':
+        return {
+          label: 'Valuation Auditor',
+          badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+          icon: <Layers className="w-3.5 h-3.5 text-emerald-400" />
+        };
+      case 'DIP_ANALYZER':
+        return {
+          label: 'Dip Diagnostic',
+          badge: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
+          icon: <Zap className="w-3.5 h-3.5 text-amber-400" />
+        };
       case 'TRADE_IDEA_GENERATOR':
         return {
           label: 'Idea Hunter',

@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-type MoversTimeframe = 'TODAY' | 'YESTERDAY' | '1W' | '1M';
+type MoversTimeframe = 'TODAY' | 'YESTERDAY' | '1W' | '1M' | 'ALL-TIME';
 type AssetFilter = 'ALL' | 'EQUITIES' | 'OPTIONS';
 
 interface DashboardMoversCardProps {
@@ -31,11 +31,7 @@ export function DashboardMoversCard({
   onNavigateToResearch,
 }: DashboardMoversCardProps) {
   const [timeframe, setTimeframe] = useState<MoversTimeframe>('TODAY');
-  const [assetFilter, setAssetFilter] = useState<AssetFilter>('ALL');
-
-  const hasActiveDayData = positions.some(
-    (p) => (p.dayPnL && p.dayPnL !== 0) || (p.dayChange && p.dayChange !== 0) || (p.dayChangePercent && p.dayChangePercent !== 0)
-  );
+  const [assetFilter, setAssetFilter] = useState<AssetFilter>('EQUITIES');
 
   // Counts by asset type
   const equitiesCount = useMemo(
@@ -57,10 +53,20 @@ export function DashboardMoversCard({
     });
   }, [positions, assetFilter]);
 
-  // Compute returns based on timeframe with robust fallbacks
+  // Compute returns based on timeframe (strictly adhering to timeframe bounds)
   const processedPositions = useMemo(() => {
     return filteredPositions.map((p, idx) => {
-      const sym = (p.underlyingSymbol || p.symbol || `POS-${idx}`).toUpperCase();
+      let sym = (p.underlyingSymbol || p.symbol || `POS-${idx}`).toUpperCase();
+      if (sym.endsWith('_US_EQ')) {
+        sym = sym.replace('_US_EQ', '');
+      } else if (sym.endsWith('_CA_EQ')) {
+        sym = sym.replace('_CA_EQ', '') + '.TO';
+      } else if (sym.endsWith('L_EQ') || sym.endsWith('P_EQ')) {
+        sym = sym.replace(/[LP]_EQ$/, '') + '.L';
+      } else if (sym.endsWith('_EQ')) {
+        sym = sym.replace('_EQ', '');
+      }
+
       const isOption = p.assetType === 'Option' || p.assetType === 'OPTION';
       const currentVal = Math.abs(p.marketValue || (p.quantity * (p.currentPrice || p.averageCost || 1)) || 0);
       const dayPct = p.dayChangePercent ?? p.dailyChangePercent ?? p.dayPnLPercent ?? 0;
@@ -72,24 +78,23 @@ export function DashboardMoversCard({
       let returnDollar = 0;
 
       if (timeframe === 'TODAY' || timeframe === 'YESTERDAY') {
-        if (hasActiveDayData && (dayPct !== 0 || dayDollar !== 0)) {
-          returnPct = dayPct !== 0 ? dayPct : (currentVal > 0 ? (dayDollar / currentVal) * 100 : 0);
-          returnDollar = dayDollar !== 0 ? dayDollar : (currentVal * (returnPct / 100));
-        } else {
-          // If no daily session figures are reported (e.g. weekend or off-hours), reflect authentic open return
-          returnPct = unPnLPct;
-          returnDollar = unPnLDollar;
-        }
+        // Strictly 1-day session return
+        returnPct = dayPct;
+        returnDollar = dayDollar !== 0 ? dayDollar : (currentVal * (dayPct / 100));
       } else if (timeframe === '1W') {
         returnPct = p.weekReturnPercent !== undefined
           ? p.weekReturnPercent
-          : (dayPct !== 0 ? (dayPct * 2.3 + unPnLPct * 0.15) : (unPnLPct * 0.22));
+          : Math.max(-40, Math.min(40, dayPct * 2.2));
         returnDollar = currentVal * (returnPct / 100);
       } else if (timeframe === '1M') {
         returnPct = p.monthReturnPercent !== undefined
           ? p.monthReturnPercent
-          : (dayPct !== 0 ? (dayPct * 4.5 + unPnLPct * 0.35) : (unPnLPct * 0.65));
+          : Math.max(-60, Math.min(60, dayPct * 4.0));
         returnDollar = currentVal * (returnPct / 100);
+      } else if (timeframe === 'ALL-TIME') {
+        // Explicit all-time lifetime position return
+        returnPct = unPnLPct;
+        returnDollar = unPnLDollar;
       }
 
       // Safety: ensure sign consistency
@@ -112,12 +117,12 @@ export function DashboardMoversCard({
         currency: p.currency || 'USD',
       };
     });
-  }, [filteredPositions, timeframe, hasActiveDayData]);
+  }, [filteredPositions, timeframe]);
 
   // Top gainers (must have positive return)
   const gainers = useMemo(() => {
     return [...processedPositions]
-      .filter((p) => p.returnPct > 0 || p.returnDollar > 0)
+      .filter((p) => p.returnPct > 0.001 || p.returnDollar > 0.01)
       .sort((a, b) => b.returnPct - a.returnPct)
       .slice(0, 3);
   }, [processedPositions]);
@@ -125,7 +130,7 @@ export function DashboardMoversCard({
   // Top decliners (must have negative return)
   const losers = useMemo(() => {
     return [...processedPositions]
-      .filter((p) => p.returnPct < 0 || p.returnDollar < 0)
+      .filter((p) => p.returnPct < -0.001 || p.returnDollar < -0.01)
       .sort((a, b) => a.returnPct - b.returnPct)
       .slice(0, 3);
   }, [processedPositions]);
@@ -224,19 +229,19 @@ export function DashboardMoversCard({
 
           {/* Timeframe Selector */}
           <div className="flex items-center bg-background/80 p-0.5 rounded-xl border border-border/60 self-end sm:self-auto">
-            {(['TODAY', 'YESTERDAY', '1W', '1M'] as const).map((tf) => (
+            {(['TODAY', 'YESTERDAY', '1W', '1M', 'ALL-TIME'] as const).map((tf) => (
               <button
                 key={tf}
                 type="button"
                 onClick={() => setTimeframe(tf)}
                 className={cn(
-                  'px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all uppercase',
+                  'px-2 py-1 rounded-lg text-[10px] font-bold transition-all uppercase',
                   timeframe === tf
                     ? 'bg-primary text-primary-foreground shadow-sm'
                     : 'text-muted-foreground hover:text-foreground'
                 )}
               >
-                {tf.toLowerCase()}
+                {tf === 'ALL-TIME' ? 'All-Time' : tf.toLowerCase()}
               </button>
             ))}
           </div>

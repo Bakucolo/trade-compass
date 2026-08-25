@@ -42,6 +42,7 @@ import {
 import { IdeaModal } from './IdeaModal';
 import { AIIdeaGeneratorModal } from './AIIdeaGeneratorModal';
 import { IdeaDetailModal } from './IdeaDetailModal';
+import { TradeStructureModal } from './TradeStructureModal';
 import {
   MARKET_THEMES,
   DEFAULT_THEME,
@@ -71,6 +72,7 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
   const [isWriteModalOpen, setIsWriteModalOpen] = useState(false);
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
   const [selectedIdeaForDetail, setSelectedIdeaForDetail] = useState<TradeIdea | null>(null);
+  const [selectedIdeaForStructure, setSelectedIdeaForStructure] = useState<TradeIdea | null>(null);
   const [ideaToEdit, setIdeaToEdit] = useState<TradeIdea | null>(null);
 
   const { data: rawIdeas = [], isLoading, isError, refetch } = useTradeIdeas({
@@ -599,6 +601,15 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
         }}
         onNavigateResearch={onNavigateToResearch}
       />
+
+      {/* AI Trade Structuring Modal */}
+      {selectedIdeaForStructure && (
+        <TradeStructureModal
+          isOpen={Boolean(selectedIdeaForStructure)}
+          onClose={() => setSelectedIdeaForStructure(null)}
+          idea={selectedIdeaForStructure}
+        />
+      )}
     </div>
   );
 
@@ -802,15 +813,28 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
                 )}
               </div>
 
-              {/* Quick Edit Action on Card */}
-              <button
-                type="button"
-                onClick={(e) => handleEditClick(idea, e)}
-                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-accent rounded text-muted-foreground hover:text-foreground"
-                title="Edit Idea"
-              >
-                <Edit3 className="w-3.5 h-3.5" />
-              </button>
+              {/* Quick Actions on Card */}
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedIdeaForStructure(idea);
+                  }}
+                  className="p-1 hover:bg-purple-500/20 rounded text-purple-300 hover:text-purple-200 transition-colors"
+                  title="Structure Trade with AI (Stocks, Options, Collars, Spreads)"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => handleEditClick(idea, e)}
+                  className="p-1 hover:bg-accent rounded text-muted-foreground hover:text-foreground"
+                  title="Edit Idea"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
 
             {/* Tag Chips */}

@@ -29,10 +29,15 @@ import {
   DollarSign,
   PieChart,
   Info,
+  Bookmark,
+  FolderPlus,
+  ListPlus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDipRadar, useSavedDipReports, DipCandidateItem, BuyScoreBreakdown } from '@/services/dipRadarService';
 import { DipDiagnosticModal } from './DipDiagnosticModal';
+import { AddToWatchlistModal } from '@/components/AddToWatchlistModal';
+import { BulkSaveDipsToWatchlistModal } from './BulkSaveDipsToWatchlistModal';
 
 type FilterTab = 'ALL' | 'SAVED' | 'HOLDINGS' | 'WATCHLIST' | 'HIGH_SCORE';
 type SensitivityFilter = 'ALL' | 'DAY_DROP' | 'DEEP_PULLBACK';
@@ -106,6 +111,8 @@ export function DipOpportunityRadarCard({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSymbolForModal, setSelectedSymbolForModal] = useState<string | null>(null);
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
+  const [watchlistTargetStock, setWatchlistTargetStock] = useState<{ symbol: string; name?: string } | null>(null);
+  const [isBulkSaveModalOpen, setIsBulkSaveModalOpen] = useState(false);
 
   // Fetch Radar scan data
   const { data: radarData, isLoading, isFetching, refetch } = useDipRadar();
@@ -229,6 +236,18 @@ export function DipOpportunityRadarCard({
                 </span>
               </div>
             )}
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsBulkSaveModalOpen(true)}
+              disabled={dips.length === 0}
+              className="h-8 text-xs gap-1.5 border-purple-500/30 text-purple-300 hover:bg-purple-500/10 bg-purple-950/20 shadow-sm"
+              title="Save selected radar dips into a watchlist"
+            >
+              <Bookmark className="w-3.5 h-3.5 text-purple-400" />
+              <span>Save Dips to Watchlist</span>
+            </Button>
 
             <Button
               variant="outline"
@@ -563,6 +582,21 @@ export function DipOpportunityRadarCard({
                     )}
 
                     <div className="flex items-center gap-1.5">
+                      {/* Save to Watchlist Button */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setWatchlistTargetStock({ symbol: item.symbol, name: item.name });
+                        }}
+                        className="h-7 px-2 text-[10px] font-semibold text-muted-foreground hover:text-purple-300 hover:bg-purple-500/10 gap-1"
+                        title={`Save ${item.symbol} to a watchlist`}
+                      >
+                        <Bookmark className="w-3 h-3 text-purple-400" />
+                        <span className="hidden sm:inline">+Watchlist</span>
+                      </Button>
+
                       {onNavigateToResearch && (
                         <Button
                           variant="ghost"
@@ -633,6 +667,23 @@ export function DipOpportunityRadarCard({
           onNavigateToResearch={onNavigateToResearch}
         />
       )}
+
+      {/* Single Stock Add To Watchlist Modal */}
+      {watchlistTargetStock && (
+        <AddToWatchlistModal
+          isOpen={Boolean(watchlistTargetStock)}
+          onClose={() => setWatchlistTargetStock(null)}
+          symbol={watchlistTargetStock.symbol}
+          companyName={watchlistTargetStock.name}
+        />
+      )}
+
+      {/* Bulk Save Dips to Watchlist Modal */}
+      <BulkSaveDipsToWatchlistModal
+        isOpen={isBulkSaveModalOpen}
+        onClose={() => setIsBulkSaveModalOpen(false)}
+        dips={filteredDips}
+      />
     </Card>
   );
 }

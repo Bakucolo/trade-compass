@@ -38,7 +38,12 @@ import {
   DialogDescription
 } from './ui/dialog';
 import { useMacroOverview, MacroAssetItem } from '@/services/macroService';
+import { useMacroDossiers } from '@/services/macroDossierService';
+import { MacroDossierModal } from './macro/MacroDossierModal';
 import { TradingViewChart } from './graphs/TradingViewChart';
+import { YieldsBondsChartCard } from './macro/YieldsBondsChartCard';
+import { SectorsAndIndustriesCard } from './macro/SectorsAndIndustriesCard';
+import { EconomicCycleCard } from './macro/EconomicCycleCard';
 
 interface MacroPageProps {
   onNavigateToResearch?: (symbol: string) => void;
@@ -60,8 +65,10 @@ const CATEGORY_TABS: { id: MacroCategoryTab; label: string; icon: React.Componen
 
 export function MacroPage({ onNavigateToResearch, onNavigateToGraphs }: MacroPageProps) {
   const { data: macroData, isLoading, refetch, isFetching } = useMacroOverview();
+  const { data: dossiers = [] } = useMacroDossiers(10);
   const [activeTab, setActiveTab] = useState<MacroCategoryTab>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isDossierModalOpen, setIsDossierModalOpen] = useState(false);
 
   // Selected Macro Instrument for TradingView Modal
   const [chartModalSymbol, setChartModalSymbol] = useState<MacroAssetItem | null>(null);
@@ -228,9 +235,38 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs }: MacroPag
             >
               <RefreshCw className={cn("w-4 h-4 text-primary", isFetching && "animate-spin")} />
             </Button>
+
+            {/* Autonomous Macro Dossier Agent Trigger Button */}
+            <Button
+              onClick={() => setIsDossierModalOpen(true)}
+              className="h-10 px-4 rounded-2xl bg-gradient-to-r from-primary via-cyan-600 to-purple-600 hover:opacity-95 text-white font-bold text-xs gap-2 shadow-lg shadow-primary/20 shrink-0 border border-white/10"
+            >
+              <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+              <span>AI Macro Dossier</span>
+              {dossiers.length > 0 && (
+                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-black/30 text-cyan-200">
+                  {dossiers.length}
+                </span>
+              )}
+            </Button>
           </div>
         </div>
       </div>
+
+      {/* ================= 2. ECONOMIC CYCLE STAGE & MACRO REGIME STATION ================= */}
+      <EconomicCycleCard
+        onNavigateToResearch={onNavigateToResearch}
+        onNavigateToGraphs={onNavigateToGraphs}
+      />
+
+      {/* ================= 3. SOVEREIGN YIELDS & BOND MARKET CHART STATION ================= */}
+      <YieldsBondsChartCard onNavigateToGraphs={onNavigateToGraphs} />
+
+      {/* ================= 4. SECTORS & INDUSTRY PERFORMANCE & ROTATION ANALYZER ================= */}
+      <SectorsAndIndustriesCard
+        onNavigateToResearch={onNavigateToResearch}
+        onNavigateToGraphs={onNavigateToGraphs}
+      />
 
       {/* ================= YIELD CURVE & MACRO RADAR ================= */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -606,6 +642,16 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs }: MacroPag
             </div>
           </DialogContent>
         </Dialog>
+      )}
+
+      {/* ================= GLOBAL MACRO DOSSIER AGENT MODAL ================= */}
+      {isDossierModalOpen && (
+        <MacroDossierModal
+          isOpen={isDossierModalOpen}
+          onClose={() => setIsDossierModalOpen(false)}
+          onNavigateToResearch={onNavigateToResearch}
+          onNavigateToGraphs={onNavigateToGraphs}
+        />
       )}
     </div>
   );

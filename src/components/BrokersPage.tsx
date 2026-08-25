@@ -16,7 +16,24 @@ import { getCompanyStyleAndThemes } from '../services/stockThematics';
 import { ErrorBoundary } from './ErrorBoundary';
 
 import { Button } from './ui/button';
-import { RefreshCw, Plus, Settings, Wallet, Layers, ShieldAlert, Sparkles, Bot, Activity, Scale } from 'lucide-react';
+import { Badge } from './ui/badge';
+import {
+  RefreshCw,
+  Plus,
+  Settings,
+  Wallet,
+  Layers,
+  ShieldAlert,
+  Sparkles,
+  Bot,
+  Activity,
+  Scale,
+  Eye,
+  EyeOff,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { useToast } from './ui/use-toast';
 import { AgentActivityDrawer } from './AgentActivityDrawer';
 import { useAgentActivities } from '../services/agentActivityService';
@@ -61,6 +78,12 @@ export function BrokersPage({ onNavigateToResearch }: BrokersPageProps = {}) {
   const [isPrivacyMode, setIsPrivacyMode] = useState<boolean>(() => {
     return localStorage.getItem('isPrivacyMode') !== 'false'; // Default true
   });
+
+  // Balances Open state (Persisted - Hidden by default)
+  const [isBalancesOpen, setIsBalancesOpen] = useState<boolean>(() => {
+    return localStorage.getItem('isPortfolioBalancesOpen') === 'true'; // Default false (hidden)
+  });
+
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [isValuationModalOpen, setIsValuationModalOpen] = useState(false);
   const [isAgentDrawerOpen, setIsAgentDrawerOpen] = useState(false);
@@ -71,6 +94,14 @@ export function BrokersPage({ onNavigateToResearch }: BrokersPageProps = {}) {
     setIsPrivacyMode(prev => {
       const newValue = !prev;
       localStorage.setItem('isPrivacyMode', String(newValue));
+      return newValue;
+    });
+  };
+
+  const toggleBalancesOpen = () => {
+    setIsBalancesOpen(prev => {
+      const newValue = !prev;
+      localStorage.setItem('isPortfolioBalancesOpen', String(newValue));
       return newValue;
     });
   };
@@ -203,6 +234,36 @@ export function BrokersPage({ onNavigateToResearch }: BrokersPageProps = {}) {
 
       const thematicInfo = getCompanyStyleAndThemes(p.underlyingSymbol || unifiedSymbol, p.description || undefined);
 
+      let accountType: 'ISA' | 'GIA' | 'MARGIN' | 'CASH' = 'GIA';
+      let accountName = 'IBKR GIA';
+      let accountBadge = 'IBKR (GIA)';
+
+      if (p.broker?.name === 'Tastytrade') {
+        accountType = 'MARGIN';
+        accountName = 'Tastytrade Margin';
+        accountBadge = 'Tastytrade';
+      } else if (p.broker?.name === 'Trading 212') {
+        accountType = 'ISA';
+        accountName = 'Trading 212 ISA';
+        accountBadge = 'Trading 212';
+      } else {
+        // IBKR: Determine ISA vs GIA
+        const isCadOrGbp = p.currency === 'CAD' || p.currency === 'GBP' || p.currency === 'GBX';
+        if (isOption || p.quantity < 0) {
+          accountType = 'GIA';
+          accountName = 'IBKR GIA (Margin)';
+          accountBadge = 'IBKR (GIA)';
+        } else if (isCadOrGbp) {
+          accountType = 'ISA';
+          accountName = 'IBKR ISA (Stocks & Shares)';
+          accountBadge = 'IBKR (ISA)';
+        } else {
+          accountType = 'GIA';
+          accountName = 'IBKR GIA (Global)';
+          accountBadge = 'IBKR (GIA)';
+        }
+      }
+
       tempPositions.push({
         id: p.id,
         symbol: unifiedSymbol,
@@ -215,6 +276,9 @@ export function BrokersPage({ onNavigateToResearch }: BrokersPageProps = {}) {
         unrealizedPL: unrealizedPL,
         unrealizedPLPercent: unrealizedPLPercent,
         source: p.broker?.name === 'Tastytrade' ? 'Tastytrade' : p.broker?.name === 'Trading 212' ? 'Trading 212' : 'IBKR',
+        accountType,
+        accountName,
+        accountBadge,
         assetType: p.assetType === 'OPTION' ? 'Option' : 'Stock',
         strike: p.strikePrice || undefined,
         optionType: p.assetType === 'OPTION' ? (p.optionType === 'C' || p.optionType === 'Call' ? 'Call' : 'Put') : undefined,
@@ -343,7 +407,35 @@ export function BrokersPage({ onNavigateToResearch }: BrokersPageProps = {}) {
           <h1 className="text-3xl font-bold tracking-tight text-foreground glow-text-white">Portfolio Command</h1>
           <p className="text-muted-foreground">Real-time cross-brokerage analysis</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Balances Collapsible Toggle Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={toggleBalancesOpen}
+            className={cn(
+              "h-9 text-xs gap-1.5 border-border/70 hover:bg-accent/40 font-semibold transition-all",
+              isBalancesOpen ? "bg-primary/10 border-primary/40 text-primary" : "text-muted-foreground"
+            )}
+            title={isBalancesOpen ? 'Hide Portfolio Balances' : 'Show Portfolio Balances'}
+          >
+            <Wallet className="w-3.5 h-3.5 text-primary" />
+            <span className="hidden sm:inline">Balances</span>
+            <ChevronDown className={cn("w-3.5 h-3.5 transition-transform duration-200", isBalancesOpen && "rotate-180")} />
+          </Button>
+
+          {/* Privacy Toggle (Masked / Visible) */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={togglePrivacyMode}
+            className="h-9 text-xs gap-1.5 border-border/70 hover:bg-accent/40"
+            title={isPrivacyMode ? 'Show Balances' : 'Hide Balances'}
+          >
+            {isPrivacyMode ? <EyeOff className="w-3.5 h-3.5 text-amber-400" /> : <Eye className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">{isPrivacyMode ? 'Masked' : 'Visible'}</span>
+          </Button>
+
           <Button
             variant="default"
             size="sm"
@@ -392,32 +484,73 @@ export function BrokersPage({ onNavigateToResearch }: BrokersPageProps = {}) {
         </div>
       </div>
 
-      {/* Portfolio Summary Cards */}
-      <ErrorBoundary fallbackTitle="Portfolio Summary">
-        <PortfolioSummary
-          netLiquidValue={balancesData?.total?.netLiquidatingValue && balancesData.total.netLiquidatingValue > 0 ? balancesData.total.netLiquidatingValue : totals.netLiquidValue}
-          dailyPL={balancesData?.total?.dayPnL !== undefined && balancesData.total.dayPnL !== 0 ? balancesData.total.dayPnL : totals.dailyPL}
-          dailyPLPercent={portfolioDailyPercent || 0}
-          unrealizedPL={balancesData?.total?.unrealizedPnL !== undefined && balancesData.total.unrealizedPnL !== 0 ? balancesData.total.unrealizedPnL : totals.unrealizedPL}
-          buyingPower={balancesData?.total?.buyingPower ?? totals.buyingPower}
-          connectedSources={{
-            ibkr: isIBConnected,
-            tastytrade: balancesData?.brokers?.tastytrade?.status === 'connected' || balancesData?.brokers?.tastytrade?.status === 'active' || true,
-            trading212: isT212Connected
-          }}
-          isPrivacyMode={isPrivacyMode}
-          onTogglePrivacy={togglePrivacyMode}
-          accountBreakdown={{
-            ibkr: balancesData?.brokers?.ibkr?.netLiquidatingValue || totals.ibkrTotal || 0,
-            tastytrade: balancesData?.brokers?.tastytrade?.netLiquidatingValue || totals.tastyTotal || 0,
-            trading212: balancesData?.brokers?.trading212?.netLiquidatingValue || 0
-          }}
-          brokerBalances={balancesData?.brokers}
-          portfolioData={balancesData}
-          positions={unifiedPositions}
-          onNavigateToResearch={onNavigateToResearch}
-        />
-      </ErrorBoundary>
+      {/* Portfolio Summary Cards (Collapsible) */}
+      {isBalancesOpen ? (
+        <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="flex justify-between items-center px-1">
+            <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+              <Wallet className="w-3.5 h-3.5 text-primary" /> Broker Balances & Portfolio Summary
+            </span>
+            <button
+              onClick={() => setIsBalancesOpen(false)}
+              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+            >
+              <span>Hide Balances</span>
+              <ChevronUp className="w-3 h-3" />
+            </button>
+          </div>
+          <ErrorBoundary fallbackTitle="Portfolio Summary">
+            <PortfolioSummary
+              netLiquidValue={balancesData?.total?.netLiquidatingValue && balancesData.total.netLiquidatingValue > 0 ? balancesData.total.netLiquidatingValue : totals.netLiquidValue}
+              dailyPL={balancesData?.total?.dayPnL !== undefined && balancesData.total.dayPnL !== 0 ? balancesData.total.dayPnL : totals.dailyPL}
+              dailyPLPercent={portfolioDailyPercent || 0}
+              unrealizedPL={balancesData?.total?.unrealizedPnL !== undefined && balancesData.total.unrealizedPnL !== 0 ? balancesData.total.unrealizedPnL : totals.unrealizedPL}
+              buyingPower={balancesData?.total?.buyingPower ?? totals.buyingPower}
+              connectedSources={{
+                ibkr: isIBConnected,
+                tastytrade: balancesData?.brokers?.tastytrade?.status === 'connected' || balancesData?.brokers?.tastytrade?.status === 'active' || true,
+                trading212: isT212Connected
+              }}
+              isPrivacyMode={isPrivacyMode}
+              onTogglePrivacy={togglePrivacyMode}
+              accountBreakdown={{
+                ibkr: balancesData?.brokers?.ibkr?.netLiquidatingValue || totals.ibkrTotal || 0,
+                tastytrade: balancesData?.brokers?.tastytrade?.netLiquidatingValue || totals.tastyTotal || 0,
+                trading212: balancesData?.brokers?.trading212?.netLiquidatingValue || 0
+              }}
+              brokerBalances={balancesData?.brokers}
+              portfolioData={balancesData}
+              positions={unifiedPositions}
+              onNavigateToResearch={onNavigateToResearch}
+            />
+          </ErrorBoundary>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-border/60 bg-card/20 hover:bg-card/40 transition-colors p-3 flex items-center justify-between shadow-sm">
+          <div className="flex items-center gap-2.5 text-xs text-muted-foreground">
+            <div className="w-8 h-8 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
+              <Wallet className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="font-semibold text-foreground">Broker Balances is collapsed</span>
+              {((balancesData?.total?.netLiquidatingValue || totals.netLiquidValue) > 0) && !isPrivacyMode && (
+                <span className="text-muted-foreground font-mono ml-2 hidden sm:inline">
+                  • Net Liq: ${(balancesData?.total?.netLiquidatingValue || totals.netLiquidValue).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                </span>
+              )}
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setIsBalancesOpen(true)}
+            className="h-8 text-xs text-primary hover:text-primary hover:bg-primary/10 gap-1.5 font-bold rounded-xl"
+          >
+            <span>Show Balances</span>
+            <ChevronDown className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+      )}
 
       {/* Portfolio Movers & Performance Leaderboard (Day, Week, Month, YTD) */}
       <ErrorBoundary fallbackTitle="Movers & Performance Leaderboard">

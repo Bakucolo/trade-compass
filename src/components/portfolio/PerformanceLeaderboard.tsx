@@ -62,7 +62,7 @@ export function PerformanceLeaderboard({
   // --- UI Controls State ---
   const [timeframe, setTimeframe] = useState<TimeframePeriod>('1D');
   const [metricDisplay, setMetricDisplay] = useState<MetricDisplay>('PERCENT');
-  const [assetFilter, setAssetFilter] = useState<AssetFilter>('ALL');
+  const [assetFilter, setAssetFilter] = useState<AssetFilter>('STOCK');
   const [brokerFilter, setBrokerFilter] = useState<'ALL' | 'IBKR' | 'Tastytrade' | 'Trading 212'>('ALL');
   const [currencyFilter, setCurrencyFilter] = useState<string>('ALL');
   const [limitCount, setLimitCount] = useState<number>(5);

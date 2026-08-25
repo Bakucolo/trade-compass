@@ -536,28 +536,45 @@ export function CriticalDefenseModal({
 
                       {/* Distance / ITM Status */}
                       <div className="bg-card/70 border border-border/50 rounded-xl p-2.5">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Moneyness</span>
-                        <p className={cn(
-                          "font-mono font-bold mt-0.5",
-                          threat.isITM ? "text-rose-400" : "text-emerald-400"
-                        )}>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">Moneyness & Distance</span>
+                        <div className="mt-0.5">
                           {isOption ? (
-                            <span>{threat.distancePct.toFixed(1)}% {threat.isITM ? 'ITM' : 'OTM'}</span>
+                            <span className={cn(
+                              "font-mono font-black text-xs px-2 py-0.5 rounded-md inline-block",
+                              threat.isITM
+                                ? "bg-rose-500/25 text-rose-200 border border-rose-500/40"
+                                : threat.distancePct <= 3.0
+                                ? "bg-amber-500/25 text-amber-200 border border-amber-500/40"
+                                : threat.distancePct <= 8.0
+                                ? "bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                                : "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+                            )}>
+                              {threat.isITM ? `ITM (${threat.distancePct.toFixed(1)}% breach)` : `OTM (${threat.distancePct.toFixed(1)}% away)`}
+                            </span>
                           ) : (
-                            <span>${pos.currentPrice.toFixed(2)}</span>
+                            <span className="font-mono font-bold text-foreground">${pos.currentPrice.toFixed(2)}</span>
                           )}
-                        </p>
+                        </div>
                       </div>
 
                       {/* DTE & Expiration */}
                       <div className="bg-card/70 border border-border/50 rounded-xl p-2.5">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Expiration</span>
-                        <p className={cn(
-                          "font-mono font-bold mt-0.5",
-                          threat.daysToExpiry !== null && threat.daysToExpiry <= 14 ? "text-amber-400" : "text-foreground"
-                        )}>
-                          {threat.daysToExpiry !== null ? `${threat.daysToExpiry}d remaining` : 'Equity'}
-                        </p>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">Expiration & DTE</span>
+                        <div className="mt-0.5">
+                          {threat.daysToExpiry !== null ? (
+                            <span className={cn(
+                              "font-mono font-bold text-xs px-2 py-0.5 rounded-md inline-block",
+                              threat.daysToExpiry <= 0 ? "bg-rose-600 text-white font-black animate-pulse" :
+                              threat.daysToExpiry <= 3 ? "bg-rose-500/20 text-rose-300 border border-rose-500/40" :
+                              threat.daysToExpiry <= 14 ? "bg-amber-500/20 text-amber-300 border border-amber-500/40" :
+                              "bg-purple-500/15 text-purple-300 border border-purple-500/30"
+                            )}>
+                              {threat.daysToExpiry <= 0 ? 'Expires Today' : `${threat.daysToExpiry}d left`}
+                            </span>
+                          ) : (
+                            <span className="font-mono text-muted-foreground text-xs">Equity</span>
+                          )}
+                        </div>
                       </div>
 
                       {/* Total Open P&L */}

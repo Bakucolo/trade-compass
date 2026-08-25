@@ -247,3 +247,31 @@ model PortfolioValuationAudit {
   @@index([createdAt])
 }
 
+model MacroDossierReport {
+  id                     String   @id @default(uuid())
+  title                  String   // e.g. "Global Macro Intelligence Dossier: Policy Pivot & Late-Cycle Navigation"
+  regimeTitle            String   // e.g. "Late-Cycle Disinflation with Sticky Services"
+  regimeTone             String   // "bullish" | "bearish" | "neutral" | "warning"
+  macroScore             Int      // 0 - 100 overall macroeconomic resilience & stability score
+  growthOutlook          String   // "EXPANSIONARY" | "MODERATING" | "STAGNANT" | "CONTRACTION"
+  inflationRegime        String   // "DEFLATIONARY" | "DISINFLATION" | "STICKY_TARGET" | "ACCELERATING"
+  monetaryPolicyPosture  String   // "HAWKISH" | "NEUTRAL_PAUSE" | "DOVISH_EASING"
+  liquidityCondition     String   // "EXPANDING" | "NEUTRAL" | "TIGHTENING"
+  vixLevel               Float?   // VIX snapshot
+  yield10y               Float?   // US 10Y Treasury yield snapshot
+  spread2y10y            Float?   // 2s10s yield curve spread snapshot
+  dxyLevel               Float?   // US Dollar Index snapshot
+  oilPrice               Float?   // WTI Oil snapshot
+  executiveSummary       String   // Multi-paragraph institutional executive summary
+  narrativeOverview      String   // Comprehensive narrative explaining the macro cycle & implications
+  pillarsJson            String   // JSON array of 7 core macro pillars
+  scenariosJson          String   // JSON array of Base, Bull, Bear probabilistic scenarios
+  tacticalAllocationsJson String  // JSON array of tactical cross-asset posture & hedging playbook
+  catalystsRadarJson     String   // JSON array of upcoming catalysts & pivot levels
+  rawDossierJson         String   // Complete raw structured JSON payload
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@index([createdAt])
+}
+

@@ -201,3 +201,108 @@ export const useGenerateAIIdeas = () => {
     },
   });
 };
+
+export interface StructuredTradeApproach {
+  id: string;
+  category: 'STOCK' | 'OPTIONS_LONG' | 'COVERED_CALL' | 'COLLAR' | 'SHORT_PUT' | 'SYNTHETIC' | 'SPREAD' | 'HYBRID_STOCK_CALL';
+  title: string;
+  subtitle: string;
+  suitability: 'Conservative / Income' | 'Aggressive Growth' | 'Defined Risk / Hedged' | 'Capital Efficient / Leveraged' | 'Balanced Core';
+  sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+
+  primaryEntry: number;
+  scaledEntryMin: number;
+  scaledEntryMax: number;
+  targetPrice: number;
+  target2Price?: number;
+  stopLoss: number;
+
+  optionDetails?: {
+    strategyName: string;
+    recommendedDte: number;
+    expiryDescription: string;
+    longStrike?: number;
+    shortStrike?: number;
+    putStrike?: number;
+    callStrike?: number;
+    estimatedCost: number;
+    isCredit: boolean;
+    breakEvenPrice: number;
+  };
+
+  capitalRequiredEstimate: string;
+  maxProfit: string;
+  maxRisk: string;
+  riskRewardRatio: string;
+  winProbabilityEstimate: number;
+
+  executionRules: string[];
+  invalidationTrigger: string;
+  profitTakingPlan: string;
+}
+
+export interface TradeStructureResult {
+  symbol: string;
+  companyName: string;
+  currentPrice: number;
+  sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  ideaTitle?: string;
+  ideaThesis?: string;
+  approaches: StructuredTradeApproach[];
+  macroContextSummary: string;
+  generatedAt: string;
+}
+
+export interface StructureTradeInput {
+  ideaId?: string;
+  symbol: string;
+  title?: string;
+  content?: string;
+  type?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  entryPrice?: number | null;
+  targetPrice?: number | null;
+  stopLoss?: number | null;
+  timeframe?: string;
+}
+
+// Mutation to structure trade with AI agent
+export const useStructureTrade = () => {
+  return useMutation<TradeStructureResult, Error, StructureTradeInput>({
+    mutationFn: async (input: StructureTradeInput) => {
+      const res = await fetch(`${API_BASE}/structure-trade`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to structure trade with AI');
+      }
+      return res.json();
+    },
+  });
+};
+
+// Mutation to save chosen structured approaches into the trade idea
+export const useSaveIdeaApproaches = () => {
+  const queryClient = useQueryClient();
+
+  return useMutation<TradeIdea, Error, { ideaId: string; approaches: StructuredTradeApproach[] }>({
+    mutationFn: async ({ ideaId, approaches }) => {
+      const res = await fetch(`${API_BASE}/${ideaId}/save-approaches`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approaches }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to save approaches to idea');
+      }
+      return res.json();
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['tradeIdeas'] });
+      queryClient.invalidateQueries({ queryKey: ['tradeIdea', variables.ideaId] });
+    },
+  });
+};

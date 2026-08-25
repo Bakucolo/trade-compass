@@ -24,6 +24,8 @@ import { IdeaModal } from './IdeaModal';
 import { AutonomousReport, reportService, useAutonomousReports } from '@/services/reportService';
 import { AutonomousReportsList } from './AutonomousReportsList';
 import { AutonomousReportViewerModal } from './AutonomousReportViewerModal';
+import { GrowthAndValuationCard } from './research/GrowthAndValuationCard';
+import { InvestorRelationsCard } from './research/InvestorRelationsCard';
 import ReactMarkdown from 'react-markdown';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -614,6 +616,26 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
                       <Button
                         size="sm"
                         variant="outline"
+                        onClick={() => setActiveDataTab('growth-valuation')}
+                        className="h-8 text-xs font-bold bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20 gap-1.5 shadow-sm"
+                      >
+                        <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Growth & Forward Valuation</span>
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setActiveDataTab('ir-presentations')}
+                        className="h-8 text-xs font-bold bg-purple-500/10 text-purple-300 border-purple-500/30 hover:bg-purple-500/20 gap-1.5 shadow-sm"
+                      >
+                        <Globe className="w-3.5 h-3.5 text-purple-400" />
+                        <span>IR & Decks</span>
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="outline"
                         onClick={() => setIsFitModalOpen(true)}
                         className="h-8 text-xs font-bold bg-cyan-500/10 text-cyan-300 border-cyan-500/30 hover:bg-cyan-500/20 gap-1.5 shadow-sm"
                       >
@@ -637,12 +659,24 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
 
               {/* ================= DATA TABS RIBBON ================= */}
               <Tabs value={activeDataTab} onValueChange={setActiveDataTab} className="w-full">
-                <TabsList className="grid w-full grid-cols-3 sm:grid-cols-6 h-auto p-1.5 bg-card/70 backdrop-blur-xl border border-border/70 rounded-2xl gap-1.5">
+                <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 h-auto p-1.5 bg-card/70 backdrop-blur-xl border border-border/70 rounded-2xl gap-1.5">
                   <TabsTrigger
                     value="overview"
                     className="rounded-xl py-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
                   >
                     <BarChart3 className="w-3.5 h-3.5" /> Overview
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="growth-valuation"
+                    className="rounded-xl py-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-600 data-[state=active]:to-teal-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <TrendingUp className="w-3.5 h-3.5 text-emerald-300" /> Growth & Forward
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="ir-presentations"
+                    className="rounded-xl py-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-600 data-[state=active]:to-indigo-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <Globe className="w-3.5 h-3.5 text-cyan-300" /> IR & Decks
                   </TabsTrigger>
                   <TabsTrigger
                     value="fundamentals"
@@ -681,6 +715,16 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
                     )}
                   </TabsTrigger>
                 </TabsList>
+
+                {/* ================= 0. GROWTH & FORWARD VALUATION TAB ================= */}
+                <TabsContent value="growth-valuation" className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <GrowthAndValuationCard symbol={selectedSymbol} />
+                </TabsContent>
+
+                {/* ================= 0.5. INVESTOR RELATIONS & PRESENTATIONS TAB ================= */}
+                <TabsContent value="ir-presentations" className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <InvestorRelationsCard symbol={selectedSymbol} />
+                </TabsContent>
 
                 {/* ================= 1. OVERVIEW TAB ================= */}
                 <TabsContent value="overview" className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -791,6 +835,35 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
                           className="text-xs h-9 bg-cyan-600 hover:bg-cyan-500 text-white font-bold gap-1.5 shadow-md px-4 shrink-0"
                         >
                           <Scale className="w-3.5 h-3.5" /> Check Portfolio Fit
+                        </Button>
+                      </div>
+                    </CardHeader>
+                  </Card>
+
+                  {/* Investor Relations & Latest Presentations Spotlight Banner */}
+                  <Card className="bg-gradient-to-r from-purple-950/30 via-background/60 to-cyan-950/30 border border-purple-500/30 hover:border-purple-500/50 transition-all shadow-md rounded-2xl overflow-hidden relative group">
+                    <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/5 rounded-full blur-3xl -z-10 group-hover:bg-purple-500/10 transition-colors" />
+                    <CardHeader className="p-5">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400 shadow-sm">
+                            <Globe className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <CardTitle className="text-sm font-bold text-foreground">
+                              Official Investor Relations & Latest Presentations
+                            </CardTitle>
+                            <CardDescription className="text-xs text-muted-foreground mt-0.5">
+                              Direct access to official IR website, latest investor slide deck (PDF), earnings webcasts, and SEC EDGAR filings.
+                            </CardDescription>
+                          </div>
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={() => setActiveDataTab('ir-presentations')}
+                          className="text-xs h-9 bg-purple-600 hover:bg-purple-500 text-white font-bold gap-1.5 shadow-md px-4 shrink-0"
+                        >
+                          <Globe className="w-3.5 h-3.5" /> View IR Hub & Decks
                         </Button>
                       </div>
                     </CardHeader>

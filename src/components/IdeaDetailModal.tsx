@@ -31,6 +31,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import { cn } from '@/lib/utils';
 import { TradeIdea, useDeleteTradeIdea, useUpdateTradeIdea } from '@/services/ideaService';
+import { TradeStructureModal } from './TradeStructureModal';
 
 interface IdeaDetailModalProps {
   isOpen: boolean;
@@ -48,6 +49,7 @@ export function IdeaDetailModal({
   onNavigateResearch,
 }: IdeaDetailModalProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [isStructureModalOpen, setIsStructureModalOpen] = useState(false);
   const deleteMutation = useDeleteTradeIdea();
   const updateMutation = useUpdateTradeIdea();
 
@@ -355,6 +357,16 @@ export function IdeaDetailModal({
           </div>
 
           <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              onClick={() => setIsStructureModalOpen(true)}
+              className="h-9 px-3.5 text-xs font-bold bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-md shadow-purple-500/20 gap-1.5"
+              title="Summon AI Agent to structure multi-approach execution plans (Stocks, Options, Collars, Spreads) and set entry alerts"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span>Structure Trade (AI)</span>
+            </Button>
+
             {onNavigateResearch && (
               <Button
                 type="button"
@@ -383,6 +395,15 @@ export function IdeaDetailModal({
           </div>
         </DialogFooter>
       </DialogContent>
+
+      {/* AI Trade Structuring Modal */}
+      {isStructureModalOpen && (
+        <TradeStructureModal
+          isOpen={isStructureModalOpen}
+          onClose={() => setIsStructureModalOpen(false)}
+          idea={idea}
+        />
+      )}
     </Dialog>
   );
 }

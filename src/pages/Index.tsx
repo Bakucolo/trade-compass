@@ -11,6 +11,7 @@ import { AlertsPage } from '@/components/AlertsPage';
 import { BrokersPage } from '@/components/BrokersPage';
 import { SettingsPage } from '@/components/SettingsPage';
 import { ManagementPage } from '@/components/ManagementPage';
+import { ScorecardsPage } from '@/components/ScorecardsPage';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 const Index = () => {
@@ -46,6 +47,8 @@ const Index = () => {
             onNavigateToResearch={handleNavigateToResearch}
           />
         );
+      case 'scorecards':
+        return <ScorecardsPage onNavigateToResearch={handleNavigateToResearch} />;
       case 'management':
         return (
           <ManagementPage

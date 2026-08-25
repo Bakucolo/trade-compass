@@ -54,6 +54,53 @@ export interface MacroOverviewResponse {
   regime: MacroRegime;
 }
 
+export interface YieldsAndBondsChartResponse {
+  timeframe: string;
+  yieldHistory: {
+    date: string;
+    formattedDate: string;
+    us10y: number;
+    us02y: number;
+    us05y: number;
+    us30y: number;
+    spread10y2y: number;
+    fedFunds?: number;
+  }[];
+  bondEtfHistory: {
+    date: string;
+    formattedDate: string;
+    tlt: number;
+    ief: number;
+    shy: number;
+    hyg: number;
+    lqd: number;
+    bnd: number;
+    tltNormalized: number;
+    iefNormalized: number;
+    hygNormalized: number;
+    lqdNormalized: number;
+    bndNormalized: number;
+  }[];
+  termStructure: {
+    term: string;
+    label: string;
+    current: number;
+    oneMonthAgo: number;
+    oneYearAgo: number;
+  }[];
+  summary: {
+    us10y: { current: number; change: number; changePercent: number };
+    us02y: { current: number; change: number; changePercent: number };
+    us30y: { current: number; change: number; changePercent: number };
+    spread10y2y: { current: number; change: number; isInverted: boolean };
+    fedFunds: number;
+    highYieldSpread: number;
+    tlt: { current: number; change: number; changePercent: number };
+    hyg: { current: number; change: number; changePercent: number };
+  };
+  timestamp: number;
+}
+
 const API_BASE = '/api/macro';
 
 export async function fetchMacroOverview(): Promise<MacroOverviewResponse> {
@@ -71,5 +118,20 @@ export function useMacroOverview() {
     queryFn: fetchMacroOverview,
     staleTime: 15 * 1000,
     refetchInterval: 25 * 1000,
+  });
+}
+
+export function useYieldsAndBondsChart(timeframe: '1M' | '3M' | '6M' | '1Y' | '5Y' | 'MAX' = '1Y') {
+  return useQuery<YieldsAndBondsChartResponse>({
+    queryKey: ['yieldsBondsChart', timeframe],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/yields-bonds-chart?timeframe=${timeframe}`);
+      if (!res.ok) {
+        throw new Error('Failed to fetch yields and bonds chart');
+      }
+      return res.json();
+    },
+    staleTime: 60 * 1000,
+    refetchInterval: 60 * 1000,
   });
 }

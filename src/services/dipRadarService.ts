@@ -253,12 +253,30 @@ export async function fetchDiagnoseDip(
 /**
  * React Query Hook for diagnosing a single symbol
  */
-export function useDiagnoseDip(symbol?: string, enabled = true, forceRefresh = false) {
+export function useDiagnoseDip(symbol?: string, enabled = true) {
   return useQuery<DipDiagnosticResult>({
-    queryKey: ['dip-diagnostic', symbol?.toUpperCase(), forceRefresh],
-    queryFn: () => fetchDiagnoseDip(symbol!, forceRefresh),
+    queryKey: ['dip-diagnostic', symbol?.toUpperCase()],
+    queryFn: () => fetchDiagnoseDip(symbol!, false),
     enabled: Boolean(symbol && enabled),
     staleTime: 5 * 60 * 1000,
+  });
+}
+
+/**
+ * React Mutation Hook for executing fresh AI Dip Diagnosis
+ */
+export function useRunDipDiagnostic() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ symbol, forceRefresh = true }: { symbol: string; forceRefresh?: boolean }) =>
+      fetchDiagnoseDip(symbol, forceRefresh),
+    onSuccess: (data, variables) => {
+      queryClient.setQueryData(['dip-diagnostic', variables.symbol.toUpperCase()], data);
+      queryClient.invalidateQueries({ queryKey: ['saved-dip-reports'] });
+      queryClient.invalidateQueries({ queryKey: ['dip-report-history', variables.symbol.toUpperCase()] });
+      queryClient.invalidateQueries({ queryKey: ['market-dips-radar'] });
+      queryClient.invalidateQueries({ queryKey: ['agentActivities'] });
+    },
   });
 }
 

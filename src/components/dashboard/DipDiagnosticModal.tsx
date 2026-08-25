@@ -41,10 +41,12 @@ import {
   Database,
   History,
   Trash2,
+  Bookmark,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   useDiagnoseDip,
+  useRunDipDiagnostic,
   useDipReportHistory,
   useDeleteSavedDipReport,
   DipDiagnosticResult,
@@ -52,6 +54,7 @@ import {
   DipOpportunityVerdict,
   SavedDipReportRecord,
 } from '@/services/dipRadarService';
+import { AddToWatchlistModal } from '@/components/AddToWatchlistModal';
 import { toast } from 'sonner';
 
 interface DipDiagnosticModalProps {
@@ -69,10 +72,10 @@ export function DipDiagnosticModal({
   onNavigateToResearch,
   onOpenTradeIdea,
 }: DipDiagnosticModalProps) {
-  const [forceRefresh, setForceRefresh] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   const [viewingHistoryReport, setViewingHistoryReport] = useState<DipDiagnosticResult | null>(null);
+  const [isWatchlistModalOpen, setIsWatchlistModalOpen] = useState(false);
 
   const {
     data: liveDiagnostic,
@@ -81,7 +84,9 @@ export function DipDiagnosticModal({
     error,
     refetch,
     isFetching,
-  } = useDiagnoseDip(symbol, isOpen, forceRefresh);
+  } = useDiagnoseDip(symbol, isOpen);
+
+  const runDiagnosticMutation = useRunDipDiagnostic();
 
   // History of past saved reports for this symbol
   const { data: historyRecords = [], refetch: refetchHistory } = useDipReportHistory(symbol, isOpen);
@@ -90,13 +95,17 @@ export function DipDiagnosticModal({
   // Active diagnostic data being viewed (either current latest or selected historical snapshot)
   const diagnostic = viewingHistoryReport || liveDiagnostic;
 
-  const handleForceRefresh = () => {
+  const isAnalyzing = isLoading || isFetching || runDiagnosticMutation.isPending;
+
+  const handleForceRefresh = async () => {
     setViewingHistoryReport(null);
-    setForceRefresh(true);
-    refetch().finally(() => {
-      setForceRefresh(false);
+    try {
+      const res = await runDiagnosticMutation.mutateAsync({ symbol, forceRefresh: true });
       refetchHistory();
-    });
+      toast.success(`AI Diagnostic updated for ${symbol}!`);
+    } catch (err: any) {
+      toast.error(err.message || `Failed to re-analyze ${symbol}`);
+    }
   };
 
   const handleSelectHistoryReport = (record: SavedDipReportRecord) => {
@@ -306,24 +315,36 @@ TACTICAL ENTRY PLAYBOOK:
                 </div>
               )}
 
+              {/* Add to Watchlist */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsWatchlistModalOpen(true)}
+                className="h-8 text-xs gap-1.5 border-purple-500/40 bg-purple-950/20 hover:bg-purple-950/40 text-purple-300 font-semibold"
+                title="Save this stock to a watchlist of your choice"
+              >
+                <Bookmark className="w-3.5 h-3.5 text-purple-400" />
+                <span className="hidden sm:inline">Add to Watchlist</span>
+              </Button>
+
               {/* Re-Analyze with AI (Force Fresh) */}
               <Button
                 variant="outline"
                 size="sm"
                 onClick={handleForceRefresh}
-                disabled={isLoading || isFetching}
+                disabled={isAnalyzing}
                 className="h-8 text-xs gap-1.5 border-primary/40 bg-primary/5 hover:bg-primary/20 text-primary font-semibold"
                 title="Trigger a fresh autonomous AI analysis and save new report"
               >
-                <Sparkles className={cn('w-3.5 h-3.5 text-amber-300', (isLoading || isFetching) && 'animate-spin')} />
-                <span className="hidden sm:inline">Re-Analyze with AI</span>
+                <Sparkles className={cn('w-3.5 h-3.5 text-amber-300', isAnalyzing && 'animate-spin')} />
+                <span className="hidden sm:inline">{runDiagnosticMutation.isPending ? 'Analyzing...' : 'Re-Analyze with AI'}</span>
               </Button>
             </div>
           </div>
         </div>
 
         {/* ================= LOADING STATE ================= */}
-        {isLoading ? (
+        {isLoading || (runDiagnosticMutation.isPending && !diagnostic) ? (
           <div className="p-12 flex flex-col items-center justify-center text-center space-y-4">
             <div className="w-14 h-14 rounded-2xl bg-primary/10 border border-primary/30 flex items-center justify-center text-primary animate-pulse">
               <Loader2 className="w-7 h-7 animate-spin text-primary" />
@@ -337,7 +358,7 @@ TACTICAL ENTRY PLAYBOOK:
               </p>
             </div>
           </div>
-        ) : isError || !diagnostic ? (
+        ) : isError && !diagnostic ? (
           <div className="p-12 text-center space-y-4">
             <AlertTriangle className="w-12 h-12 text-amber-400 mx-auto" />
             <h3 className="text-lg font-bold text-foreground">Diagnostic Failed</h3>
@@ -924,6 +945,16 @@ TACTICAL ENTRY PLAYBOOK:
               <span>{isCopied ? 'Copied' : 'Copy Plan'}</span>
             </Button>
 
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsWatchlistModalOpen(true)}
+              className="h-9 text-xs gap-1.5 border-purple-500/40 text-purple-300 hover:bg-purple-950/30"
+            >
+              <Bookmark className="w-3.5 h-3.5 text-purple-400" />
+              <span>Add to Watchlist</span>
+            </Button>
+
             {onNavigateToResearch && (
               <Button
                 variant="outline"
@@ -949,6 +980,16 @@ TACTICAL ENTRY PLAYBOOK:
           </div>
         </div>
       </DialogContent>
+
+      {/* Add To Watchlist Modal */}
+      {isWatchlistModalOpen && (
+        <AddToWatchlistModal
+          isOpen={isWatchlistModalOpen}
+          onClose={() => setIsWatchlistModalOpen(false)}
+          symbol={symbol}
+          companyName={diagnostic?.companyName}
+        />
+      )}
     </Dialog>
   );
 }

@@ -20,6 +20,9 @@ export interface UnifiedPosition {
     unrealizedPL: number;
     unrealizedPLPercent: number;
     source: 'IBKR' | 'Tastytrade' | 'Trading 212';
+    accountType?: 'ISA' | 'GIA' | 'MARGIN' | 'CASH';
+    accountName?: string; // e.g. 'IBKR ISA', 'IBKR GIA', 'Trading 212 ISA', 'Tastytrade Margin'
+    accountBadge?: string;
     assetType: 'Stock' | 'Option' | 'Crypto' | 'Other';
     // Option Specifics
     strike?: number;

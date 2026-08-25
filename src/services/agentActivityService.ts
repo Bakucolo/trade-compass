@@ -2,7 +2,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 export type AgentType =
   | 'PORTFOLIO_AUDIT'
+  | 'PORTFOLIO_VALUATION'
+  | 'DIP_ANALYZER'
   | 'POSITION_DEFENSE'
+  | 'MACRO_DOSSIER'
   | 'RESEARCH_AGENT'
   | 'STOCK_ANALYSIS'
   | 'TRADE_IDEA_GENERATOR'

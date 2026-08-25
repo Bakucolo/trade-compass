@@ -28,7 +28,8 @@ import {
   Activity,
   Globe,
   LineChart,
-  Bell
+  Bell,
+  Zap
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -64,6 +65,9 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { PriceAlertModal } from './PriceAlertModal';
 import { StockNoteModal } from './StockNoteModal';
+import { BulkWatchlistAlertModal } from './watchlist/BulkWatchlistAlertModal';
+import { CreateWatchlistModal } from './watchlist/CreateWatchlistModal';
+import { OddLotTenderModal } from './watchlist/OddLotTenderModal';
 import ReactMarkdown from 'react-markdown';
 
 type SortField =
@@ -147,6 +151,8 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
   const [newWatchlistName, setNewWatchlistName] = useState('');
   const [editingWatchlistId, setEditingWatchlistId] = useState<string | null>(null);
   const [editingWatchlistName, setEditingWatchlistName] = useState('');
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+  const [isOddLotModalOpen, setIsOddLotModalOpen] = useState(false);
 
   // Autocomplete Suggestions
   const [suggestions, setSuggestions] = useState<Array<{ symbol: string; name: string }>>([]);
@@ -413,7 +419,7 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button
             variant="outline"
             size="sm"
@@ -429,13 +435,23 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
           </Button>
 
           <Button
-            variant="glow"
+            variant="outline"
             size="sm"
             onClick={() => setIsCreatingWatchlist(true)}
-            className="gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90"
+            className="gap-1.5 border-border hover:border-primary/50"
           >
-            <FolderPlus className="w-4 h-4" />
+            <FolderPlus className="w-4 h-4 text-muted-foreground" />
             New Watchlist
+          </Button>
+
+          <Button
+            variant="glow"
+            size="sm"
+            onClick={() => setIsBulkModalOpen(true)}
+            className="gap-1.5 bg-gradient-to-r from-primary via-indigo-500 to-purple-600 hover:opacity-95 text-primary-foreground font-bold shadow-lg shadow-primary/20"
+          >
+            <Zap className="w-4 h-4 text-amber-300 animate-pulse" />
+            Bulk Add & Alerts
           </Button>
         </div>
       </div>
@@ -532,39 +548,28 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
           );
         })}
 
-        {/* Modal / Inline form to add new watchlist */}
-        {isCreatingWatchlist && (
-          <div className="flex items-center gap-1.5 bg-card/80 backdrop-blur border border-primary/50 rounded-xl p-1.5 animate-in fade-in slide-in-from-left-2 duration-300">
-            <Input
-              placeholder="Watchlist Name..."
-              value={newWatchlistName}
-              onChange={(e) => setNewWatchlistName(e.target.value)}
-              className="h-8 text-xs w-40 px-2.5 bg-background border-border"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleCreateWatchlist();
-                if (e.key === 'Escape') setIsCreatingWatchlist(false);
-              }}
-            />
-            <Button
-              size="sm"
-              variant="glow"
-              className="h-8 px-3 text-xs bg-primary text-primary-foreground"
-              onClick={handleCreateWatchlist}
-              disabled={createWatchlistMutation.isPending || !newWatchlistName.trim()}
-            >
-              {createWatchlistMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Create'}
-            </Button>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-8 w-8 text-muted-foreground"
-              onClick={() => setIsCreatingWatchlist(false)}
-            >
-              <X className="w-4 h-4" />
-            </Button>
-          </div>
-        )}
+        {/* Create Watchlist Button Trigger */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setIsCreatingWatchlist(true)}
+          className="h-9 text-xs gap-1.5 border-dashed border-border/80 hover:border-primary/60 text-muted-foreground hover:text-foreground rounded-xl"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          <span>New Watchlist</span>
+        </Button>
+
+        {/* Odd Lots Tender Agent Quick Trigger */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setIsOddLotModalOpen(true)}
+          className="h-9 text-xs gap-1.5 border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 hover:text-amber-200 rounded-xl font-semibold shadow-sm"
+          title="Open Odd Lots Tender Agent to scan arbitrage buybacks with Rule 13e-4 priority"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+          <span>Odd Lots Agent</span>
+        </Button>
       </div>
 
       {/* Quick Add Search Bar & Table Controls */}
@@ -592,7 +597,7 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
               </div>
               <Button
                 variant="glow"
-                className="h-11 px-5 gap-1.5 font-semibold bg-primary text-primary-foreground shrink-0"
+                className="h-11 px-4 gap-1.5 font-semibold bg-primary text-primary-foreground shrink-0"
                 onClick={() => handleAddTicker()}
                 disabled={addSymbolMutation.isPending || !newTickerInput.trim()}
               >
@@ -603,6 +608,29 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
                     <Plus className="w-4 h-4" /> Add Stock
                   </>
                 )}
+              </Button>
+
+              <Button
+                variant="outline"
+                className="h-11 px-3 gap-1.5 font-semibold border-primary/30 bg-primary/5 hover:bg-primary/15 text-primary shrink-0"
+                onClick={() => setIsBulkModalOpen(true)}
+                title="Open Bulk Input Window for multiple tickers & price alerts"
+              >
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                <span className="hidden sm:inline">Bulk Paste</span>
+              </Button>
+
+              <Button
+                variant="outline"
+                className="h-11 px-3.5 gap-1.5 font-semibold border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 shadow-sm shrink-0 group"
+                onClick={() => setIsOddLotModalOpen(true)}
+                title="Odd Lots Tender Agent - Find tender offers with Rule 13e-4 odd lot priority and save to Odd Lots watchlist"
+              >
+                <Sparkles className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform animate-pulse" />
+                <span className="hidden sm:inline">Odd Lots Agent</span>
+                <Badge className="bg-amber-500/20 text-amber-200 border-amber-500/40 text-[9px] px-1 py-0 ml-0.5">
+                  Tenders
+                </Badge>
               </Button>
             </div>
 
@@ -1500,6 +1528,42 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
               }
               queryClient.invalidateQueries({ queryKey: ['allAutonomousReports'] });
             }}
+          />
+
+          {/* Create Watchlist with Tickers Modal */}
+          <CreateWatchlistModal
+            isOpen={isCreatingWatchlist}
+            onClose={() => setIsCreatingWatchlist(false)}
+            onCreatedSuccess={(wId) => {
+              setSelectedWatchlistId(wId);
+              refetchWatchlists();
+              refetchData();
+            }}
+            onOpenBulkAlerts={() => setIsBulkModalOpen(true)}
+          />
+
+          {/* Bulk Watchlist & Alert Studio Modal */}
+          <BulkWatchlistAlertModal
+            isOpen={isBulkModalOpen}
+            onClose={() => setIsBulkModalOpen(false)}
+            defaultWatchlistId={selectedWatchlistId}
+            onSuccess={(wId) => {
+              setSelectedWatchlistId(wId);
+              refetchWatchlists();
+              refetchData();
+            }}
+          />
+
+          {/* Odd Lots Tender Arbitrage Agent Modal */}
+          <OddLotTenderModal
+            isOpen={isOddLotModalOpen}
+            onClose={() => setIsOddLotModalOpen(false)}
+            onWatchlistSaved={(wId) => {
+              setSelectedWatchlistId(wId);
+              refetchWatchlists();
+              refetchData();
+            }}
+            onNavigateToResearch={onNavigateToResearch}
           />
         </div>
       );

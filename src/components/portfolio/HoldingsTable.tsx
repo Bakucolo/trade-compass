@@ -30,7 +30,10 @@ import {
     Tag,
     X,
     Compass,
-    ExternalLink
+    ExternalLink,
+    AlertTriangle,
+    CheckCircle2,
+    Flame
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,7 +82,7 @@ interface SortConfig {
 export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode = false, onNavigateToResearch }: HoldingsTableProps) {
     // --- State ---
     const [searchQuery, setSearchQuery] = useState('');
-    const [brokerFilter, setBrokerFilter] = useState<'All' | 'IBKR' | 'Tastytrade' | 'Trading 212'>('All');
+    const [brokerFilter, setBrokerFilter] = useState<'All' | 'IBKR' | 'IBKR ISA' | 'IBKR GIA' | 'Tastytrade' | 'Trading 212'>('All');
     const [currencyFilter, setCurrencyFilter] = useState<'All' | 'USD' | 'CAD' | 'EUR' | 'GBP' | 'AUD'>('All');
     const [styleFilter, setStyleFilter] = useState<'All' | InvestmentStyle>('All');
     const [themeFilter, setThemeFilter] = useState<string>('All');
@@ -210,6 +213,73 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
         return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     };
 
+    // --- Helper to format option expiration date into human readable text e.g. "Sep 18, 2026" ---
+    const formatExpiryHuman = (expiryStr?: string): string => {
+        if (!expiryStr) return '—';
+        const date = parseExpiryDate(expiryStr);
+        if (!date) return expiryStr;
+        return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    };
+
+    // --- Helper to render rich human-readable DTE badge with urgency color coding ---
+    const renderDteBadge = (dte: number | null) => {
+        if (dte === null) return null;
+        if (dte < 0) {
+            return (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0.5 font-mono font-bold bg-rose-500/15 text-rose-300 border-rose-500/40">
+                    Expired
+                </Badge>
+            );
+        }
+        if (dte === 0) {
+            return (
+                <Badge className="text-[10px] px-2 py-0.5 font-mono font-black bg-rose-600 text-white animate-pulse shadow-rose-500/40 shadow-sm flex items-center gap-1">
+                    <Flame className="w-2.5 h-2.5" /> Expires Today
+                </Badge>
+            );
+        }
+        if (dte === 1) {
+            return (
+                <Badge className="text-[10px] px-2 py-0.5 font-mono font-bold bg-rose-500/25 text-rose-200 border border-rose-500/50 flex items-center gap-1">
+                    <Clock className="w-2.5 h-2.5 text-rose-400" /> 1d (Tomorrow)
+                </Badge>
+            );
+        }
+        if (dte <= 7) {
+            return (
+                <Badge className="text-[10px] px-2 py-0.5 font-mono font-bold bg-amber-500/25 text-amber-200 border border-amber-500/50 flex items-center gap-1">
+                    <Clock className="w-2.5 h-2.5 text-amber-400" /> {dte}d left (This Week)
+                </Badge>
+            );
+        }
+        if (dte <= 21) {
+            return (
+                <Badge variant="outline" className="text-[10px] px-2 py-0.5 font-mono font-semibold bg-purple-500/15 text-purple-300 border-purple-500/40 flex items-center gap-1">
+                    <Clock className="w-2.5 h-2.5 text-purple-400" /> {dte}d ({Math.ceil(dte / 7)}w)
+                </Badge>
+            );
+        }
+        if (dte <= 60) {
+            return (
+                <Badge variant="outline" className="text-[10px] px-2 py-0.5 font-mono font-semibold bg-cyan-500/15 text-cyan-300 border-cyan-500/40 flex items-center gap-1">
+                    <Clock className="w-2.5 h-2.5 text-cyan-400" /> {dte}d (~{Math.round(dte / 30)} mo)
+                </Badge>
+            );
+        }
+        if (dte <= 180) {
+            return (
+                <Badge variant="outline" className="text-[10px] px-2 py-0.5 font-mono font-medium bg-blue-500/15 text-blue-300 border-blue-500/30">
+                    {dte}d ({Math.round(dte / 30)} mos)
+                </Badge>
+            );
+        }
+        return (
+            <Badge variant="outline" className="text-[10px] px-2 py-0.5 font-mono font-bold bg-indigo-500/20 text-indigo-300 border-indigo-500/40">
+                LEAPS ({dte}d / {Math.round(dte / 30)}m)
+            </Badge>
+        );
+    };
+
     // --- Sorting Logic ---
     const sortPositions = (list: UnifiedPosition[]) => {
         if (!list || !Array.isArray(list)) return [];
@@ -297,9 +367,17 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
             );
         }
 
-        // 2. Broker Filter
+        // 2. Broker / Account Filter
         if (brokerFilter !== 'All') {
-            result = result.filter(p => p && p.source === brokerFilter);
+            if (brokerFilter === 'IBKR ISA') {
+                result = result.filter(p => p && p.source === 'IBKR' && (p.accountType === 'ISA' || p.accountBadge === 'IBKR (ISA)'));
+            } else if (brokerFilter === 'IBKR GIA') {
+                result = result.filter(p => p && p.source === 'IBKR' && (p.accountType !== 'ISA' && p.accountBadge !== 'IBKR (ISA)'));
+            } else if (brokerFilter === 'IBKR') {
+                result = result.filter(p => p && p.source === 'IBKR');
+            } else {
+                result = result.filter(p => p && p.source === brokerFilter);
+            }
         }
 
         // 3. Currency Filter
@@ -498,15 +576,26 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                                     {pos.investmentStyle || 'Growth'}
                                 </button>
 
-                                {/* Broker Badge */}
-                                <Badge variant="outline" className={cn(
-                                    "text-[9px] px-1.5 py-0 h-4 border-opacity-30",
-                                    pos.source === 'IBKR' ? "bg-orange-500/10 text-orange-400 border-orange-500" :
-                                    pos.source === 'Trading 212' ? "bg-blue-500/10 text-blue-400 border-blue-500" :
-                                    "bg-red-500/10 text-red-400 border-red-500"
-                                )}>
-                                    {pos.source}
-                                </Badge>
+                                {/* Broker / Specific Account Badge */}
+                                {pos.source === 'IBKR' ? (
+                                    (pos.accountType === 'ISA' || pos.accountBadge === 'IBKR (ISA)') ? (
+                                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 font-mono font-bold bg-amber-500/15 text-amber-300 border-amber-500/40 shadow-sm" title="Held in Interactive Brokers ISA (Tax-Free)">
+                                            IBKR (ISA)
+                                        </Badge>
+                                    ) : (
+                                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 font-mono font-bold bg-purple-500/15 text-purple-300 border-purple-500/40 shadow-sm" title="Held in Interactive Brokers GIA (Margin & Global)">
+                                            IBKR (GIA)
+                                        </Badge>
+                                    )
+                                ) : pos.source === 'Trading 212' ? (
+                                    <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 font-mono font-bold bg-blue-500/15 text-blue-300 border-blue-500/40" title="Held in Trading 212 ISA">
+                                        Trading 212
+                                    </Badge>
+                                ) : (
+                                    <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 font-mono font-bold bg-orange-500/15 text-orange-300 border-orange-500/40" title="Held in Tastytrade Margin">
+                                        Tastytrade
+                                    </Badge>
+                                )}
 
                                 {/* Foreign Currency Indicator */}
                                 {pos.currency && pos.currency !== 'USD' && (
@@ -580,20 +669,12 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                 {/* Expiry & DTE Column */}
                 <TableCell>
                     {isOption && pos.expiry ? (
-                        <div className="flex flex-col items-start gap-1">
-                            <span className="text-[10px] font-medium bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded border border-slate-700 whitespace-nowrap">
-                                {pos.expiry}
-                            </span>
-                            {dte !== null && (
-                                <Badge variant="outline" className={cn(
-                                    "text-[9px] px-1 py-0 h-3.5 border-opacity-40 font-mono",
-                                    dte <= 3 ? "bg-rose-500/20 text-rose-300 border-rose-500" :
-                                    dte <= 14 ? "bg-amber-500/20 text-amber-300 border-amber-500" :
-                                    "bg-purple-500/10 text-purple-300 border-purple-500"
-                                )}>
-                                    <Clock className="w-2 h-2 mr-0.5 inline" /> {dte}d DTE
-                                </Badge>
-                            )}
+                        <div className="flex flex-col items-start gap-1.5 min-w-[130px]">
+                            <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                                <Calendar className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                                <span>{formatExpiryHuman(pos.expiry)}</span>
+                            </div>
+                            {renderDteBadge(dte)}
                         </div>
                     ) : (
                         <div className="flex items-center gap-1">
@@ -615,27 +696,52 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                 {/* Strike & Option Type / Distance */}
                 <TableCell className="text-right">
                     {isOption && pos.strike ? (
-                        <div className="flex flex-col items-end gap-1">
+                        <div className="flex flex-col items-end gap-1.5 min-w-[150px]">
+                            {/* Strike Price & Call/Put Pill */}
                             <div className="flex items-center gap-1.5">
-                                <span className="font-mono text-xs font-bold text-foreground">
-                                    ${pos.strike}
+                                <span className="font-mono text-sm font-black text-foreground">
+                                    ${pos.strike.toFixed(2)}
                                 </span>
                                 <Badge className={cn(
-                                    "text-[9px] px-1.5 py-0 font-bold",
+                                    "text-[10px] px-2 py-0.5 font-bold uppercase shadow-sm tracking-wide",
                                     (pos.optionType === 'Call' || pos.optionType === 'C')
-                                        ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
-                                        : "bg-rose-500/20 text-rose-300 border border-rose-500/40"
+                                        ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-emerald-500/10"
+                                        : "bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-rose-500/10"
                                 )}>
-                                    {(pos.optionType === 'Call' || pos.optionType === 'C') ? 'C' : 'P'}
+                                    {(pos.optionType === 'Call' || pos.optionType === 'C') ? 'CALL' : 'PUT'}
                                 </Badge>
                             </div>
+
+                            {/* High-Visibility Color-Coded Moneyness & Distance Badge */}
                             <div className="flex items-center gap-1">
                                 {isITM ? (
-                                    <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/40 text-[8px] px-1 py-0 h-3 font-bold">ITM</Badge>
+                                    <Badge className={cn(
+                                        "text-[10.5px] px-2 py-0.5 font-mono font-black shadow-sm flex items-center gap-1 rounded-md",
+                                        isShort
+                                            ? "bg-rose-500/25 text-rose-200 border border-rose-500/50 shadow-rose-500/30 ring-1 ring-rose-500/30"
+                                            : "bg-emerald-500/25 text-emerald-200 border border-emerald-500/50 shadow-emerald-500/30 ring-1 ring-emerald-500/30"
+                                    )}>
+                                        {isShort ? <AlertTriangle className="w-3 h-3 text-rose-400 shrink-0" /> : <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />}
+                                        <span>ITM ({distance.toFixed(1)}% {isShort ? 'Breach' : 'In Money'})</span>
+                                    </Badge>
+                                ) : distance <= 3.0 ? (
+                                    <Badge className="bg-amber-500/25 text-amber-200 border border-amber-500/50 text-[10.5px] px-2 py-0.5 font-mono font-black shadow-sm flex items-center gap-1 rounded-md ring-1 ring-amber-500/30">
+                                        <Zap className="w-3 h-3 text-amber-400 shrink-0" />
+                                        <span>ATM ({distance.toFixed(1)}% away)</span>
+                                    </Badge>
+                                ) : distance <= 8.0 ? (
+                                    <Badge variant="outline" className="bg-amber-500/15 text-amber-300 border-amber-500/40 text-[10px] px-2 py-0.5 font-mono font-bold flex items-center gap-1 rounded-md">
+                                        <span>OTM ({distance.toFixed(1)}% away)</span>
+                                    </Badge>
+                                ) : distance <= 15.0 ? (
+                                    <Badge variant="outline" className="bg-cyan-500/15 text-cyan-300 border-cyan-500/40 text-[10px] px-2 py-0.5 font-mono font-bold flex items-center gap-1 rounded-md">
+                                        <span>OTM ({distance.toFixed(1)}% buffer)</span>
+                                    </Badge>
                                 ) : (
-                                    <Badge variant="outline" className="bg-slate-800 text-slate-400 border-slate-700 text-[8px] px-1 py-0 h-3 font-medium">OTM</Badge>
+                                    <Badge variant="outline" className="bg-emerald-500/15 text-emerald-400 border-emerald-500/40 text-[10px] px-2 py-0.5 font-mono font-bold flex items-center gap-1 rounded-md">
+                                        <span>OTM ({distance.toFixed(1)}% cushion)</span>
+                                    </Badge>
                                 )}
-                                <span className="text-[10px] font-mono text-muted-foreground">{distance.toFixed(1)}%</span>
                             </div>
                         </div>
                     ) : (
@@ -978,11 +1084,11 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                         </div>
                     </div>
 
-                    {/* Broker Selector */}
+                    {/* Broker / Account Selector */}
                     <div className="flex items-center gap-1">
-                        <span className="text-xs text-muted-foreground mr-1 hidden sm:inline">Broker:</span>
-                        <div className="flex p-0.5 bg-slate-950/60 rounded-lg border border-white/5">
-                            {(['All', 'IBKR', 'Tastytrade', 'Trading 212'] as const).map((filter) => (
+                        <span className="text-xs text-muted-foreground mr-1 hidden sm:inline">Account:</span>
+                        <div className="flex p-0.5 bg-slate-950/60 rounded-lg border border-white/5 flex-wrap gap-0.5">
+                            {(['All', 'IBKR ISA', 'IBKR GIA', 'Tastytrade', 'Trading 212'] as const).map((filter) => (
                                 <button
                                     key={filter}
                                     onClick={() => setBrokerFilter(filter)}

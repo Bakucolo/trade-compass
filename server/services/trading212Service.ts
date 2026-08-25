@@ -219,8 +219,6 @@ export async function syncTrading212HoldingsToDB(prisma: PrismaClient): Promise<
           averageCost: nativeAverageCost,
           currentPrice: nativeCurrentPrice,
           marketValue,
-          dayPnL: 0,
-          dayPnLPercent: 0,
           unrealizedPnL,
           unrealizedPnLPercent,
           currency,
