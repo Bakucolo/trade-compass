@@ -867,8 +867,8 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                 <TabsContent value="structures" className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                   <StructuredTradesCard
                     symbol={selectedSymbol}
-                    currentPrice={currentPrice || quote.price}
-                    companyName={quote.name || dossier?.header?.shortName}
+                    currentPrice={currentPrice || quote?.price || 0}
+                    companyName={quote?.name || dossier?.header?.shortName || selectedSymbol}
                     onNavigateToIdeas={() => onNavigateTab?.('ideas')}
                   />
                 </TabsContent>
@@ -1377,7 +1377,7 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
         isOpen={isTradeStructureModalOpen}
         onClose={() => setIsTradeStructureModalOpen(false)}
         initialSymbol={selectedSymbol}
-        initialPrice={currentPrice || quote.price}
+        initialPrice={currentPrice || quote?.price || 0}
         initialThesis={dossier?.companyOverview || ''}
         onSavedSuccess={() => {
           queryClient.invalidateQueries({ queryKey: ['tradeIdeas'] });
