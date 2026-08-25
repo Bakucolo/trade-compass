@@ -265,12 +265,16 @@ export async function analyzePortfolioCoveredCalls(
 ): Promise<CoveredCallsAnalysisResult> {
   const scanTimestamp = new Date().toISOString();
 
-  // 1. Fetch all user holdings from DB
+  // 1. Fetch all user holdings from DB with broker relation
   const rawHoldings = await prisma.holding.findMany({
+    include: { broker: true },
     orderBy: { marketValue: 'desc' },
   });
 
-  logToFile(`[Covered Calls] Scanning ${rawHoldings.length} portfolio records for covered call candidates...`);
+  const IBKR_ISA_ACCOUNT = 'U14522424';
+  const IBKR_GIA_ACCOUNT = 'U15491236';
+
+  logToFile(`[Covered Calls] Scanning ${rawHoldings.length} portfolio records (filtering strictly for Tastytrade & IBKR GIA)...`);
 
   // 2. Group holdings and options by underlying symbol
   interface AggregatedUnderlying {
@@ -290,6 +294,40 @@ export async function analyzePortfolioCoveredCalls(
     const rawSym = (h.symbol || '').trim().toUpperCase();
     if (!rawSym) continue;
 
+    // Detect broker & account eligibility:
+    // USER MANDATE: Covered Call Harvester must ONLY propose covered calls for Tastytrade and IBKR GIA.
+    // Trading 212 and IBKR ISA (U14522424) cannot trade or sell call options.
+    const brokerName = (h.broker?.name || '').trim();
+    const isTastytrade = brokerName.toLowerCase().includes('tasty');
+    const isTrading212 = brokerName.toLowerCase().includes('trading 212') || brokerName.toLowerCase().includes('t212') || (h.brokerSpecificId && h.brokerSpecificId.toLowerCase().includes('t212'));
+
+    // Exclude Trading 212
+    if (isTrading212) continue;
+
+    const isIbkr = brokerName.toLowerCase().includes('interactive') || brokerName.toLowerCase().includes('ibkr') || !h.broker;
+
+    let isEligibleAccount = false;
+    let brokerTag = '';
+
+    if (isTastytrade) {
+      isEligibleAccount = true;
+      brokerTag = 'Tastytrade';
+    } else if (isIbkr) {
+      const isExplicitIsa = h.brokerSpecificId?.includes(IBKR_ISA_ACCOUNT);
+      const isExplicitGia = h.brokerSpecificId?.includes(IBKR_GIA_ACCOUNT);
+      const isIsa = isExplicitIsa || (!isExplicitGia && h.assetType !== 'OPTION' && (h.quantity || 0) > 0);
+
+      // Only IBKR GIA is eligible for covered calls (ISA cash accounts cannot sell covered calls)
+      if (!isIsa) {
+        isEligibleAccount = true;
+        brokerTag = 'IBKR GIA';
+      }
+    }
+
+    if (!isEligibleAccount) {
+      continue;
+    }
+
     // Detect if this is an option contract
     const isOption = h.assetType === 'OPTION' || rawSym.includes('  ') || Boolean(h.optionType);
     const underlying = isOption ? (h.underlyingSymbol || rawSym.split(' ')[0] || rawSym) : rawSym;
@@ -308,13 +346,13 @@ export async function analyzePortfolioCoveredCalls(
     }
 
     const group = underlyingMap.get(underlying)!;
-    if (h.broker) group.brokers.add(h.broker);
+    if (brokerTag) group.brokers.add(brokerTag);
     if (h.currentPrice && h.currentPrice > 0 && group.currentPrice === 0) {
       group.currentPrice = h.currentPrice;
     }
 
     if (!isOption) {
-      // Direct stock equity holding
+      // Direct stock equity holding in Tastytrade or IBKR GIA
       group.shares += h.quantity || 0;
       group.marketValue += h.marketValue || (h.quantity * (h.currentPrice || 0));
     } else {

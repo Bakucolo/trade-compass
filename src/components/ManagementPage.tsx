@@ -160,11 +160,16 @@ export function ManagementPage({
             <div className="flex items-center gap-2.5">
               <Zap className="w-5 h-5 text-emerald-400 shrink-0" />
               <div>
-                <h3 className="text-sm font-bold text-foreground">
-                  Covered Calls Income Harvester (Net Delta &ge; 100)
-                </h3>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm font-bold text-foreground">
+                    Covered Calls Income Harvester (Net Delta &ge; 100)
+                  </h3>
+                  <Badge variant="outline" className="text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-300 border-emerald-500/30">
+                    Tastytrade &amp; IBKR GIA
+                  </Badge>
+                </div>
                 <p className="text-xs text-muted-foreground">
-                  Identifies stock and LEAPs positions with surplus unhedged delta (&ge;100 Delta) lacking short call protection, with live 3-tier strike recommendations.
+                  Identifies stock and LEAPs positions in options-eligible accounts (Tastytrade &amp; IBKR GIA) with surplus unhedged delta (&ge;100 Delta), excluding cash/ISA accounts.
                 </p>
               </div>
             </div>
