@@ -74,7 +74,7 @@ const Index = () => {
       case 'ideas':
         return <IdeasPage onNavigateToResearch={handleNavigateToResearch} />;
       case 'research':
-        return <ResearchPage initialSymbol={researchTicker} />;
+        return <ResearchPage initialSymbol={researchTicker} onNavigateTab={setActiveTab} />;
       case 'portfolio':
       case 'brokers':
         return <BrokersPage onNavigateToResearch={handleNavigateToResearch} />;

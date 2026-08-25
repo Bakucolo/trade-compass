@@ -27,6 +27,8 @@ import { AutonomousReportsList } from './AutonomousReportsList';
 import { AutonomousReportViewerModal } from './AutonomousReportViewerModal';
 import { GrowthAndValuationCard } from './research/GrowthAndValuationCard';
 import { InvestorRelationsCard } from './research/InvestorRelationsCard';
+import { StructuredTradesCard } from './research/StructuredTradesCard';
+import { TradeStructureModal } from './TradeStructureModal';
 import ReactMarkdown from 'react-markdown';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,12 +47,18 @@ function useDebounceValue<T>(value: T, delay: number): T {
 
 const POPULAR_TICKERS = ['AAPL', 'NVDA', 'TSLA', 'MSFT', 'AMZN', 'PLTR', 'CCJ', 'SMR'];
 
-export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
+interface ResearchPageProps {
+  initialSymbol?: string;
+  onNavigateTab?: (tab: string) => void;
+}
+
+export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps) {
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
   const debouncedSearch = useDebounceValue(searchQuery, 400);
   const [selectedSymbol, setSelectedSymbol] = useState(initialSymbol || 'AAPL');
   const [activeDataTab, setActiveDataTab] = useState('overview');
+  const [isTradeStructureModalOpen, setIsTradeStructureModalOpen] = useState(false);
 
   // Full Page View Mode State (defaults to true for maximum screen space, persisted in localStorage)
   const [isFullPageMode, setIsFullPageMode] = useState<boolean>(() => {
@@ -739,6 +747,16 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
                       <Button
                         size="sm"
                         variant="outline"
+                        onClick={() => setIsTradeStructureModalOpen(true)}
+                        className="h-8 text-xs font-bold bg-gradient-to-r from-purple-600/20 via-indigo-600/20 to-purple-600/20 text-purple-200 border-purple-500/40 hover:bg-purple-500/30 gap-1.5 shadow-sm"
+                      >
+                        <Layers className="w-3.5 h-3.5 text-purple-300" />
+                        <span>Structure Trade Idea</span>
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="outline"
                         onClick={() => setActiveDataTab('growth-valuation')}
                         className="h-8 text-xs font-bold bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20 gap-1.5 shadow-sm"
                       >
@@ -782,12 +800,18 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
 
               {/* ================= DATA TABS RIBBON ================= */}
               <Tabs value={activeDataTab} onValueChange={setActiveDataTab} className="w-full">
-                <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 h-auto p-1.5 bg-card/70 backdrop-blur-xl border border-border/70 rounded-2xl gap-1.5">
+                <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 h-auto p-1.5 bg-card/70 backdrop-blur-xl border border-border/70 rounded-2xl gap-1.5">
                   <TabsTrigger
                     value="overview"
                     className="rounded-xl py-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
                   >
                     <BarChart3 className="w-3.5 h-3.5" /> Overview
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="structures"
+                    className="rounded-xl py-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-600 data-[state=active]:via-indigo-600 data-[state=active]:to-purple-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <Layers className="w-3.5 h-3.5 text-purple-300" /> Structured Trades
                   </TabsTrigger>
                   <TabsTrigger
                     value="growth-valuation"
@@ -838,6 +862,16 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
                     )}
                   </TabsTrigger>
                 </TabsList>
+
+                {/* ================= 0. STRUCTURED TRADES & IDEAS GENERATOR TAB ================= */}
+                <TabsContent value="structures" className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <StructuredTradesCard
+                    symbol={selectedSymbol}
+                    currentPrice={currentPrice || quote.price}
+                    companyName={quote.name || dossier?.header?.shortName}
+                    onNavigateToIdeas={() => onNavigateTab?.('ideas')}
+                  />
+                </TabsContent>
 
                 {/* ================= 0. GROWTH & FORWARD VALUATION TAB ================= */}
                 <TabsContent value="growth-valuation" className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -1336,6 +1370,18 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
         onClose={() => setIdeaModalState({ open: false })}
         initialSymbol={selectedSymbol}
         initialContent={ideaModalState.initialThesis}
+      />
+
+      {/* Trade Structure & Playbook Modal */}
+      <TradeStructureModal
+        isOpen={isTradeStructureModalOpen}
+        onClose={() => setIsTradeStructureModalOpen(false)}
+        initialSymbol={selectedSymbol}
+        initialPrice={currentPrice || quote.price}
+        initialThesis={dossier?.companyOverview || ''}
+        onSavedSuccess={() => {
+          queryClient.invalidateQueries({ queryKey: ['tradeIdeas'] });
+        }}
       />
     </div>
   );

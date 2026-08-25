@@ -40,6 +40,7 @@ import {
   TradeStructureResult,
   useStructureTrade,
   useSaveIdeaApproaches,
+  useCreateTradeIdea,
 } from '@/services/ideaService';
 import { createAlert } from '@/services/alertService';
 import { toast } from 'sonner';
@@ -47,7 +48,11 @@ import { toast } from 'sonner';
 interface TradeStructureModalProps {
   isOpen: boolean;
   onClose: () => void;
-  idea: TradeIdea | null;
+  idea?: TradeIdea | null;
+  initialSymbol?: string;
+  initialPrice?: number;
+  initialThesis?: string;
+  initialSentiment?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   onSavedSuccess?: () => void;
 }
 
@@ -55,32 +60,41 @@ export function TradeStructureModal({
   isOpen,
   onClose,
   idea,
+  initialSymbol,
+  initialPrice,
+  initialThesis,
+  initialSentiment = 'BULLISH',
   onSavedSuccess,
 }: TradeStructureModalProps) {
   const structureTradeMutation = useStructureTrade();
   const saveApproachesMutation = useSaveIdeaApproaches();
+  const createIdeaMutation = useCreateTradeIdea();
 
   const [structureResult, setStructureResult] = useState<TradeStructureResult | null>(null);
   const [selectedApproachIds, setSelectedApproachIds] = useState<Set<string>>(new Set());
   const [isAlertsLoading, setIsAlertsLoading] = useState(false);
 
-  // Auto-fetch structure when opened for a given idea
+  const activeSymbol = idea?.symbol || initialSymbol || '';
+  const activeSentiment = idea?.type || initialSentiment || 'BULLISH';
+  const activePrice = idea?.entryPrice || initialPrice;
+
+  // Auto-fetch structure when opened for a given idea or direct symbol
   useEffect(() => {
-    if (isOpen && idea) {
+    if (isOpen && (idea || initialSymbol)) {
       setStructureResult(null);
       setSelectedApproachIds(new Set());
 
       structureTradeMutation.mutate(
         {
-          ideaId: idea.id,
-          symbol: idea.symbol,
-          title: idea.title,
-          content: idea.content,
-          type: idea.type,
-          entryPrice: idea.entryPrice,
-          targetPrice: idea.targetPrice,
-          stopLoss: idea.stopLoss,
-          timeframe: idea.timeframe,
+          ideaId: idea?.id,
+          symbol: activeSymbol.toUpperCase(),
+          title: idea?.title || `${activeSymbol.toUpperCase()} Quantitative Trade Structure`,
+          content: idea?.content || initialThesis,
+          type: activeSentiment,
+          entryPrice: activePrice,
+          targetPrice: idea?.targetPrice,
+          stopLoss: idea?.stopLoss,
+          timeframe: idea?.timeframe || 'SWING',
         },
         {
           onSuccess: (data) => {
@@ -101,12 +115,12 @@ export function TradeStructureModal({
         }
       );
     }
-  }, [isOpen, idea?.id]);
+  }, [isOpen, idea?.id, initialSymbol]);
 
-  if (!idea) return null;
+  if (!idea && !initialSymbol) return null;
 
-  const isBullish = idea.type === 'BULLISH';
-  const isBearish = idea.type === 'BEARISH';
+  const isBullish = activeSentiment === 'BULLISH';
+  const isBearish = activeSentiment === 'BEARISH';
 
   const toggleApproachSelect = (id: string) => {
     setSelectedApproachIds((prev) => {
@@ -136,14 +150,60 @@ export function TradeStructureModal({
     const selectedList = structureResult.approaches.filter((a) => selectedApproachIds.has(a.id));
 
     try {
-      await saveApproachesMutation.mutateAsync({
-        ideaId: idea.id,
-        approaches: selectedList,
-      });
+      if (idea?.id) {
+        // Update existing idea
+        await saveApproachesMutation.mutateAsync({
+          ideaId: idea.id,
+          approaches: selectedList,
+        });
 
-      toast.success(`Successfully attached ${selectedList.length} trade execution structure(s) to ${idea.symbol}!`, {
-        description: 'The execution playbooks and entry rules have been updated in your trade idea.',
-      });
+        toast.success(`Successfully attached ${selectedList.length} trade execution structure(s) to ${idea.symbol}!`, {
+          description: 'The execution playbooks and entry rules have been updated in your trade idea.',
+        });
+      } else {
+        // Create new Idea from Research
+        const primaryApproach = selectedList[0];
+        const formattedTitle = `${activeSymbol.toUpperCase()} ${primaryApproach.approachName} (${primaryApproach.strategyType})`;
+        
+        const contentMarkdown = `### 🎯 Thesis: ${primaryApproach.approachName}
+${primaryApproach.thesis}
+
+---
+
+### 📋 Selected Execution Structures (${selectedList.length})
+${selectedList.map((app, i) => `
+#### ${i + 1}. ${app.approachName} (${app.strategyType})
+- **Sentiment**: ${app.sentiment} | **Horizon**: ${app.timeframe}
+- **Capital Required**: $${app.capitalRequired?.toLocaleString() || 'N/A'}
+- **Max Profit**: $${app.maxProfit?.toLocaleString() || 'Uncapped'} (${app.maxProfitPercent ? `+${app.maxProfitPercent}%` : ''})
+- **Max Risk**: $${app.maxRisk?.toLocaleString() || 'Defined'}
+- **Win Rate / POP**: ${app.winRatePercent || 65}% | **Efficiency**: ${app.capitalEfficiencyRating || 'A'}
+- **Breakevens**: ${app.breakEvenLevels?.map(b => `$${b}`).join(', ') || 'N/A'}
+
+**Contract Legs**:
+${app.legs?.map((leg, lIdx) => `- ${leg.action} ${leg.quantity}x ${leg.assetType} ${leg.strike ? `@ $${leg.strike}` : ''} ${leg.expiry ? `(Exp: ${leg.expiry})` : ''}`).join('\n')}
+
+- 🛑 **Invalidation**: ${app.invalidationTrigger}
+- 🎯 **Profit Target**: ${app.profitTakingPlan}
+`).join('\n---\n')}
+`;
+
+        await createIdeaMutation.mutateAsync({
+          symbol: activeSymbol.toUpperCase(),
+          title: formattedTitle,
+          type: activeSentiment,
+          timeframe: 'SWING',
+          entryPrice: activePrice || null,
+          content: contentMarkdown,
+          tags: `${activeSymbol.toUpperCase()}, ${primaryApproach.strategyType}, StructuredTrade, Research`,
+          status: 'ACTIVE',
+          confidenceScore: primaryApproach.winRatePercent || 75,
+        });
+
+        toast.success(`Successfully created new Trade Idea for ${activeSymbol.toUpperCase()}!`, {
+          description: `Attached ${selectedList.length} structured execution playbook(s) to your Ideas section.`,
+        });
+      }
 
       onSavedSuccess?.();
       onClose();
@@ -161,10 +221,10 @@ export function TradeStructureModal({
       // 1. Primary Entry Alert
       if (approach.primaryEntry && approach.primaryEntry > 0) {
         await createAlert({
-          symbol: idea.symbol,
+          symbol: activeSymbol,
           targetPrice: approach.primaryEntry,
           condition: isBullish ? 'BELOW' : 'ABOVE',
-          notes: `[Entry Trigger] ${approach.title} on ${idea.symbol} at $${approach.primaryEntry.toFixed(2)}`,
+          notes: `[Entry Trigger] ${approach.title} on ${activeSymbol} at $${approach.primaryEntry.toFixed(2)}`,
         });
         createdCount++;
       }
@@ -172,7 +232,7 @@ export function TradeStructureModal({
       // 2. Scaled / Dip Support Entry Alert
       if (approach.scaledEntryMin && approach.scaledEntryMin !== approach.primaryEntry) {
         await createAlert({
-          symbol: idea.symbol,
+          symbol: activeSymbol,
           targetPrice: approach.scaledEntryMin,
           condition: isBullish ? 'BELOW' : 'ABOVE',
           notes: `[Scaled Dip Entry] Secondary support entry for ${approach.title} at $${approach.scaledEntryMin.toFixed(2)}`,
@@ -183,7 +243,7 @@ export function TradeStructureModal({
       // 3. Target Alert
       if (approach.targetPrice && approach.targetPrice > 0) {
         await createAlert({
-          symbol: idea.symbol,
+          symbol: activeSymbol,
           targetPrice: approach.targetPrice,
           condition: isBullish ? 'ABOVE' : 'BELOW',
           notes: `[Profit Target 1] Take profit on ${approach.title} at $${approach.targetPrice.toFixed(2)}`,
@@ -194,7 +254,7 @@ export function TradeStructureModal({
       // 4. Invalidation Stop Alert
       if (approach.stopLoss && approach.stopLoss > 0) {
         await createAlert({
-          symbol: idea.symbol,
+          symbol: activeSymbol,
           targetPrice: approach.stopLoss,
           condition: isBullish ? 'BELOW' : 'ABOVE',
           notes: `[Stop Invalidation] Stop Loss trigger on ${approach.title} at $${approach.stopLoss.toFixed(2)}`,
@@ -202,7 +262,7 @@ export function TradeStructureModal({
         createdCount++;
       }
 
-      toast.success(`Created ${createdCount} price alerts for ${idea.symbol}!`, {
+      toast.success(`Created ${createdCount} price alerts for ${activeSymbol}!`, {
         description: `Alerts set for Entry ($${approach.primaryEntry}), Target ($${approach.targetPrice}), and Stop ($${approach.stopLoss}).`,
       });
     } catch (err: any) {
@@ -227,7 +287,7 @@ export function TradeStructureModal({
       for (const app of selectedList) {
         if (app.primaryEntry && app.primaryEntry > 0) {
           await createAlert({
-            symbol: idea.symbol,
+            symbol: activeSymbol,
             targetPrice: app.primaryEntry,
             condition: isBullish ? 'BELOW' : 'ABOVE',
             notes: `[Entry Trigger] ${app.title} at $${app.primaryEntry.toFixed(2)}`,
@@ -236,7 +296,7 @@ export function TradeStructureModal({
         }
         if (app.targetPrice && app.targetPrice > 0) {
           await createAlert({
-            symbol: idea.symbol,
+            symbol: activeSymbol,
             targetPrice: app.targetPrice,
             condition: isBullish ? 'ABOVE' : 'BELOW',
             notes: `[Target 1] ${app.title} at $${app.targetPrice.toFixed(2)}`,
@@ -305,11 +365,11 @@ export function TradeStructureModal({
                     )}
                   >
                     {isBullish ? <TrendingUp className="w-3 h-3 mr-1 inline" /> : isBearish ? <TrendingDown className="w-3 h-3 mr-1 inline" /> : <Minus className="w-3 h-3 mr-1 inline" />}
-                    {idea.symbol} • {idea.type}
+                    {activeSymbol} • {activeSentiment}
                   </Badge>
-                  {idea.currentPrice && (
+                  {activePrice && (
                     <Badge variant="outline" className="font-mono text-xs font-bold text-foreground bg-slate-900 border-border/60">
-                      Market: ${idea.currentPrice.toFixed(2)}
+                      Market: ${activePrice.toFixed(2)}
                     </Badge>
                   )}
                 </div>
@@ -325,15 +385,15 @@ export function TradeStructureModal({
                 size="sm"
                 onClick={() => {
                   structureTradeMutation.mutate({
-                    ideaId: idea.id,
-                    symbol: idea.symbol,
-                    title: idea.title,
-                    content: idea.content,
-                    type: idea.type,
-                    entryPrice: idea.entryPrice,
-                    targetPrice: idea.targetPrice,
-                    stopLoss: idea.stopLoss,
-                    timeframe: idea.timeframe,
+                    ideaId: idea?.id,
+                    symbol: activeSymbol.toUpperCase(),
+                    title: idea?.title || `${activeSymbol.toUpperCase()} Quantitative Trade Structure`,
+                    content: idea?.content || initialThesis,
+                    type: activeSentiment,
+                    entryPrice: activePrice,
+                    targetPrice: idea?.targetPrice,
+                    stopLoss: idea?.stopLoss,
+                    timeframe: idea?.timeframe || 'SWING',
                   });
                 }}
                 disabled={structureTradeMutation.isPending}
@@ -352,7 +412,7 @@ export function TradeStructureModal({
             <div className="py-20 flex flex-col items-center justify-center gap-3 text-center">
               <Loader2 className="w-8 h-8 animate-spin text-purple-400" />
               <p className="text-sm font-bold text-foreground">
-                AI Derivatives Strategist is structuring multi-approach execution plans for {idea.symbol}...
+                AI Derivatives Strategist is structuring multi-approach execution plans for {activeSymbol}...
               </p>
               <p className="text-xs text-muted-foreground max-w-md">
                 Computing optimal strikes, DTE expiration cycles, entry limit zones, covered call yields, collar floors, and risk-reward ratios.
