@@ -8,7 +8,8 @@ import {
   Globe, Clock, Sparkles, AlertTriangle, FileText, Download,
   SlidersHorizontal, Settings2, Scale, ExternalLink,
   Layers, ArrowUpRight, ArrowDownRight, ShieldCheck,
-  CheckCircle2, Compass, Zap, Flame, Lightbulb, Bookmark
+  CheckCircle2, Compass, Zap, Flame, Lightbulb, Bookmark,
+  PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -50,6 +51,24 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
   const debouncedSearch = useDebounceValue(searchQuery, 400);
   const [selectedSymbol, setSelectedSymbol] = useState(initialSymbol || 'AAPL');
   const [activeDataTab, setActiveDataTab] = useState('overview');
+
+  // Full Page View Mode State (defaults to true for maximum screen space, persisted in localStorage)
+  const [isFullPageMode, setIsFullPageMode] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('tradeflow_research_full_page');
+      return saved !== null ? JSON.parse(saved) : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleFullPageMode = () => {
+    setIsFullPageMode((prev) => {
+      const next = !prev;
+      localStorage.setItem('tradeflow_research_full_page', JSON.stringify(next));
+      return next;
+    });
+  };
 
   // Report Prompts State
   const { data: reportPrompts = [] } = useReportPrompts();
@@ -327,6 +346,35 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
             <span>Portfolio Fit</span>
           </Button>
 
+          {/* Full Page (100% Width) View Mode Toggle */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={toggleFullPageMode}
+            className={cn(
+              "text-xs gap-1.5 h-9 font-bold transition-all shadow-sm",
+              isFullPageMode
+                ? "bg-primary/20 text-primary border-primary/40 hover:bg-primary/30 ring-1 ring-primary/30"
+                : "hover:bg-accent/40 text-muted-foreground hover:text-foreground border-border/70"
+            )}
+            title={isFullPageMode ? "Switch to Split Explorer View" : "Expand to 100% Full Page View"}
+          >
+            {isFullPageMode ? (
+              <>
+                <PanelLeftOpen className="w-3.5 h-3.5 text-primary" />
+                <span className="hidden sm:inline">Split View</span>
+                <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-primary/40 text-primary font-mono ml-0.5">
+                  100% Full Width
+                </Badge>
+              </>
+            ) : (
+              <>
+                <PanelLeftClose className="w-3.5 h-3.5 text-muted-foreground" />
+                <span>Full Page View</span>
+              </>
+            )}
+          </Button>
+
           {/* Generate Report Button */}
           <Button
             onClick={handleAgentGeneration}
@@ -342,133 +390,208 @@ export function ResearchPage({ initialSymbol }: { initialSymbol?: string }) {
         </div>
       </div>
 
-      {/* ================= MAIN 2-COLUMN LAYOUT ================= */}
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 items-start">
-        {/* Left Sidebar: Asset Search & Quick Tickers */}
-        <div className="xl:col-span-1 space-y-6">
-          <Card className="bg-card/60 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden">
-            <CardHeader className="p-4 pb-3 border-b border-border/40 bg-accent/20">
-              <CardTitle className="text-sm font-bold flex items-center gap-2 text-foreground">
-                <Search className="w-4 h-4 text-primary" />
-                Asset Explorer
-              </CardTitle>
-            </CardHeader>
-
-            <CardContent className="p-4 space-y-4">
-              {/* Search Input */}
-              <div className="relative group">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
-                <Input
-                  placeholder="Ticker (e.g. NVDA, PLTR, CCJ)"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const trimmed = searchQuery.trim().toUpperCase();
-                      if (trimmed) {
-                        if (searchResults && searchResults.length > 0) {
-                          setSelectedSymbol(searchResults[0].symbol);
-                        } else {
-                          setSelectedSymbol(trimmed);
-                        }
-                      }
+      {/* ================= FULL PAGE QUICK TICKER RIBBON (When Full Page Mode is ON) ================= */}
+      {isFullPageMode && (
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 p-3.5 bg-card/70 backdrop-blur-xl border border-border/70 rounded-2xl shadow-sm animate-in fade-in">
+          {/* Quick Search Input */}
+          <div className="relative flex-1 max-w-md group">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
+            <Input
+              placeholder="Search any ticker (e.g. NVDA, PLTR, CCJ, TSLA)..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const trimmed = searchQuery.trim().toUpperCase();
+                  if (trimmed) {
+                    if (searchResults && searchResults.length > 0) {
+                      setSelectedSymbol(searchResults[0].symbol);
+                    } else {
+                      setSelectedSymbol(trimmed);
                     }
-                  }}
-                  className="pl-9 pr-10 bg-background/60 border-border/60 focus:border-primary/50 text-xs font-mono uppercase h-9 rounded-xl shadow-inner"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const trimmed = searchQuery.trim().toUpperCase();
-                      if (trimmed) {
-                        if (searchResults && searchResults.length > 0) {
-                          setSelectedSymbol(searchResults[0].symbol);
-                        } else {
-                          setSelectedSymbol(trimmed);
+                    setSearchQuery('');
+                  }
+                }
+              }}
+              className="pl-9 pr-12 bg-background/70 border-border/60 focus:border-primary/50 text-xs font-mono uppercase h-8.5 rounded-xl shadow-inner font-bold"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  const trimmed = searchQuery.trim().toUpperCase();
+                  if (trimmed) {
+                    if (searchResults && searchResults.length > 0) {
+                      setSelectedSymbol(searchResults[0].symbol);
+                    } else {
+                      setSelectedSymbol(trimmed);
+                    }
+                    setSearchQuery('');
+                  }
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold bg-primary text-primary-foreground px-2 py-0.5 rounded-md hover:opacity-90 transition-opacity"
+              >
+                Go
+              </button>
+            )}
+          </div>
+
+          {/* Popular Tickers Fast Selector */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
+            <span className="text-[10px] uppercase font-bold text-muted-foreground shrink-0 mr-1 flex items-center gap-1">
+              <Zap className="w-3 h-3 text-amber-400" /> Fast Watch:
+            </span>
+            {POPULAR_TICKERS.map((ticker) => (
+              <button
+                key={ticker}
+                type="button"
+                onClick={() => setSelectedSymbol(ticker)}
+                className={cn(
+                  "text-xs px-2.5 py-1 rounded-lg font-mono font-bold transition-all border shrink-0",
+                  selectedSymbol === ticker
+                    ? "bg-primary text-primary-foreground border-primary shadow-sm ring-1 ring-primary/30"
+                    : "bg-card/50 hover:bg-accent/60 text-muted-foreground hover:text-foreground border-border/50"
+                )}
+              >
+                {ticker}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ================= MAIN DOSSIER LAYOUT (Full Page 100% or Split 2-Column) ================= */}
+      <div className={cn(
+        "gap-6 items-start",
+        isFullPageMode ? "w-full space-y-6" : "grid grid-cols-1 xl:grid-cols-4"
+      )}>
+        {/* Left Sidebar: Asset Search & Quick Tickers (Only visible when Full Page mode is OFF) */}
+        {!isFullPageMode && (
+          <div className="xl:col-span-1 space-y-6">
+            <Card className="bg-card/60 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden">
+              <CardHeader className="p-4 pb-3 border-b border-border/40 bg-accent/20">
+                <CardTitle className="text-sm font-bold flex items-center gap-2 text-foreground">
+                  <Search className="w-4 h-4 text-primary" />
+                  Asset Explorer
+                </CardTitle>
+              </CardHeader>
+
+              <CardContent className="p-4 space-y-4">
+                {/* Search Input */}
+                <div className="relative group">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
+                  <Input
+                    placeholder="Ticker (e.g. NVDA, PLTR, CCJ)"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const trimmed = searchQuery.trim().toUpperCase();
+                        if (trimmed) {
+                          if (searchResults && searchResults.length > 0) {
+                            setSelectedSymbol(searchResults[0].symbol);
+                          } else {
+                            setSelectedSymbol(trimmed);
+                          }
                         }
                       }
                     }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold bg-primary text-primary-foreground px-2 py-0.5 rounded-md hover:opacity-90 transition-opacity"
-                  >
-                    Go
-                  </button>
-                )}
-              </div>
-
-              {/* Quick Select Popular Tickers */}
-              <div className="space-y-1.5">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
-                  Quick Watch Tickers
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {POPULAR_TICKERS.map((ticker) => (
+                    className="pl-9 pr-10 bg-background/60 border-border/60 focus:border-primary/50 text-xs font-mono uppercase h-9 rounded-xl shadow-inner"
+                  />
+                  {searchQuery && (
                     <button
-                      key={ticker}
                       type="button"
-                      onClick={() => setSelectedSymbol(ticker)}
-                      className={cn(
-                        "text-xs px-2.5 py-1 rounded-lg font-mono font-bold transition-all border",
-                        selectedSymbol === ticker
-                          ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                          : "bg-card/40 hover:bg-accent/60 text-muted-foreground hover:text-foreground border-border/50"
-                      )}
+                      onClick={() => {
+                        const trimmed = searchQuery.trim().toUpperCase();
+                        if (trimmed) {
+                          if (searchResults && searchResults.length > 0) {
+                            setSelectedSymbol(searchResults[0].symbol);
+                          } else {
+                            setSelectedSymbol(trimmed);
+                          }
+                        }
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold bg-primary text-primary-foreground px-2 py-0.5 rounded-md hover:opacity-90 transition-opacity"
                     >
-                      {ticker}
+                      Go
                     </button>
-                  ))}
+                  )}
                 </div>
-              </div>
 
-              {/* Search Results / Autocomplete */}
-              <div className="space-y-1.5 max-h-[380px] overflow-y-auto scrollbar-thin pr-1 pt-1">
-                {isSearchLoading ? (
-                  <div className="flex justify-center p-6"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
-                ) : isSearchError ? (
-                  <div className="p-3 rounded-xl text-destructive text-xs bg-destructive/10 border border-destructive/20">
-                    Failed to fetch search results.
+                {/* Quick Select Popular Tickers */}
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                    Quick Watch Tickers
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {POPULAR_TICKERS.map((ticker) => (
+                      <button
+                        key={ticker}
+                        type="button"
+                        onClick={() => setSelectedSymbol(ticker)}
+                        className={cn(
+                          "text-xs px-2.5 py-1 rounded-lg font-mono font-bold transition-all border",
+                          selectedSymbol === ticker
+                            ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                            : "bg-card/40 hover:bg-accent/60 text-muted-foreground hover:text-foreground border-border/50"
+                        )}
+                      >
+                        {ticker}
+                      </button>
+                    ))}
                   </div>
-                ) : searchResults && searchResults.length > 0 ? (
-                  searchResults.map((stock) => (
-                    <button
-                      key={stock.symbol}
-                      onClick={() => setSelectedSymbol(stock.symbol)}
-                      className={cn(
-                        "w-full flex items-center justify-between p-2.5 rounded-xl transition-all border text-left group",
-                        selectedSymbol === stock.symbol
-                          ? "bg-primary/10 border-primary/40 shadow-sm ring-1 ring-primary/20"
-                          : "bg-background/40 border-border/40 hover:bg-accent/50 hover:border-border/80"
-                      )}
-                    >
-                      <div>
-                        <p className={cn("font-mono font-black text-xs", selectedSymbol === stock.symbol ? "text-primary" : "text-foreground")}>
-                          {stock.symbol}
-                        </p>
-                        <p className="text-[11px] text-muted-foreground truncate max-w-[130px] leading-tight">
-                          {stock.name}
-                        </p>
-                      </div>
-                      <Badge variant={selectedSymbol === stock.symbol ? "default" : "secondary"} className="text-[9px] font-mono px-1.5 h-4">
-                        {stock.stockExchange}
-                      </Badge>
-                    </button>
-                  ))
-                ) : debouncedSearch.length > 0 ? (
-                  <div className="text-center text-muted-foreground p-4 text-xs">
-                    No matching assets for "{debouncedSearch}"
-                  </div>
-                ) : (
-                  <div className="text-center text-muted-foreground/60 p-4 text-xs italic">
-                    Type to search any US/Global equity...
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+                </div>
 
-        {/* Right Main Content Area */}
-        <div className="xl:col-span-3 space-y-6">
+                {/* Search Results / Autocomplete */}
+                <div className="space-y-1.5 max-h-[380px] overflow-y-auto scrollbar-thin pr-1 pt-1">
+                  {isSearchLoading ? (
+                    <div className="flex justify-center p-6"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
+                  ) : isSearchError ? (
+                    <div className="p-3 rounded-xl text-destructive text-xs bg-destructive/10 border border-destructive/20">
+                      Failed to fetch search results.
+                    </div>
+                  ) : searchResults && searchResults.length > 0 ? (
+                    searchResults.map((stock) => (
+                      <button
+                        key={stock.symbol}
+                        onClick={() => setSelectedSymbol(stock.symbol)}
+                        className={cn(
+                          "w-full flex items-center justify-between p-2.5 rounded-xl transition-all border text-left group",
+                          selectedSymbol === stock.symbol
+                            ? "bg-primary/10 border-primary/40 shadow-sm ring-1 ring-primary/20"
+                            : "bg-background/40 border-border/40 hover:bg-accent/50 hover:border-border/80"
+                        )}
+                      >
+                        <div>
+                          <p className={cn("font-mono font-black text-xs", selectedSymbol === stock.symbol ? "text-primary" : "text-foreground")}>
+                            {stock.symbol}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground truncate max-w-[130px] leading-tight">
+                            {stock.name}
+                          </p>
+                        </div>
+                        <Badge variant={selectedSymbol === stock.symbol ? "default" : "secondary"} className="text-[9px] font-mono px-1.5 h-4">
+                          {stock.stockExchange}
+                        </Badge>
+                      </button>
+                    ))
+                  ) : debouncedSearch.length > 0 ? (
+                    <div className="text-center text-muted-foreground p-4 text-xs">
+                      No matching assets for "{debouncedSearch}"
+                    </div>
+                  ) : (
+                    <div className="text-center text-muted-foreground/60 p-4 text-xs italic">
+                      Type to search any US/Global equity...
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Main Content Area: Expands to 100% width in Full Page mode or xl:col-span-3 in split view */}
+        <div className={cn("space-y-6", isFullPageMode ? "w-full" : "xl:col-span-3")}>
           {isLoading ? (
             <Card className="h-[420px] flex items-center justify-center bg-card/50 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl">
               <div className="flex flex-col items-center gap-3">
