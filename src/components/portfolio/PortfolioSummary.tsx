@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { BrokerAccountBalance, IBKRCombinedBalance, IBKRAccountDetails, PortfolioBalancesData, CurrencyBalance } from "@/services/portfolioBalanceService";
 import { BrokerDeepDiveModal } from "./BrokerDeepDiveModal";
 import { CurrencyAssetsModal } from "./CurrencyAssetsModal";
+import { BuyingPowerAnalyserModal } from "./BuyingPowerAnalyserModal";
 import { UnifiedPosition } from "./types";
 
 interface PortfolioSummaryProps {
@@ -78,6 +79,7 @@ export function PortfolioSummary({
   const [activeIbkrAccountTab, setActiveIbkrAccountTab] = useState<string>('combined');
   const [isCurrencyBreakdownOpen, setIsCurrencyBreakdownOpen] = useState(true);
   const [selectedCurrencyForModal, setSelectedCurrencyForModal] = useState<string | null>(null);
+  const [isBuyingPowerModalOpen, setIsBuyingPowerModalOpen] = useState(false);
 
   const isPositiveDay = dailyPL >= 0;
   const isPositiveTotal = unrealizedPL >= 0;
@@ -243,13 +245,16 @@ export function PortfolioSummary({
         </Card>
 
         {/* 2. Total Buying Power */}
-        <Card className="glass-card border-l-4 border-l-amber-500 p-5 relative overflow-hidden group hover:border-amber-500/80 transition-all">
+        <Card
+          onClick={() => setIsBuyingPowerModalOpen(true)}
+          className="glass-card border-l-4 border-l-amber-500 p-5 relative overflow-hidden group hover:border-amber-500/80 hover:shadow-lg transition-all cursor-pointer"
+        >
           <div className="flex items-center justify-between mb-1">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 group-hover:text-amber-400 transition-colors">
               <Zap className="w-3.5 h-3.5 text-amber-400" /> Total Buying Power
             </span>
-            <Badge className="bg-amber-500/15 text-amber-300 border-amber-500/30 text-[9px] font-mono px-1.5 py-0">
-              AVAILABLE
+            <Badge className="bg-amber-500/15 text-amber-300 border-amber-500/30 text-[9px] font-mono px-1.5 py-0 group-hover:bg-amber-500 group-hover:text-black transition-all">
+              ANALYSE RISK ↗
             </Badge>
           </div>
 
@@ -1125,6 +1130,12 @@ export function PortfolioSummary({
         portfolioData={portfolioData}
         isPrivacyMode={isPrivacyMode}
         onNavigateToResearch={onNavigateToResearch}
+      />
+
+      {/* Buying Power & Margin Risk Analyser Modal */}
+      <BuyingPowerAnalyserModal
+        isOpen={isBuyingPowerModalOpen}
+        onClose={() => setIsBuyingPowerModalOpen(false)}
       />
     </div>
   );

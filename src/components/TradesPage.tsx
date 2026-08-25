@@ -46,6 +46,7 @@ import {
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { OptionsTradeAgentModal } from './trades/OptionsTradeAgentModal';
+import { BuyingPowerAnalyserModal } from './portfolio/BuyingPowerAnalyserModal';
 import { OptionsTradeOpportunity } from '@/services/optionsTradeAgentService';
 
 interface TradesPageProps {
@@ -70,6 +71,7 @@ export function TradesPage({ onNavigateToResearch }: TradesPageProps = {}) {
   const [selectedTrade, setSelectedTrade] = useState<UnifiedTrade | null>(null);
   const [isLogModalOpen, setIsLogModalOpen] = useState<boolean>(false);
   const [isOptionsAgentModalOpen, setIsOptionsAgentModalOpen] = useState<boolean>(false);
+  const [isBuyingPowerModalOpen, setIsBuyingPowerModalOpen] = useState<boolean>(false);
   const [newTrade, setNewTrade] = useState<Partial<UnifiedTrade>>({
     broker: 'Manual',
     symbol: '',
@@ -355,6 +357,18 @@ export function TradesPage({ onNavigateToResearch }: TradesPageProps = {}) {
             <Badge className="bg-purple-500/30 text-purple-200 text-[9px] px-1.5 py-0 font-mono font-bold border border-purple-400/40">
               AI Strategies
             </Badge>
+          </Button>
+
+          {/* Buying Power Analyser Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsBuyingPowerModalOpen(true)}
+            className="h-9 text-xs gap-1.5 border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 font-bold transition-all shadow-[0_0_12px_rgba(245,158,11,0.15)]"
+            title="Check available buying power & margin cushion before trading"
+          >
+            <Zap className="w-3.5 h-3.5 text-amber-400" />
+            <span>Buying Power</span>
           </Button>
 
           <Button
@@ -1056,6 +1070,12 @@ export function TradesPage({ onNavigateToResearch }: TradesPageProps = {}) {
         onClose={() => setIsOptionsAgentModalOpen(false)}
         onSelectTradeToLog={handleSelectTradeToLog}
         onNavigateToResearch={onNavigateToResearch}
+      />
+
+      {/* Buying Power & Margin Risk Analyser Modal */}
+      <BuyingPowerAnalyserModal
+        isOpen={isBuyingPowerModalOpen}
+        onClose={() => setIsBuyingPowerModalOpen(false)}
       />
     </div>
   );

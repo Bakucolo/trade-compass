@@ -16,6 +16,7 @@ import { PortfolioChart } from './PortfolioChart';
 import { WatchlistCard } from './WatchlistCard';
 import { IdeasCard } from './IdeasCard';
 import { AIIdeaGeneratorModal } from './AIIdeaGeneratorModal';
+import { BuyingPowerAnalyserModal } from './portfolio/BuyingPowerAnalyserModal';
 import { ThemeSwitcherButton } from './ThemeSwitcherButton';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -51,6 +52,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
     return localStorage.getItem('isPrivacyMode') === 'true';
   });
   const [isAIModalOpen, setIsAIModalOpen] = useState(false);
+  const [isBuyingPowerModalOpen, setIsBuyingPowerModalOpen] = useState(false);
   const [isBalancesOpen, setIsBalancesOpen] = useState(false);
 
   // Queries
@@ -274,6 +276,18 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
             <span className="hidden sm:inline">Sync</span>
           </Button>
 
+          {/* Buying Power & Margin Risk Analyser Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsBuyingPowerModalOpen(true)}
+            className="h-9 text-xs gap-1.5 border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 font-bold transition-all shadow-[0_0_12px_rgba(245,158,11,0.15)]"
+            title="Open Buying Power & Margin Risk Analyser"
+          >
+            <Zap className="w-3.5 h-3.5 text-amber-400" />
+            <span>Buying Power</span>
+          </Button>
+
           {/* AI Idea Hunter Button */}
           <Button
             size="sm"
@@ -411,6 +425,13 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
       <AIIdeaGeneratorModal
         isOpen={isAIModalOpen}
         onClose={() => setIsAIModalOpen(false)}
+      />
+
+      {/* Buying Power & Margin Risk Analyser Modal */}
+      <BuyingPowerAnalyserModal
+        isOpen={isBuyingPowerModalOpen}
+        onClose={() => setIsBuyingPowerModalOpen(false)}
+        onNavigateToTrades={() => goToTab('trades')}
       />
     </div>
   );
