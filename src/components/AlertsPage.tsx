@@ -22,7 +22,9 @@ import {
   Calendar,
   Edit2,
   VolumeX,
-  Volume2
+  Volume2,
+  Shield,
+  ShieldAlert
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -34,6 +36,7 @@ import {
   useResetAlert,
   useMuteAlert,
   useUnmuteAlert,
+  useSyncShortOptionAlerts,
   PriceAlert,
 } from '@/services/alertService';
 import { PriceAlertModal } from './PriceAlertModal';
@@ -47,7 +50,7 @@ type SortOption =
   | 'created_desc'
   | 'target_desc';
 
-type StatusFilter = 'ALL' | 'ACTIVE' | 'TRIGGERED' | 'MUTED';
+type StatusFilter = 'ALL' | 'ACTIVE' | 'TRIGGERED' | 'MUTED' | 'SHORT_DEFENSE';
 
 interface AlertsPageProps {
   onNavigateToResearch?: (symbol: string) => void;
@@ -70,12 +73,14 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
   const resetAlertMutation = useResetAlert();
   const muteAlertMutation = useMuteAlert();
   const unmuteAlertMutation = useUnmuteAlert();
+  const syncShortAlertsMutation = useSyncShortOptionAlerts();
 
   // Metrics
   const activeCount = alerts.filter((a) => a.status === 'ACTIVE').length;
   const unmutedTriggeredCount = alerts.filter((a) => a.status === 'TRIGGERED' && !a.isMuted).length;
   const mutedCount = alerts.filter((a) => a.isMuted || a.status === 'CANCELLED').length;
   const totalTriggeredCount = alerts.filter((a) => a.status === 'TRIGGERED').length;
+  const shortDefenseCount = alerts.filter((a) => a.notes && a.notes.includes('Short Option')).length;
 
   const latestTriggered = alerts
     .filter((a) => a.status === 'TRIGGERED' && a.triggeredAt)
@@ -92,6 +97,8 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
       list = list.filter((a) => a.status === 'TRIGGERED' && !a.isMuted);
     } else if (statusFilter === 'MUTED') {
       list = list.filter((a) => a.isMuted);
+    } else if (statusFilter === 'SHORT_DEFENSE') {
+      list = list.filter((a) => a.notes && a.notes.includes('Short Option'));
     }
 
     // Search Filter
@@ -136,20 +143,18 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
   }, [alerts, statusFilter, searchQuery, sortOption]);
 
   const handleDelete = async (id: string, symbol: string) => {
-    if (confirm(`Are you sure you want to delete the price alert for ${symbol}?`)) {
-      try {
-        await deleteAlertMutation.mutateAsync(id);
-        toast({
-          title: "Alert Deleted",
-          description: `Price alert for ${symbol} was removed.`,
-        });
-      } catch (err: any) {
-        toast({
-          title: "Failed to delete alert",
-          description: err.message,
-          variant: "destructive"
-        });
-      }
+    try {
+      await deleteAlertMutation.mutateAsync(id);
+      toast({
+        title: "Alert Deleted",
+        description: `Price alert for ${symbol} was removed.`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Failed to delete alert",
+        description: err.message,
+        variant: "destructive"
+      });
     }
   };
 
@@ -213,6 +218,29 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
     }
   };
 
+  const handleSyncShortOptions = async () => {
+    try {
+      const res = await syncShortAlertsMutation.mutateAsync();
+      if (res.createdAlertsCount > 0) {
+        toast({
+          title: "Short Option Alerts Synced",
+          description: `Created ${res.createdAlertsCount} automated 5% & 10% defense alert(s) across ${res.totalShortOptions} short options.`,
+        });
+      } else {
+        toast({
+          title: "Short Option Alerts Up to Date",
+          description: `All ${res.totalShortOptions} short option positions already have active defense alerts armed.`,
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: "Failed to sync alerts",
+        description: err.message,
+        variant: "destructive",
+      });
+    }
+  };
+
   const formatDate = (dateStr: string | null | undefined) => {
     if (!dateStr) return 'N/A';
     const d = new Date(dateStr);
@@ -250,7 +278,19 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSyncShortOptions}
+            disabled={syncShortAlertsMutation.isPending}
+            className="gap-1.5 border-purple-500/40 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 shadow-sm"
+            title="Automatically scan portfolio for short options and provision 5% & 10% strike proximity alerts"
+          >
+            <Shield className={cn("w-3.5 h-3.5 text-purple-400", syncShortAlertsMutation.isPending && "animate-spin")} />
+            <span>Auto-Sync Short Options</span>
+          </Button>
+
           <Button
             variant="outline"
             size="sm"
@@ -367,6 +407,18 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
           >
             <BellOff className="w-3.5 h-3.5 text-slate-400" />
             Muted ({mutedCount})
+          </button>
+          <button
+            onClick={() => setStatusFilter('SHORT_DEFENSE')}
+            className={cn(
+              "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5",
+              statusFilter === 'SHORT_DEFENSE'
+                ? "bg-purple-600 text-white shadow"
+                : "text-muted-foreground hover:text-purple-300"
+            )}
+          >
+            <Shield className="w-3.5 h-3.5 text-purple-400" />
+            Short Defense ({shortDefenseCount})
           </button>
         </div>
 
@@ -520,6 +572,20 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
                         {!isTriggered && (
                           <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30 text-[10px]">
                             ACTIVE
+                          </Badge>
+                        )}
+
+                        {item.notes && item.notes.includes('[Short Option 5% Defense]') && (
+                          <Badge className="bg-rose-500/20 text-rose-300 border-rose-500/40 text-[10px] font-bold flex items-center gap-1 font-mono">
+                            <ShieldAlert className="w-3 h-3 text-rose-400" />
+                            5% Strike Threat
+                          </Badge>
+                        )}
+
+                        {item.notes && item.notes.includes('[Short Option 10% Defense]') && (
+                          <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/40 text-[10px] font-bold flex items-center gap-1 font-mono">
+                            <Shield className="w-3 h-3 text-amber-400" />
+                            10% Strike Buffer
                           </Badge>
                         )}
                       </div>

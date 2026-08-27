@@ -33,12 +33,22 @@ import {
     ExternalLink,
     AlertTriangle,
     CheckCircle2,
-    Flame
+    Flame,
+    Bell,
+    BellRing,
+    Shield,
+    ShieldCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useState, useMemo } from "react";
+import { toast } from "sonner";
 import { useStockNotesMap } from "@/services/noteService";
+import { 
+    useShortOptionAlertsStatus, 
+    useSyncShortOptionAlerts, 
+    useCreateSingleShortOptionAlerts 
+} from "@/services/alertService";
 import { StockNoteModal } from "../StockNoteModal";
 import { PositionAdvisorModal } from "./PositionAdvisorModal";
 import { CriticalDefenseModal } from "./CriticalDefenseModal";
@@ -55,6 +65,7 @@ interface HoldingsTableProps {
     onRefresh?: () => void;
     isPrivacyMode?: boolean;
     onNavigateToResearch?: (symbol: string) => void;
+    onNavigateToGraphs?: (symbol?: string) => void;
 }
 
 type SortKey = 
@@ -80,7 +91,14 @@ interface SortConfig {
     direction: SortDirection;
 }
 
-export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode = false, onNavigateToResearch }: HoldingsTableProps) {
+export function HoldingsTable({
+    positions,
+    isLoading,
+    onRefresh,
+    isPrivacyMode = false,
+    onNavigateToResearch,
+    onNavigateToGraphs,
+}: HoldingsTableProps) {
     // --- State ---
     const [searchQuery, setSearchQuery] = useState('');
     const [brokerFilter, setBrokerFilter] = useState<'All' | 'IBKR' | 'IBKR ISA' | 'IBKR GIA' | 'Tastytrade' | 'Trading 212'>('All');
@@ -110,6 +128,44 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
 
     // Critical Defense Center Window State
     const [isDefenseCenterOpen, setIsDefenseCenterOpen] = useState(false);
+
+    // Automated Short Option Defense Alerts State & Queries
+    const { data: shortOptionAlerts = [] } = useShortOptionAlertsStatus();
+    const syncShortAlertsMutation = useSyncShortOptionAlerts();
+    const createSingleShortAlertMutation = useCreateSingleShortOptionAlerts();
+
+    const shortAlertsMap = useMemo(() => {
+        const map = new Map<string, typeof shortOptionAlerts[0]>();
+        for (const item of shortOptionAlerts) {
+            if (item.holdingId) map.set(item.holdingId, item);
+            map.set(`${item.underlyingSymbol.toUpperCase()}_${item.strikePrice}_${item.optionType}`, item);
+        }
+        return map;
+    }, [shortOptionAlerts]);
+
+    const handleSyncAllShortAlerts = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        try {
+            const res = await syncShortAlertsMutation.mutateAsync();
+            if (res.createdAlertsCount > 0) {
+                toast.success(`Created ${res.createdAlertsCount} automated 5% & 10% strike proximity defense alert(s) across ${res.totalShortOptions} short option positions!`);
+            } else {
+                toast.info(`All ${res.totalShortOptions} short option positions are already monitored with active 5% & 10% defense alerts.`);
+            }
+        } catch (err: any) {
+            toast.error(`Failed to auto-set alerts: ${err.message}`);
+        }
+    };
+
+    const handleArmSingleShortOption = async (e: React.MouseEvent, pos: UnifiedPosition) => {
+        e.stopPropagation();
+        try {
+            await createSingleShortAlertMutation.mutateAsync(pos.id);
+            toast.success(`Armed 5% & 10% strike proximity defense alerts for ${pos.underlyingSymbol || pos.symbol} $${pos.strike} ${pos.optionType}!`);
+        } catch (err: any) {
+            toast.error(`Failed to set alerts: ${err.message}`);
+        }
+    };
 
     // Ensure all positions have style and themes
     const enrichedPositions = useMemo(() => {
@@ -378,13 +434,14 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
 
             if (sortConfig.key === 'risky') {
                 const getRiskScore = (p: UnifiedPosition) => {
-                    let isITM = 1;
-                    if (p.assetType === 'Option' && p.underlyingPrice && p.strike) {
+                    let isITM = 0;
+                    if (p.assetType === 'Option' && p.underlyingPrice && p.underlyingPrice > 0 && p.strike && p.strike > 0) {
                         const isCall = p.optionType === 'Call' || p.optionType === 'C';
                         isITM = isCall ? (p.underlyingPrice > p.strike ? 2 : 0) : (p.underlyingPrice < p.strike ? 2 : 0);
                     }
-                    const dte = getDTE(p.expiry) ?? 999;
-                    const dteRisk = dte <= 7 ? 3 : dte <= 14 ? 2 : dte <= 30 ? 1 : 0;
+                    const dte = getDTE(p.expiry);
+                    if (dte !== null && dte < 0) return 0; // Past expired option
+                    const dteRisk = (dte !== null && dte >= 0 && dte <= 7) ? 3 : (dte !== null && dte <= 14) ? 2 : (dte !== null && dte <= 30) ? 1 : 0;
                     const unPLPct = p.unrealizedPLPercent || 0;
                     const plRisk = unPLPct < -50 ? 3 : unPLPct < -20 ? 2 : 0;
                     return isITM + dteRisk + plRisk;
@@ -867,6 +924,61 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                                     </Badge>
                                 )}
                             </div>
+
+                            {/* Short Option 5% & 10% Defense Alerts Pill */}
+                            {isShort && (
+                                <div className="pt-0.5">
+                                    {(() => {
+                                        const optTypeStr = (pos.optionType === 'Call' || pos.optionType === 'C') ? 'CALL' : 'PUT';
+                                        const shortInfo = shortAlertsMap.get(pos.id) || shortAlertsMap.get(`${cleanBaseSymbol}_${pos.strike}_${optTypeStr}`);
+                                        const has10 = shortInfo?.alert10Pct;
+                                        const has5 = shortInfo?.alert5Pct;
+                                        const is10Triggered = has10?.status === 'TRIGGERED';
+                                        const is5Triggered = has5?.status === 'TRIGGERED';
+                                        const allActive = has10?.status === 'ACTIVE' && has5?.status === 'ACTIVE';
+
+                                        const target10 = shortInfo?.defenseLevels?.warning10Pct?.targetPrice || (optTypeStr === 'CALL' ? Number((pos.strike * 0.90).toFixed(2)) : Number((pos.strike * 1.10).toFixed(2)));
+                                        const target5 = shortInfo?.defenseLevels?.critical5Pct?.targetPrice || (optTypeStr === 'CALL' ? Number((pos.strike * 0.95).toFixed(2)) : Number((pos.strike * 1.05).toFixed(2)));
+
+                                        if (is5Triggered || is10Triggered) {
+                                            return (
+                                                <button
+                                                    onClick={(e) => handleArmSingleShortOption(e, pos)}
+                                                    className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 hover:bg-rose-500/30 flex items-center gap-1 transition-all cursor-pointer shadow-sm animate-pulse"
+                                                    title={`Proximity Alert Triggered!\n10% Alert: ${has10?.status || 'N/A'} ($${target10})\n5% Alert: ${has5?.status || 'N/A'} ($${target5})\nClick to re-arm.`}
+                                                >
+                                                    <BellRing className="w-2.5 h-2.5 text-rose-400" />
+                                                    <span>{is5Triggered ? '🚨 5% Alert Triggered' : '⚠️ 10% Alert Triggered'}</span>
+                                                </button>
+                                            );
+                                        }
+
+                                        if (allActive) {
+                                            return (
+                                                <div
+                                                    className="text-[9px] px-1.5 py-0.5 rounded font-mono font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/30 flex items-center gap-1 cursor-help"
+                                                    title={`Automated Defense Alerts Active:\n• 10% Warning Target: $${target10} (${optTypeStr === 'CALL' ? 'ABOVE' : 'BELOW'})\n• 5% Critical Target: $${target5} (${optTypeStr === 'CALL' ? 'ABOVE' : 'BELOW'})`}
+                                                >
+                                                    <ShieldCheck className="w-2.5 h-2.5 text-purple-400" />
+                                                    <span>5% & 10% Alerts Armed</span>
+                                                </div>
+                                            );
+                                        }
+
+                                        return (
+                                            <button
+                                                onClick={(e) => handleArmSingleShortOption(e, pos)}
+                                                disabled={createSingleShortAlertMutation.isPending}
+                                                className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 flex items-center gap-1 transition-all cursor-pointer"
+                                                title={`Click to set automated 5% and 10% strike proximity defense alerts ($${target10} and $${target5})`}
+                                            >
+                                                <Bell className="w-2.5 h-2.5 text-amber-400" />
+                                                <span>Set 5% & 10% Alerts</span>
+                                            </button>
+                                        );
+                                    })()}
+                                </div>
+                            )}
                         </div>
                     ) : (
                         <div className="text-right">
@@ -1336,6 +1448,24 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                                     {optionsMetrics.nearExpiryCount} Contracts
                                 </span>
                             </div>
+
+                            {/* Auto-Set Short Option Alerts 1-Click Action */}
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={handleSyncAllShortAlerts}
+                                disabled={syncShortAlertsMutation.isPending}
+                                className="h-9 px-3 text-xs font-bold gap-1.5 rounded-xl bg-purple-500/15 hover:bg-purple-500/25 border-purple-500/40 text-purple-300 shadow-sm transition-all hover:scale-105"
+                                title="Automatically create or re-arm 5% and 10% underlying strike proximity price alerts for all short options"
+                            >
+                                <Bell className={cn("w-3.5 h-3.5", syncShortAlertsMutation.isPending && "animate-spin")} />
+                                <span>Auto-Set Alerts (5% & 10%)</span>
+                                {shortOptionAlerts.length > 0 && (
+                                    <Badge className="bg-purple-500/30 text-purple-200 border-none text-[10px] px-1.5 py-0 h-4 ml-1">
+                                        {shortOptionAlerts.length} Short
+                                    </Badge>
+                                )}
+                            </Button>
                         </div>
                     </div>
 
@@ -1594,6 +1724,8 @@ export function HoldingsTable({ positions, isLoading, onRefresh, isPrivacyMode =
                     setAdvisorPosition(pos);
                     setIsAdvisorOpen(true);
                 }}
+                onNavigateToResearch={handleOpenResearch}
+                onNavigateToGraphs={onNavigateToGraphs}
             />
         </div>
     );

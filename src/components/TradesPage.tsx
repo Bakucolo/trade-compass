@@ -44,6 +44,8 @@ import {
   DialogDescription,
 } from './ui/dialog';
 import { BuyingPowerAnalyserModal } from './portfolio/BuyingPowerAnalyserModal';
+import { ShortFinderAgentModal } from './trades/ShortFinderAgentModal';
+import { ShortTradeCandidate } from '@/services/shortCandidateService';
 
 interface TradesPageProps {
   onNavigateToResearch?: (symbol: string) => void;
@@ -67,6 +69,7 @@ export function TradesPage({ onNavigateToResearch }: TradesPageProps = {}) {
   const [selectedTrade, setSelectedTrade] = useState<UnifiedTrade | null>(null);
   const [isLogModalOpen, setIsLogModalOpen] = useState<boolean>(false);
   const [isBuyingPowerModalOpen, setIsBuyingPowerModalOpen] = useState<boolean>(false);
+  const [isShortAgentModalOpen, setIsShortAgentModalOpen] = useState<boolean>(false);
   const [newTrade, setNewTrade] = useState<Partial<UnifiedTrade>>({
     broker: 'Manual',
     symbol: '',
@@ -194,6 +197,53 @@ export function TradesPage({ onNavigateToResearch }: TradesPageProps = {}) {
       commission: 0,
       description: `${opp.strategyName} on ${opp.symbol}`
     });
+    setIsLogModalOpen(true);
+  };
+
+  const handleSelectShortToLog = (cand: ShortTradeCandidate) => {
+    const isOption = cand.tradeBlueprint.recommendedVehicle !== 'DIRECT_SHORT' && cand.tradeBlueprint.optionsStructure;
+    if (isOption && cand.tradeBlueprint.optionsStructure) {
+      const opt = cand.tradeBlueprint.optionsStructure;
+      const expCompact = opt.targetExpiration.replace(/-/g, '').slice(2);
+      const strikeFormatted = (opt.primaryStrike * 1000).toString().padStart(8, '0');
+      const optTypeLetter = cand.tradeBlueprint.recommendedVehicle === 'BEAR_CALL_SPREAD' ? 'C' : 'P';
+      const occSymbol = `${cand.symbol.padEnd(6, ' ')}${expCompact}${optTypeLetter}${strikeFormatted}`;
+
+      setNewTrade({
+        broker: 'Manual',
+        symbol: occSymbol,
+        underlyingSymbol: cand.symbol,
+        assetType: 'OPTION',
+        optionType: optTypeLetter === 'C' ? 'CALL' : 'PUT',
+        strikePrice: opt.primaryStrike,
+        expiryDate: opt.targetExpiration,
+        action: 'BUY_TO_OPEN',
+        side: 'BUY',
+        positionEffect: 'SHORT',
+        quantity: 1,
+        price: opt.estimatedCostOrCredit,
+        totalValue: opt.estimatedCostOrCredit * 100,
+        valueEffect: 'DEBIT',
+        commission: 0,
+        description: `Short Setup: ${cand.tradeBlueprint.vehicleLabel} on ${cand.symbol} (${cand.archetypeLabel})`
+      });
+    } else {
+      setNewTrade({
+        broker: 'Manual',
+        symbol: cand.symbol,
+        underlyingSymbol: cand.symbol,
+        assetType: 'EQUITY',
+        action: 'SELL',
+        side: 'SELL',
+        positionEffect: 'SHORT',
+        quantity: 50,
+        price: cand.tradeBlueprint.entryTriggerPrice,
+        totalValue: 50 * cand.tradeBlueprint.entryTriggerPrice,
+        valueEffect: 'CREDIT',
+        commission: 0,
+        description: `Short Setup: ${cand.symbol} - ${cand.archetypeLabel} (${cand.convictionScore}% Conviction)`
+      });
+    }
     setIsLogModalOpen(true);
   };
 
@@ -340,6 +390,18 @@ export function TradesPage({ onNavigateToResearch }: TradesPageProps = {}) {
 
         {/* Action Controls */}
         <div className="flex items-center gap-2 flex-wrap">
+          {/* AI Short Finding Agent Button */}
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => setIsShortAgentModalOpen(true)}
+            className="h-9 text-xs gap-1.5 bg-gradient-to-r from-rose-900 via-rose-800 to-slate-900 hover:from-rose-800 hover:to-slate-800 text-rose-100 font-bold border border-rose-500/40 shadow-[0_0_15px_rgba(244,63,94,0.2)] transition-all hover:scale-105"
+            title="Launch AI Agent to scan market for high-conviction short selling setups across multiple criteria"
+          >
+            <TrendingDown className="w-3.5 h-3.5 text-rose-400" />
+            <span>Find Stocks to Short</span>
+          </Button>
+
           {/* Buying Power Analyser Button */}
           <Button
             variant="outline"
@@ -1049,6 +1111,14 @@ export function TradesPage({ onNavigateToResearch }: TradesPageProps = {}) {
       <BuyingPowerAnalyserModal
         isOpen={isBuyingPowerModalOpen}
         onClose={() => setIsBuyingPowerModalOpen(false)}
+      />
+
+      {/* AI Short Finding Agent Modal */}
+      <ShortFinderAgentModal
+        isOpen={isShortAgentModalOpen}
+        onClose={() => setIsShortAgentModalOpen(false)}
+        onSelectShortToLog={handleSelectShortToLog}
+        onNavigateToResearch={onNavigateToResearch}
       />
     </div>
   );

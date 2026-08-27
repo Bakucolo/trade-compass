@@ -39,10 +39,17 @@ import {
   Minus,
   CheckCircle2,
   Calendar,
-  Bot
+  Bot,
+  Bell,
+  BellRing,
+  Shield
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import {
+  useShortOptionAlertsStatus,
+  useCreateSingleShortOptionAlerts
+} from '@/services/alertService';
 
 interface PositionAdvisorModalProps {
   position: UnifiedPosition | null;
@@ -62,6 +69,8 @@ export function PositionAdvisorModal({
   const [showLiveChainQuotes, setShowLiveChainQuotes] = useState(false);
 
   const analyzeMutation = useAnalyzePosition();
+  const { data: shortAlerts = [] } = useShortOptionAlertsStatus();
+  const createSingleShortAlertMutation = useCreateSingleShortOptionAlerts();
 
   // Trigger analysis on modal open if not already loaded for this position
   React.useEffect(() => {
@@ -367,6 +376,123 @@ export function PositionAdvisorModal({
 
                 </CardContent>
               </Card>
+
+              {/* ================= 2.5 AUTOMATED STRIKE PROXIMITY DEFENSE ALERTS (5% & 10%) ================= */}
+              {position.assetType === 'Option' && position.quantity < 0 && position.strike && (
+                (() => {
+                  const optTypeStr = (position.optionType === 'Call' || position.optionType === 'C') ? 'CALL' : 'PUT';
+                  const shortInfo = shortAlerts.find(a => a.holdingId === position.id || (a.underlyingSymbol === cleanBaseSymbol && a.strikePrice === position.strike));
+                  const target10 = shortInfo?.defenseLevels?.warning10Pct?.targetPrice || (optTypeStr === 'CALL' ? Number((position.strike * 0.90).toFixed(2)) : Number((position.strike * 1.10).toFixed(2)));
+                  const target5 = shortInfo?.defenseLevels?.critical5Pct?.targetPrice || (optTypeStr === 'CALL' ? Number((position.strike * 0.95).toFixed(2)) : Number((position.strike * 1.05).toFixed(2)));
+                  const cond10 = shortInfo?.defenseLevels?.warning10Pct?.condition || (optTypeStr === 'CALL' ? 'ABOVE' : 'BELOW');
+                  const cond5 = shortInfo?.defenseLevels?.critical5Pct?.condition || (optTypeStr === 'CALL' ? 'ABOVE' : 'BELOW');
+                  const alert10 = shortInfo?.alert10Pct;
+                  const alert5 = shortInfo?.alert5Pct;
+
+                  const is10Triggered = alert10?.status === 'TRIGGERED';
+                  const is5Triggered = alert5?.status === 'TRIGGERED';
+                  const hasBothActive = alert10?.status === 'ACTIVE' && alert5?.status === 'ACTIVE';
+
+                  const currentSpot = position.underlyingPrice || position.currentPrice;
+
+                  const handleArmAlerts = async () => {
+                    try {
+                      await createSingleShortAlertMutation.mutateAsync(position.id);
+                      toast.success(`Armed 5% and 10% strike proximity defense alerts for ${cleanBaseSymbol} $${position.strike} ${optTypeStr}!`);
+                    } catch (err: any) {
+                      toast.error(`Failed to set alerts: ${err.message}`);
+                    }
+                  };
+
+                  return (
+                    <Card className="bg-gradient-to-r from-purple-950/20 via-slate-900/30 to-purple-950/20 border-purple-500/30 shadow-md">
+                      <CardHeader className="pb-3 border-b border-purple-500/20 flex flex-row items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Shield className="w-4 h-4 text-purple-400" />
+                          <CardTitle className="text-xs font-bold uppercase tracking-wider text-purple-200">
+                            Automated Strike Proximity Defense Alerts (5% & 10% Triggers)
+                          </CardTitle>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleArmAlerts}
+                          disabled={createSingleShortAlertMutation.isPending}
+                          className="h-7 px-2.5 text-xs font-bold gap-1.5 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 border-purple-500/40 text-purple-300 shadow-sm"
+                        >
+                          <Bell className={cn("w-3 h-3 text-purple-400", createSingleShortAlertMutation.isPending && "animate-spin")} />
+                          <span>{hasBothActive ? 'Re-Arm Alerts' : 'Arm 5% & 10% Alerts'}</span>
+                        </Button>
+                      </CardHeader>
+                      <CardContent className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {/* 10% Warning Level */}
+                        <div className={cn(
+                          "p-3 rounded-xl border flex flex-col justify-between space-y-2",
+                          is10Triggered
+                            ? "bg-rose-950/30 border-rose-500/50 text-rose-300 shadow-[0_0_12px_rgba(244,63,94,0.2)]"
+                            : alert10?.status === 'ACTIVE'
+                            ? "bg-purple-950/20 border-purple-500/30 text-purple-300"
+                            : "bg-card/60 border-border/50 text-muted-foreground"
+                        )}>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-bold uppercase tracking-wider text-amber-300">
+                                10% Warning Buffer
+                              </span>
+                              <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 font-mono font-bold border-amber-500/40 text-amber-300">
+                                {cond10} ${target10}
+                              </Badge>
+                            </div>
+                            <Badge className={cn(
+                              "text-[9px] px-1.5 py-0 h-4 font-bold uppercase",
+                              is10Triggered ? "bg-rose-500/25 text-rose-300 border-rose-500/40 animate-pulse" :
+                              alert10?.status === 'ACTIVE' ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" :
+                              "bg-slate-800 text-slate-400 border-slate-700"
+                            )}>
+                              {is10Triggered ? 'Triggered' : alert10?.status === 'ACTIVE' ? 'Active' : 'Unarmed'}
+                            </Badge>
+                          </div>
+                          <p className="text-[11px] opacity-85 leading-relaxed">
+                            Triggers when underlying {optTypeStr === 'CALL' ? 'rises to' : 'drops to'} <strong>${target10.toFixed(2)}</strong> (within 10% of short strike ${position.strike}).
+                          </p>
+                        </div>
+
+                        {/* 5% Critical Level */}
+                        <div className={cn(
+                          "p-3 rounded-xl border flex flex-col justify-between space-y-2",
+                          is5Triggered
+                            ? "bg-rose-950/40 border-rose-500/60 text-rose-300 shadow-[0_0_15px_rgba(244,63,94,0.3)] ring-1 ring-rose-500/40"
+                            : alert5?.status === 'ACTIVE'
+                            ? "bg-purple-950/20 border-purple-500/30 text-purple-300"
+                            : "bg-card/60 border-border/50 text-muted-foreground"
+                        )}>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-bold uppercase tracking-wider text-rose-400">
+                                5% Critical Threat
+                              </span>
+                              <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 font-mono font-bold border-rose-500/40 text-rose-300">
+                                {cond5} ${target5}
+                              </Badge>
+                            </div>
+                            <Badge className={cn(
+                              "text-[9px] px-1.5 py-0 h-4 font-bold uppercase",
+                              is5Triggered ? "bg-rose-500/30 text-rose-200 border-rose-500/50 animate-pulse" :
+                              alert5?.status === 'ACTIVE' ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" :
+                              "bg-slate-800 text-slate-400 border-slate-700"
+                            )}>
+                              {is5Triggered ? 'Triggered' : alert5?.status === 'ACTIVE' ? 'Active' : 'Unarmed'}
+                            </Badge>
+                          </div>
+                          <p className="text-[11px] opacity-85 leading-relaxed">
+                            Triggers when underlying {optTypeStr === 'CALL' ? 'rises to' : 'drops to'} <strong>${target5.toFixed(2)}</strong> (critical 5% assignment & gamma danger zone).
+                          </p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })()
+              )}
 
               {/* ================= 3. RANKED MANAGEMENT PLAYBOOKS ================= */}
               <div className="space-y-3">

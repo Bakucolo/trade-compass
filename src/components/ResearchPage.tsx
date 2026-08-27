@@ -9,12 +9,12 @@ import {
   SlidersHorizontal, Settings2, Scale, ExternalLink,
   Layers, ArrowUpRight, ArrowDownRight, ShieldCheck,
   CheckCircle2, Compass, Zap, Flame, Lightbulb, Bookmark,
-  PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2
+  PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2, FolderPlus
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { marketDataService, USE_STREAMING } from '../services/marketData';
-import { useResearchDossier, useAIAnalysis } from '../services/researchData';
+import { useResearchDossier, useAIAnalysis, useOptionsLiquidity } from '../services/researchData';
 import { tastyStreamer, StreamerData } from '../services/tastytradeStreamer';
 import { useReportPrompts } from '../services/promptService';
 import { PromptManagerModal } from './PromptManagerModal';
@@ -22,12 +22,17 @@ import { useStockNote } from '@/services/noteService';
 import { StockNoteModal } from './StockNoteModal';
 import { PortfolioFitModal } from './portfolio/PortfolioFitModal';
 import { IdeaModal } from './IdeaModal';
+import { AddToWatchlistModal } from './AddToWatchlistModal';
 import { AutonomousReport, reportService, useAutonomousReports } from '@/services/reportService';
 import { AutonomousReportsList } from './AutonomousReportsList';
 import { AutonomousReportViewerModal } from './AutonomousReportViewerModal';
 import { GrowthAndValuationCard } from './research/GrowthAndValuationCard';
 import { InvestorRelationsCard } from './research/InvestorRelationsCard';
 import { StructuredTradesCard } from './research/StructuredTradesCard';
+import { OptionsLiquidityCard } from './research/OptionsLiquidityCard';
+import { OptionsChainView } from './research/OptionsChainView';
+import { RedFlagsAndRisksCard } from './research/RedFlagsAndRisksCard';
+import { useOptionsChain } from '@/services/optionsChainService';
 import { TradeStructureModal } from './TradeStructureModal';
 import ReactMarkdown from 'react-markdown';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -95,6 +100,7 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
   // Portfolio Fit State
   const [isFitModalOpen, setIsFitModalOpen] = useState(false);
   const [ideaModalState, setIdeaModalState] = useState<{ open: boolean; initialThesis?: string }>({ open: false });
+  const [isAddToWatchlistOpen, setIsAddToWatchlistOpen] = useState(false);
 
   useEffect(() => {
     if (initialSymbol) {
@@ -146,8 +152,10 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
     enabled: debouncedSearch.length > 0,
   });
 
-  // Data Queries for Selected Stock (Backend Dossier)
+  // Data Queries for Selected Stock (Backend Dossier & Options Liquidity)
   const { data: dossier, isLoading: isQuoteLoading, error: quoteError, isError: isQuoteError } = useResearchDossier(selectedSymbol);
+  const { data: optionsLiquidity } = useOptionsLiquidity(selectedSymbol);
+  const { data: optionsChainData } = useOptionsChain(selectedSymbol);
 
   // AI Analysis Query
   const { data: aiData, isLoading: aiLoading, isError: aiError } = useAIAnalysis(selectedSymbol);
@@ -214,6 +222,23 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
   const isStreaming = !!streamingData.price;
   const priceIsUp = (currentChange || 0) >= 0;
 
+  // Derive ATM Implied Volatility from streamer, options liquidity, or chain metrics
+  const atmCallIV = optionsLiquidity?.metrics?.nearestAtmCall?.impliedVolatility;
+  const atmPutIV = optionsLiquidity?.metrics?.nearestAtmPut?.impliedVolatility;
+  const derivedAtmIV = atmCallIV && atmPutIV
+    ? Number(((atmCallIV + atmPutIV) / 2).toFixed(1))
+    : atmCallIV || atmPutIV;
+
+  const displayImpliedVol = streamingData.volatility
+    ? `${safeFixed(streamingData.volatility * 100)}%`
+    : derivedAtmIV
+    ? `${derivedAtmIV}%`
+    : optionsLiquidity?.hasOptions === false
+    ? 'Non-Optionable'
+    : optionsLiquidity
+    ? '—'
+    : 'Calculating...';
+
   // Attempt to parse AI analysis
   let parsedAiAnalysis: any = null;
   if (aiData?.analysis) {
@@ -244,6 +269,32 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
     } catch (error: any) {
       console.error(error);
       toast.error(`Failed to generate report: ${error.message || 'Please check your Gemini / OpenRouter API key in Settings.'}`);
+    } finally {
+      setIsAgentLoading(false);
+    }
+  };
+
+  const handleGenerateRedFlagsReport = async () => {
+    if (!selectedSymbol || isAgentLoading) return;
+    setIsAgentLoading(true);
+    try {
+      toast.info(`Forensic Agent auditing red flags, solvency & downside risks for ${selectedSymbol}...`);
+      const targetTemplate = reportPrompts.find(p => p.slug === 'red_flags_and_risks') ||
+        reportPrompts.find(p => p.category === 'RISK_AND_RED_FLAGS');
+      const promptId = targetTemplate ? targetTemplate.id : undefined;
+      const result = await reportService.generateReport(selectedSymbol, 'red_flags_and_risks', promptId);
+
+      toast.success(`Forensic Red Flags & Risks Report generated for ${selectedSymbol}!`);
+      await queryClient.invalidateQueries({ queryKey: ['autonomousReports', selectedSymbol] });
+      await queryClient.invalidateQueries({ queryKey: ['allAutonomousReports'] });
+
+      if (result?.report) {
+        setViewerReport(result.report);
+        setIsViewerOpen(true);
+      }
+    } catch (error: any) {
+      console.error(error);
+      toast.error(`Failed to generate red flags report: ${error.message || 'Please check your API key in Settings.'}`);
     } finally {
       setIsAgentLoading(false);
     }
@@ -354,6 +405,18 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
             <span>Portfolio Fit</span>
           </Button>
 
+          {/* Add to Watchlist Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsAddToWatchlistOpen(true)}
+            className="text-xs gap-1.5 h-9 bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20 shadow-[0_0_12px_rgba(245,158,11,0.15)] font-bold transition-all"
+            title={`Add ${selectedSymbol} to a watchlist`}
+          >
+            <FolderPlus className="w-3.5 h-3.5 text-amber-400" />
+            <span>+ Watchlist</span>
+          </Button>
+
           {/* Full Page (100% Width) View Mode Toggle */}
           <Button
             variant="outline"
@@ -383,13 +446,27 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
             )}
           </Button>
 
+          {/* Red Flags & Main Risks Report Button */}
+          <Button
+            onClick={handleGenerateRedFlagsReport}
+            disabled={isAgentLoading || !selectedSymbol}
+            className="h-9 flex items-center gap-1.5 bg-gradient-to-r from-rose-600 via-amber-600 to-rose-600 hover:from-rose-500 hover:to-amber-500 text-white shadow-lg shadow-rose-500/20 hover:shadow-rose-500/40 transition-all font-bold text-xs px-3.5"
+            title={`Run forensic AI audit of red flags, balance sheet solvency, and main risks for ${selectedSymbol}`}
+          >
+            {isAgentLoading && selectedPromptSlug === 'red_flags_and_risks' ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> Auditing Red Flags...</>
+            ) : (
+              <><ShieldAlert className="w-4 h-4 text-amber-300 animate-pulse" /> Red Flags & Risks</>
+            )}
+          </Button>
+
           {/* Generate Report Button */}
           <Button
             onClick={handleAgentGeneration}
             disabled={isAgentLoading || !selectedSymbol}
             className="h-9 flex items-center gap-2 bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/40 transition-all font-bold text-xs px-4"
           >
-            {isAgentLoading ? (
+            {isAgentLoading && selectedPromptSlug !== 'red_flags_and_risks' ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> Compiling Dossier...</>
             ) : (
               <><Sparkles className="w-4 h-4 text-amber-300" /> Generate AI Report</>
@@ -687,6 +764,26 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                                 {profile.industry}
                               </Badge>
                             )}
+
+                            {optionsLiquidity && optionsLiquidity.hasOptions && (
+                              <button
+                                type="button"
+                                onClick={() => setActiveDataTab('options-liquidity')}
+                                className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-accent/60 hover:bg-accent border border-border/50 text-[10px] font-mono transition-all cursor-pointer shadow-sm"
+                                title="Click to view comprehensive Options Liquidity Breakdown & Strategy Feasibility"
+                              >
+                                <Activity className="w-3 h-3 text-cyan-400" />
+                                <span className="font-semibold text-muted-foreground font-sans">Opt. Liquidity:</span>
+                                <span className={cn(
+                                  "font-bold",
+                                  optionsLiquidity.score >= 88 ? "text-emerald-400" :
+                                  optionsLiquidity.score >= 74 ? "text-cyan-300" :
+                                  optionsLiquidity.score >= 55 ? "text-amber-400" : "text-rose-400"
+                                )}>
+                                  {optionsLiquidity.score}/100 ({optionsLiquidity.stars}★)
+                                </span>
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -723,7 +820,7 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
 
                   {/* Micro-Stats Bar + Direct Quick Action Chips */}
                   <div className="pt-4 border-t border-border/50 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-mono">
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs font-mono">
                       <div>
                         <span className="text-[10px] uppercase font-bold text-muted-foreground block font-sans">Market Cap</span>
                         <span className="font-bold text-foreground">{formatNumber(quote.marketCap)}</span>
@@ -740,10 +837,46 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                         <span className="text-[10px] uppercase font-bold text-muted-foreground block font-sans">P/E Multiple</span>
                         <span className="font-bold text-foreground">{safeFixed(quote.pe)}x</span>
                       </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground block font-sans">Opt. Liquidity & IV</span>
+                        <span className={cn(
+                          "font-bold text-xs flex items-center gap-1 mt-0.5",
+                          optionsLiquidity?.score && optionsLiquidity.score >= 88 ? "text-emerald-400" :
+                          optionsLiquidity?.score && optionsLiquidity.score >= 74 ? "text-cyan-300" :
+                          optionsLiquidity?.score && optionsLiquidity.score >= 55 ? "text-amber-400" :
+                          optionsLiquidity?.hasOptions ? "text-rose-400" : "text-muted-foreground"
+                        )}>
+                          {optionsLiquidity?.hasOptions 
+                            ? `${optionsLiquidity.score}/100 (${derivedAtmIV ? `${derivedAtmIV}% IV` : `${optionsLiquidity.stars}★`})` 
+                            : optionsLiquidity ? 'Non-Optionable' : 'Calculating...'}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Direct Quick Action Buttons */}
                     <div className="flex items-center gap-2 flex-wrap">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setActiveDataTab('options-chain')}
+                        className="h-8 text-xs font-bold bg-indigo-500/10 text-indigo-300 border-indigo-500/30 hover:bg-indigo-500/20 gap-1.5 shadow-sm"
+                        title="Explore full interactive options chain matrix and Greeks"
+                      >
+                        <Layers className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Options Chain</span>
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setActiveDataTab('options-liquidity')}
+                        className="h-8 text-xs font-bold bg-cyan-500/10 text-cyan-300 border-cyan-500/30 hover:bg-cyan-500/20 gap-1.5 shadow-sm"
+                        title="View Options Liquidity diagnostic"
+                      >
+                        <Activity className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Opt. Liquidity ({optionsLiquidity?.hasOptions ? `${optionsLiquidity.score}` : '—'})</span>
+                      </Button>
+
                       <Button
                         size="sm"
                         variant="outline"
@@ -800,12 +933,37 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
 
               {/* ================= DATA TABS RIBBON ================= */}
               <Tabs value={activeDataTab} onValueChange={setActiveDataTab} className="w-full">
-                <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 h-auto p-1.5 bg-card/70 backdrop-blur-xl border border-border/70 rounded-2xl gap-1.5">
+                <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-11 h-auto p-1.5 bg-card/70 backdrop-blur-xl border border-border/70 rounded-2xl gap-1.5">
                   <TabsTrigger
                     value="overview"
                     className="rounded-xl py-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
                   >
                     <BarChart3 className="w-3.5 h-3.5" /> Overview
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="options-chain"
+                    className="rounded-xl py-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-indigo-600 data-[state=active]:via-purple-600 data-[state=active]:to-indigo-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <Layers className="w-3.5 h-3.5 text-purple-300" />
+                    <span>Options Chain</span>
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="options-liquidity"
+                    className="rounded-xl py-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-cyan-600 data-[state=active]:to-teal-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <Activity className="w-3.5 h-3.5 text-cyan-300" />
+                    <span>Opt. Liquidity</span>
+                    {optionsLiquidity?.hasOptions && (
+                      <span className={cn(
+                        "px-1.5 py-0 rounded-full text-[10px] font-mono font-bold",
+                        optionsLiquidity.score >= 88 ? "bg-emerald-400/30 text-emerald-200" :
+                        optionsLiquidity.score >= 74 ? "bg-cyan-400/30 text-cyan-200" :
+                        optionsLiquidity.score >= 55 ? "bg-amber-400/30 text-amber-200" :
+                        "bg-rose-400/30 text-rose-200"
+                      )}>
+                        {optionsLiquidity.score}
+                      </span>
+                    )}
                   </TabsTrigger>
                   <TabsTrigger
                     value="structures"
@@ -818,6 +976,12 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                     className="rounded-xl py-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-600 data-[state=active]:to-teal-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
                   >
                     <TrendingUp className="w-3.5 h-3.5 text-emerald-300" /> Growth & Forward
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="red-flags-risks"
+                    className="rounded-xl py-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-rose-600 data-[state=active]:to-amber-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <ShieldAlert className="w-3.5 h-3.5 text-rose-300" /> Red Flags & Risks
                   </TabsTrigger>
                   <TabsTrigger
                     value="ir-presentations"
@@ -863,6 +1027,22 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                   </TabsTrigger>
                 </TabsList>
 
+                {/* ================= 0. OPTIONS CHAIN MATRIX & GREEKS TAB ================= */}
+                <TabsContent value="options-chain" className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <OptionsChainView
+                    symbol={selectedSymbol}
+                    onNavigateToTrades={() => onNavigateTab?.('trades')}
+                  />
+                </TabsContent>
+
+                {/* ================= 0. OPTIONS LIQUIDITY & EXECUTION QUALITY TAB ================= */}
+                <TabsContent value="options-liquidity" className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <OptionsLiquidityCard
+                    symbol={selectedSymbol}
+                    onOpenTradeStructure={() => setIsTradeStructureModalOpen(true)}
+                  />
+                </TabsContent>
+
                 {/* ================= 0. STRUCTURED TRADES & IDEAS GENERATOR TAB ================= */}
                 <TabsContent value="structures" className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                   <StructuredTradesCard
@@ -876,6 +1056,19 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                 {/* ================= 0. GROWTH & FORWARD VALUATION TAB ================= */}
                 <TabsContent value="growth-valuation" className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                   <GrowthAndValuationCard symbol={selectedSymbol} />
+                </TabsContent>
+
+                {/* ================= 0. RED FLAGS, WARNINGS & FORENSIC RISKS TAB ================= */}
+                <TabsContent value="red-flags-risks" className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <RedFlagsAndRisksCard
+                    symbol={selectedSymbol}
+                    dossier={dossier}
+                    optionsChain={optionsChainData}
+                    onOpenReportViewer={(report) => {
+                      setViewerReport(report);
+                      setIsViewerOpen(true);
+                    }}
+                  />
                 </TabsContent>
 
                 {/* ================= 0.5. INVESTOR RELATIONS & PRESENTATIONS TAB ================= */}
@@ -935,9 +1128,15 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                           <Activity className="w-4 h-4 text-purple-400" />
                         </div>
                         <p className="font-mono text-xl font-black text-purple-200">
-                          {streamingData.volatility ? safeFixed(streamingData.volatility * 100) + '%' : 'N/A'}
+                          {displayImpliedVol}
                         </p>
-                        <p className="text-[11px] text-muted-foreground mt-1">Options Pricing Factor</p>
+                        <p className="text-[11px] text-muted-foreground mt-1 truncate" title={optionsLiquidity?.metrics?.nearestAtmCall?.expiration ? `ATM ${optionsLiquidity.metrics.nearestAtmCall.dte}d Expiry` : 'Options Pricing Factor'}>
+                          {optionsLiquidity?.metrics?.nearestAtmCall?.expiration 
+                            ? `ATM ${optionsLiquidity.metrics.nearestAtmCall.dte}d Expiry • ${optionsLiquidity.tierLabel.split('•')[1]?.trim() || 'Options Active'}`
+                            : optionsLiquidity?.hasOptions === false
+                            ? 'No Listed Options'
+                            : 'Options Pricing Factor'}
+                        </p>
                       </CardContent>
                     </Card>
                   </div>
@@ -967,6 +1166,91 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                       </div>
                     </CardContent>
                   </Card>
+
+                  {/* Options Dynamics Key Levels Spotlight Banner */}
+                  {optionsChainData?.keyLevels && (
+                    <Card className="bg-gradient-to-r from-purple-950/25 via-card/80 to-indigo-950/25 border border-purple-500/30 hover:border-purple-500/50 transition-all shadow-md rounded-2xl overflow-hidden relative group">
+                      <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/5 rounded-full blur-3xl -z-10" />
+                      <CardHeader className="p-5 pb-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400 shadow-sm">
+                              <Target className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <CardTitle className="text-sm font-bold text-foreground">
+                                  Derivatives Support & Resistance Corridor
+                                </CardTitle>
+                                <Badge variant="outline" className="text-[10px] bg-purple-500/15 text-purple-300 border-purple-500/30 font-mono">
+                                  {optionsChainData.selectedExpiration} ({optionsChainData.selectedDte}d DTE)
+                                </Badge>
+                              </div>
+                              <CardDescription className="text-xs text-muted-foreground">
+                                Max Pain pinning target, institutional Call Wall ceiling, and Put Wall floor.
+                              </CardDescription>
+                            </div>
+                          </div>
+
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setActiveDataTab('options-chain')}
+                            className="h-8 text-xs font-bold gap-1.5 border-purple-500/40 text-purple-300 hover:bg-purple-500/20 shadow-sm self-start sm:self-center"
+                          >
+                            <Layers className="w-3.5 h-3.5" />
+                            <span>Explore Full Chain & Big OI</span>
+                          </Button>
+                        </div>
+                      </CardHeader>
+
+                      <CardContent className="p-5 pt-1 space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono text-xs">
+                          {/* Max Pain */}
+                          <div className="p-3 rounded-xl bg-slate-950/50 border border-purple-500/30 space-y-1">
+                            <div className="flex justify-between items-center text-[10px] text-purple-300 font-sans font-bold">
+                              <span>🎯 Max Pain Strike</span>
+                              <span>{optionsChainData.keyLevels.maxPain.pullDirection === 'BULLISH_PULL' ? '▲ Up Pull' : optionsChainData.keyLevels.maxPain.pullDirection === 'BEARISH_PULL' ? '▼ Down Pull' : '● Pinned'}</span>
+                            </div>
+                            <div className="flex items-baseline justify-between pt-0.5">
+                              <strong className="text-lg font-black text-purple-200">${optionsChainData.keyLevels.maxPain.strike.toFixed(2)}</strong>
+                              <span className="text-muted-foreground">{optionsChainData.keyLevels.maxPain.distancePercent >= 0 ? '+' : ''}{optionsChainData.keyLevels.maxPain.distancePercent.toFixed(1)}% vs Spot</span>
+                            </div>
+                          </div>
+
+                          {/* Call Wall */}
+                          <div className="p-3 rounded-xl bg-slate-950/50 border border-emerald-500/30 space-y-1">
+                            <div className="flex justify-between items-center text-[10px] text-emerald-300 font-sans font-bold">
+                              <span>🧱 Call Wall (Resist)</span>
+                              <span>Gamma Ceiling</span>
+                            </div>
+                            <div className="flex items-baseline justify-between pt-0.5">
+                              <strong className="text-lg font-black text-emerald-300">${optionsChainData.keyLevels.callWall.strike.toFixed(2)}</strong>
+                              <span className="text-emerald-400">+{optionsChainData.keyLevels.callWall.distancePercent.toFixed(1)}% ({optionsChainData.keyLevels.callWall.openInterest.toLocaleString()} OI)</span>
+                            </div>
+                          </div>
+
+                          {/* Put Wall */}
+                          <div className="p-3 rounded-xl bg-slate-950/50 border border-rose-500/30 space-y-1">
+                            <div className="flex justify-between items-center text-[10px] text-rose-300 font-sans font-bold">
+                              <span>🛡️ Put Wall (Support)</span>
+                              <span>Gamma Floor</span>
+                            </div>
+                            <div className="flex items-baseline justify-between pt-0.5">
+                              <strong className="text-lg font-black text-rose-300">${optionsChainData.keyLevels.putWall.strike.toFixed(2)}</strong>
+                              <span className="text-rose-400">{optionsChainData.keyLevels.putWall.distancePercent.toFixed(1)}% ({optionsChainData.keyLevels.putWall.openInterest.toLocaleString()} OI)</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {optionsChainData.underlyingDynamics && (
+                          <p className="text-xs text-foreground/85 font-sans leading-relaxed pt-1 border-t border-border/30">
+                            <b>Institutional Telemetry: </b>{optionsChainData.underlyingDynamics.headline}
+                          </p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  )}
 
                   {/* Portfolio Fit & Correlation Assessment Banner */}
                   <Card className="bg-gradient-to-r from-cyan-950/30 via-background/60 to-indigo-950/30 border border-cyan-500/30 hover:border-cyan-500/50 transition-all shadow-md rounded-2xl overflow-hidden relative group">
@@ -1052,6 +1336,12 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                       </CardContent>
                     </Card>
                   )}
+
+                  {/* Options Liquidity & Execution Quality Section */}
+                  <OptionsLiquidityCard
+                    symbol={selectedSymbol}
+                    onOpenTradeStructure={() => setIsTradeStructureModalOpen(true)}
+                  />
                 </TabsContent>
 
                 {/* ================= 2. FUNDAMENTALS TAB ================= */}
@@ -1382,6 +1672,14 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
         onSavedSuccess={() => {
           queryClient.invalidateQueries({ queryKey: ['tradeIdeas'] });
         }}
+      />
+
+      {/* Add To Watchlist Modal */}
+      <AddToWatchlistModal
+        isOpen={isAddToWatchlistOpen}
+        onClose={() => setIsAddToWatchlistOpen(false)}
+        symbol={selectedSymbol}
+        companyName={overviewData?.name || selectedSymbol}
       />
     </div>
   );

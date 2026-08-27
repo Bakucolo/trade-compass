@@ -44,10 +44,12 @@ import { TradingViewChart } from './graphs/TradingViewChart';
 import { YieldsBondsChartCard } from './macro/YieldsBondsChartCard';
 import { SectorsAndIndustriesCard } from './macro/SectorsAndIndustriesCard';
 import { EconomicCycleCard } from './macro/EconomicCycleCard';
+import { VolatilityMacroCard } from './macro/VolatilityMacroCard';
 
 interface MacroPageProps {
   onNavigateToResearch?: (symbol: string) => void;
   onNavigateToGraphs?: (symbol: string) => void;
+  onNavigateToTrades?: () => void;
 }
 
 type MacroCategoryTab = 'all' | 'economic' | 'volatility' | 'rates_bonds' | 'indices' | 'currencies' | 'metals' | 'energy';
@@ -63,7 +65,7 @@ const CATEGORY_TABS: { id: MacroCategoryTab; label: string; icon: React.Componen
   { id: 'energy', label: 'Energy & Petroleum', icon: Flame },
 ];
 
-export function MacroPage({ onNavigateToResearch, onNavigateToGraphs }: MacroPageProps) {
+export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigateToTrades }: MacroPageProps) {
   const { data: macroData, isLoading, refetch, isFetching } = useMacroOverview();
   const { data: dossiers = [] } = useMacroDossiers(10);
   const [activeTab, setActiveTab] = useState<MacroCategoryTab>('all');
@@ -252,6 +254,12 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs }: MacroPag
           </div>
         </div>
       </div>
+
+      {/* ================= 1.5. VOLATILITY TERM STRUCTURE, DISPERSION & SIGNALS ================= */}
+      <VolatilityMacroCard
+        onNavigateToResearch={onNavigateToResearch}
+        onNavigateToTrades={onNavigateToTrades}
+      />
 
       {/* ================= 2. ECONOMIC CYCLE STAGE & MACRO REGIME STATION ================= */}
       <EconomicCycleCard

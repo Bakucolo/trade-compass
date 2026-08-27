@@ -1,0 +1,16 @@
+name = "telegram-thought-buffer"
+main = "src/index.ts"
+compatibility_date = "2024-09-01"
+
+# KV Namespace binding for the persistent thought/idea buffer
+# Create with: npx wrangler kv namespace create APP_BUFFER
+# And paste the returned id below
+[[kv_namespaces]]
+binding = "APP_BUFFER"
+id = "af8c77d07b1249738bca2e880d41bba6"
+
+[vars]
+# Fallback consume secret (Recommended: set via `wrangler secret put CONSUME_SECRET` in production)
+CONSUME_SECRET = "tradecompass_secret_consume_token_2026"
+# Optional secret token to verify Telegram webhook requests
+# TELEGRAM_WEBHOOK_SECRET = "my_telegram_webhook_secret_123"

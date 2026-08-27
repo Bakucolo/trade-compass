@@ -67,6 +67,7 @@ import { PriceAlertModal } from './PriceAlertModal';
 import { StockNoteModal } from './StockNoteModal';
 import { BulkWatchlistAlertModal } from './watchlist/BulkWatchlistAlertModal';
 import { CreateWatchlistModal } from './watchlist/CreateWatchlistModal';
+import { PopulateByCriteriaModal } from './watchlist/PopulateByCriteriaModal';
 import { OddLotTenderModal } from './watchlist/OddLotTenderModal';
 import ReactMarkdown from 'react-markdown';
 
@@ -152,6 +153,7 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
   const [editingWatchlistId, setEditingWatchlistId] = useState<string | null>(null);
   const [editingWatchlistName, setEditingWatchlistName] = useState('');
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+  const [isCriteriaModalOpen, setIsCriteriaModalOpen] = useState(false);
   const [isOddLotModalOpen, setIsOddLotModalOpen] = useState(false);
 
   // Autocomplete Suggestions
@@ -442,6 +444,16 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
           >
             <FolderPlus className="w-4 h-4 text-muted-foreground" />
             New Watchlist
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsCriteriaModalOpen(true)}
+            className="gap-1.5 bg-gradient-to-r from-cyan-500/10 via-purple-500/10 to-primary/10 border-primary/40 text-foreground hover:bg-primary/20 shadow-sm font-bold"
+          >
+            <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+            <span>Populate by Criteria</span>
           </Button>
 
           <Button
@@ -1540,6 +1552,20 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
               refetchData();
             }}
             onOpenBulkAlerts={() => setIsBulkModalOpen(true)}
+            onOpenCriteriaModal={() => setIsCriteriaModalOpen(true)}
+          />
+
+          {/* Populate Watchlist by Criteria Modal */}
+          <PopulateByCriteriaModal
+            isOpen={isCriteriaModalOpen}
+            onClose={() => setIsCriteriaModalOpen(false)}
+            activeWatchlistId={selectedWatchlistId}
+            watchlists={watchlists}
+            onCreatedSuccess={(wId) => {
+              setSelectedWatchlistId(wId);
+              refetchWatchlists();
+              refetchData();
+            }}
           />
 
           {/* Bulk Watchlist & Alert Studio Modal */}

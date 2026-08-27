@@ -31,6 +31,10 @@ import { fetchInvestorRelationsDossier } from './services/investorRelationsServi
 import { generateTradeStructures } from './services/tradeStructurerService';
 import { diagnoseEconomicCycle, generateMacroStockPicks } from './services/economicCycleService';
 import { optionsTradeAgentService } from './services/optionsTradeAgentService';
+import { shortCandidateService } from './services/shortCandidateService';
+import { optionsLiquidityService } from './services/optionsLiquidityService';
+import { optionsChainService } from './services/optionsChainService';
+import { volatilityMacroService } from './services/volatilityMacroService';
 import {
   scanHoldingsAndWatchlistsForDips,
   diagnoseStockDip,
@@ -65,6 +69,30 @@ import {
   syncTrading212HoldingsToDB,
 } from './services/trading212Service';
 import { oddLotTenderService } from './services/oddLotTenderService';
+import {
+  syncShortOptionAlerts,
+  getShortOptionsAlertStatus,
+  createAlertsForSingleShortOption,
+} from './services/shortOptionAlertService';
+import {
+  runAgentOnThoughtLog,
+  extractSymbolsFromText,
+  fetchMarketTelemetryForSymbols,
+} from './services/thoughtLogAgentService';
+import {
+  runStockScanner,
+  ScannerCriteria,
+  SCANNER_UNIVERSE,
+} from './services/stockScannerService';
+import {
+  consumeTelegramBuffer,
+  getTelegramBufferStatus,
+} from './services/telegramBufferConsumerService';
+import {
+  generateAndSendDailyReport,
+  fetchComprehensiveReportData,
+  generateExecutivePdfBuffer,
+} from './services/telegramReportService';
 
 const prisma = new PrismaClient({
   log: ['info', 'warn', 'error'],
@@ -1586,6 +1614,18 @@ app.get('/api/macro/sectors-history', async (req, res) => {
   }
 });
 
+// GET /api/macro/volatility-intelligence - Multi-Asset Volatility Term Structure, SKEW, Dispersion & Extreme Signals
+app.get('/api/macro/volatility-intelligence', async (req, res) => {
+  try {
+    logToFile('[Macro Volatility] Fetching volatility intelligence, term structure & extreme signals...');
+    const data = await volatilityMacroService.getVolatilityIntelligence();
+    res.json(data);
+  } catch (error: any) {
+    logToFile(`Error in GET /api/macro/volatility-intelligence: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Macro Market Cache
 let macroCache: { timestamp: number; data: any } | null = null;
 const MACRO_CACHE_TTL_MS = 25 * 1000; // 25s
@@ -2013,6 +2053,33 @@ app.get('/api/research/dossier/:ticker', async (req, res) => {
     res.json(dossier);
   } catch (error: any) {
     logToFile(`Error generating dossier: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/research/options-liquidity/:ticker - Institutional Options Liquidity Rating & Metrics
+app.get('/api/research/options-liquidity/:ticker', async (req, res) => {
+  try {
+    const { ticker } = req.params;
+    logToFile(`[Options Liquidity] Fetching options liquidity rating for ${ticker}...`);
+    const liquidityData = await optionsLiquidityService.getOptionsLiquidityScore(ticker);
+    res.json(liquidityData);
+  } catch (error: any) {
+    logToFile(`[Options Liquidity] Error for ${req.params.ticker}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/research/options-chain/:ticker - Interactive Real-Time Options Matrix & Quantitative Greeks
+app.get('/api/research/options-chain/:ticker', async (req, res) => {
+  try {
+    const { ticker } = req.params;
+    const targetDate = req.query.date as string | undefined;
+    logToFile(`[Options Chain] Fetching options chain for ${ticker} (Expiration: ${targetDate || 'FRONT'})...`);
+    const chainData = await optionsChainService.getOptionsChain(ticker, targetDate);
+    res.json(chainData);
+  } catch (error: any) {
+    logToFile(`[Options Chain] Error for ${req.params.ticker}: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -3109,6 +3176,34 @@ YOUR FINAL OUTPUT MUST BE IN PURE JSON (no markdown fences) WITH THIS EXACT STRU
   "earnings_reaction_and_target": "<Post-earnings valuation impact and revised investment stance>"
 }`,
     userPrompt: 'Please generate a comprehensive quarterly earnings and guidance analysis for: {ticker}.'
+  },
+  {
+    name: 'Forensic Red Flags, Warnings & Risk Audit',
+    slug: 'red_flags_and_risks',
+    description: 'Deep audit of accounting red flags, balance sheet solvency, revenue quality, litigation/regulatory hazards, and critical downside risks.',
+    category: 'RISK_AND_RED_FLAGS',
+    isDefault: true,
+    systemPrompt: `You are a legendary forensic financial auditor and short-seller risk analyst. Your objective is to perform a rigorous, unsparing investigation into all red flags, accounting warnings, hidden balance sheet hazards, regulatory/litigation perils, and structural downside risks for the given ticker.
+Follow the ReAct loop. Use available tools to search SEC 10-K/10-Q risk factors, debt maturity schedules, auditor opinions, insider sales, customer/supplier concentration, margin pressure, and short seller commentary.
+
+YOUR FINAL OUTPUT MUST BE IN PURE JSON (no markdown fences) WITH THIS EXACT STRUCTURE:
+{
+  "ticker": "<TICKER>",
+  "report_title": "Forensic Red Flags, Warnings & Risk Audit: <TICKER>",
+  "conviction_score": <NUMBER 1-100 where higher represents critical risk severity / danger>,
+  "executive_summary": [
+    "🚨 Critical Warning / Red Flag 1",
+    "⚠️ Solvency / Liquidity Hazard 2",
+    "📉 Competitive / Margin Risk 3",
+    "⚖️ Regulatory / Governance Warning 4"
+  ],
+  "critical_red_flags_and_warnings": "<Exhaustive forensic breakdown of active red flags: revenue recognition issues, divergence between net income and operating cash flow, inventory build-up, accounts receivable aging, auditor footnotes, or unusual one-off adjustments>",
+  "balance_sheet_debt_and_solvency_risks": "<Deep solvency audit: Total debt vs EBITDA, interest coverage ratio, upcoming debt maturities in 1-3 years, liquidity runway, working capital trends, and risk of dilutive secondary offerings or covenant breaches>",
+  "operational_margin_and_competitive_threats": "<Operational risk factors: Customer or supplier concentration (>10% revenue from single client), pricing power erosion, input cost inflation, technological obsolescence, or aggressive market share loss to competitors>",
+  "regulatory_legal_and_governance_risks": "<Legal, regulatory, and governance red flags: Ongoing SEC/FTC/DOJ investigations, antitrust actions, patent cliffs, aggressive insider selling clusters, dual-class voting structures, or related-party transactions>",
+  "bear_case_thesis_and_downside_target": "<The ultimate Bear Case scenario: What specific catalyst could trigger a severe 30-60% repricing, estimate of intrinsic liquidation or distressed value, and downside price target range>"
+}`,
+    userPrompt: 'Please perform an unsparing forensic red flags and risk audit for: {ticker}.'
   }
 ];
 
@@ -3122,6 +3217,17 @@ app.get('/api/research/prompts', async (req, res) => {
     if (prompts.length === 0) {
       for (const p of SEED_PROMPTS) {
         await prisma.reportPromptTemplate.create({ data: p });
+      }
+      prompts = await prisma.reportPromptTemplate.findMany({
+        orderBy: { createdAt: 'asc' }
+      });
+    } else {
+      // Ensure all seed prompts exist in DB
+      for (const seed of SEED_PROMPTS) {
+        const exists = prompts.some(p => p.slug === seed.slug);
+        if (!exists) {
+          await prisma.reportPromptTemplate.create({ data: seed });
+        }
       }
       prompts = await prisma.reportPromptTemplate.findMany({
         orderBy: { createdAt: 'asc' }
@@ -4189,8 +4295,21 @@ app.get('/api/watchlists/:id/data', async (req, res) => {
 // ==========================================
 
 // Helper: Check active price alerts against current market prices
+let lastShortOptionAlertSync = 0;
+
 async function checkPriceAlerts() {
   try {
+    // Automatically sync defense alerts for short options in portfolio every 60s
+    const now = Date.now();
+    if (now - lastShortOptionAlertSync > 60000) {
+      lastShortOptionAlertSync = now;
+      try {
+        await syncShortOptionAlerts(prisma, logToFile);
+      } catch (err: any) {
+        logToFile(`[Auto Short Option Sync Error] ${err?.message || err}`);
+      }
+    }
+
     const activeAlerts = await prisma.priceAlert.findMany({
       where: { status: 'ACTIVE' }
     });
@@ -4549,6 +4668,69 @@ app.delete('/api/alerts/:id', async (req, res) => {
     res.json({ success: true, message: 'Alert deleted successfully.' });
   } catch (error: any) {
     logToFile(`Error deleting alert: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/alerts/short-options - Get short option holdings and their 5% & 10% alert coverage
+app.get('/api/alerts/short-options', async (req, res) => {
+  try {
+    // First get raw list
+    const rawList = await getShortOptionsAlertStatus(prisma);
+    if (rawList.length === 0) {
+      return res.json([]);
+    }
+
+    // Fetch live underlying prices
+    const uniqueSymbols = Array.from(new Set(rawList.map(item => item.underlyingSymbol.toUpperCase())));
+    const priceMap: Record<string, number> = {};
+
+    await Promise.all(
+      uniqueSymbols.map(async (sym) => {
+        try {
+          const summary = await yahooFinance.quoteSummary(sym, { modules: ['price'] });
+          const p = summary?.price?.regularMarketPrice;
+          if (p != null && !isNaN(p)) {
+            priceMap[sym] = Number(p);
+          }
+        } catch {
+          // ignore
+        }
+      })
+    );
+
+    const enriched = await getShortOptionsAlertStatus(prisma, priceMap);
+    res.json(enriched);
+  } catch (error: any) {
+    logToFile(`Error in GET /api/alerts/short-options: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/alerts/short-options/sync - Force sync 5% & 10% defense alerts for all short options in portfolio
+app.post('/api/alerts/short-options/sync', async (req, res) => {
+  try {
+    const result = await syncShortOptionAlerts(prisma, logToFile);
+    // Run alert check immediately
+    setTimeout(checkPriceAlerts, 500);
+
+    res.json(result);
+  } catch (error: any) {
+    logToFile(`Error in POST /api/alerts/short-options/sync: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/alerts/short-options/position/:holdingId - Set/re-arm 5% & 10% defense alerts for a single short option
+app.post('/api/alerts/short-options/position/:holdingId', async (req, res) => {
+  try {
+    const { holdingId } = req.params;
+    const result = await createAlertsForSingleShortOption(holdingId, prisma, logToFile);
+    setTimeout(checkPriceAlerts, 500);
+
+    res.json(result);
+  } catch (error: any) {
+    logToFile(`Error in POST /api/alerts/short-options/position/${req.params.holdingId}: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -5003,6 +5185,19 @@ app.post('/api/trades/options-agent/scan', async (req, res) => {
     res.json(result);
   } catch (error: any) {
     logToFile(`[Options Agent] Error scanning options trades: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/trades/short-agent/scan - AI Short Finding & Bearish Catalyst Agent
+app.post('/api/trades/short-agent/scan', async (req, res) => {
+  try {
+    const filters = req.body || {};
+    logToFile(`[Short Finding Agent] Scanning short candidates (Archetype: ${filters.archetype || 'ALL'}, Market Cap: ${filters.marketCapCategory || 'ALL'})...`);
+    const result = await shortCandidateService.scanShortCandidates(filters);
+    res.json(result);
+  } catch (error: any) {
+    logToFile(`[Short Finding Agent] Error scanning short candidates: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -5492,6 +5687,359 @@ app.delete('/api/portfolio/valuation-audits/:id', async (req, res) => {
   }
 });
 
+// ==========================================
+// THOUGHT LOG & RESEARCH JOURNAL API
+// ==========================================
+
+// GET /api/thought-logs/folders - List all folders with counts and telemetry
+app.get('/api/thought-logs/folders', async (req, res) => {
+  try {
+    const logs = await (prisma as any).thoughtLog.findMany({
+      select: { id: true, folder: true, tags: true, title: true }
+    });
+
+    const folderMap = new Map<string, number>();
+    let telegramCount = 0;
+    let voiceCount = 0;
+
+    // Standard baseline folders
+    const defaultFolders = ['General', 'Ideas', 'Research', 'Watchlist', 'Macro', 'Earnings', 'Trading'];
+    defaultFolders.forEach(f => folderMap.set(f, 0));
+
+    for (const l of logs) {
+      const f = l.folder?.trim() || 'General';
+      folderMap.set(f, (folderMap.get(f) || 0) + 1);
+
+      if (l.tags?.toLowerCase().includes('telegram') || l.title?.includes('📱')) {
+        telegramCount++;
+      }
+      if (l.tags?.toLowerCase().includes('voice') || l.title?.includes('🎙️')) {
+        voiceCount++;
+      }
+    }
+
+    const folders = Array.from(folderMap.entries()).map(([name, count]) => ({
+      name,
+      count,
+    })).sort((a, b) => {
+      if (a.name === 'General') return -1;
+      if (b.name === 'General') return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    res.json({
+      totalCount: logs.length,
+      telegramCount,
+      voiceCount,
+      folders,
+    });
+  } catch (error: any) {
+    logToFile(`Error in GET /api/thought-logs/folders: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/thought-logs - List all thought logs
+app.get('/api/thought-logs', async (req, res) => {
+  try {
+    const { search, tag, sentiment, folder } = req.query;
+    const where: any = {};
+
+    if (folder && typeof folder === 'string' && folder !== 'ALL') {
+      if (folder === 'Telegram') {
+        where.OR = [
+          { folder: 'Telegram' },
+          { tags: { contains: 'Telegram' } },
+          { title: { contains: '📱' } }
+        ];
+      } else if (folder === 'Voice Notes') {
+        where.OR = [
+          { folder: 'Voice Notes' },
+          { tags: { contains: 'Voice' } },
+          { title: { contains: '🎙️' } }
+        ];
+      } else {
+        where.folder = folder;
+      }
+    }
+
+    if (sentiment && typeof sentiment === 'string' && sentiment !== 'ALL') {
+      where.sentiment = sentiment;
+    }
+    if (tag && typeof tag === 'string') {
+      where.tags = { contains: tag };
+    }
+    if (search && typeof search === 'string' && search.trim()) {
+      const q = search.trim();
+      where.OR = [
+        { title: { contains: q } },
+        { content: { contains: q } },
+        { tags: { contains: q } },
+        { symbols: { contains: q } },
+        { folder: { contains: q } },
+      ];
+    }
+
+    const logs = await (prisma as any).thoughtLog.findMany({
+      where,
+      orderBy: [
+        { isPinned: 'desc' },
+        { createdAt: 'desc' }
+      ]
+    });
+    res.json(logs);
+  } catch (error: any) {
+    logToFile(`Error in GET /api/thought-logs: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/thought-logs/:id - Get single thought log
+app.get('/api/thought-logs/:id', async (req, res) => {
+  try {
+    const log = await (prisma as any).thoughtLog.findUnique({
+      where: { id: req.params.id }
+    });
+    if (!log) return res.status(404).json({ error: 'Thought log not found' });
+    res.json(log);
+  } catch (error: any) {
+    logToFile(`Error in GET /api/thought-logs/${req.params.id}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/thought-logs - Create new thought log
+app.post('/api/thought-logs', async (req, res) => {
+  try {
+    const { title, content, folder, tags, symbols, sentiment, isPinned, agentOutput, agentActionType } = req.body;
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: 'Log content is required' });
+    }
+
+    const detectedSymbols = symbols || extractSymbolsFromText(`${title || ''} ${content}`).join(', ');
+
+    const newLog = await (prisma as any).thoughtLog.create({
+      data: {
+        title: (title || '').trim() || 'Untitled Thought Log',
+        content: content.trim(),
+        folder: folder || 'General',
+        tags: tags || null,
+        symbols: detectedSymbols || null,
+        sentiment: sentiment || 'NEUTRAL',
+        isPinned: Boolean(isPinned),
+        agentOutput: agentOutput || null,
+        agentActionType: agentActionType || null,
+        marketDataJson: null,
+      }
+    });
+
+    res.json(newLog);
+  } catch (error: any) {
+    logToFile(`Error in POST /api/thought-logs: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/thought-logs/bulk-move - Move multiple thought logs to a folder
+app.put('/api/thought-logs/bulk-move', async (req, res) => {
+  try {
+    const { ids, folder } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0 || !folder) {
+      return res.status(400).json({ error: 'ids array and target folder are required' });
+    }
+    const result = await (prisma as any).thoughtLog.updateMany({
+      where: { id: { in: ids } },
+      data: { folder: folder.trim() }
+    });
+    res.json({ success: true, count: result.count, folder: folder.trim() });
+  } catch (error: any) {
+    logToFile(`Error in PUT /api/thought-logs/bulk-move: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/thought-logs/:id - Update thought log
+app.put('/api/thought-logs/:id', async (req, res) => {
+  try {
+    const { title, content, folder, tags, symbols, sentiment, isPinned, agentOutput, agentActionType, agentHistory, marketDataJson } = req.body;
+    
+    const updateData: any = {};
+    if (title !== undefined) updateData.title = title;
+    if (content !== undefined) updateData.content = content;
+    if (folder !== undefined) updateData.folder = folder;
+    if (tags !== undefined) updateData.tags = tags;
+    if (symbols !== undefined) updateData.symbols = symbols;
+    if (sentiment !== undefined) updateData.sentiment = sentiment;
+    if (isPinned !== undefined) updateData.isPinned = Boolean(isPinned);
+    if (agentOutput !== undefined) updateData.agentOutput = agentOutput;
+    if (agentActionType !== undefined) updateData.agentActionType = agentActionType;
+    if (agentHistory !== undefined) updateData.agentHistory = typeof agentHistory === 'object' ? JSON.stringify(agentHistory) : agentHistory;
+    if (marketDataJson !== undefined) updateData.marketDataJson = typeof marketDataJson === 'object' ? JSON.stringify(marketDataJson) : marketDataJson;
+
+    const updated = await (prisma as any).thoughtLog.update({
+      where: { id: req.params.id },
+      data: updateData
+    });
+
+    res.json(updated);
+  } catch (error: any) {
+    logToFile(`Error in PUT /api/thought-logs/${req.params.id}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+    const updated = await (prisma as any).thoughtLog.update({
+      where: { id: req.params.id },
+      data: updateData
+    });
+
+    res.json(updated);
+  } catch (error: any) {
+    logToFile(`Error in PUT /api/thought-logs/${req.params.id}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/thought-logs/:id - Delete thought log
+app.delete('/api/thought-logs/:id', async (req, res) => {
+  try {
+    await (prisma as any).thoughtLog.delete({
+      where: { id: req.params.id }
+    });
+    res.json({ success: true, id: req.params.id });
+  } catch (error: any) {
+    logToFile(`Error in DELETE /api/thought-logs/${req.params.id}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/thought-logs/agent/run - Run agent on thought log (with live market data & reasoning)
+app.post('/api/thought-logs/agent/run', async (req, res) => {
+  try {
+    const { logId, title, content, actionType, customPrompt, sentiment, tags, saveToLog } = req.body;
+
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: 'Content is required for AI agent analysis' });
+    }
+
+    const result = await runAgentOnThoughtLog({
+      logId,
+      title: title || '',
+      content: content.trim(),
+      actionType: actionType || 'ADD_CONTEXT',
+      customPrompt,
+      sentiment,
+      tags: Array.isArray(tags) ? tags : typeof tags === 'string' ? tags.split(',').map((t: string) => t.trim()) : [],
+    });
+
+    // Optionally persist directly to log if logId provided and saveToLog is true
+    if (logId && saveToLog) {
+      await (prisma as any).thoughtLog.update({
+        where: { id: logId },
+        data: {
+          agentOutput: result.markdownOutput,
+          agentActionType: result.actionType,
+          symbols: result.detectedSymbols.length > 0 ? result.detectedSymbols.join(', ') : undefined,
+          marketDataJson: JSON.stringify(result.marketData),
+        }
+      });
+    }
+
+    res.json(result);
+  } catch (error: any) {
+    logToFile(`Error in POST /api/thought-logs/agent/run: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==========================================
+// MULTI-FACTOR STOCK SCANNER API
+// ==========================================
+
+// POST /api/scanner/scan - Execute stock screener
+app.post('/api/scanner/scan', async (req, res) => {
+  try {
+    const criteria: ScannerCriteria = req.body || {};
+    const response = await runStockScanner(criteria);
+    res.json(response);
+  } catch (error: any) {
+    logToFile(`Error in POST /api/scanner/scan: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/scanner/meta - Get universe metadata (sectors and themes)
+app.get('/api/scanner/meta', (req, res) => {
+  try {
+    const sectorsSet = new Set<string>();
+    const themesSet = new Set<string>();
+
+    SCANNER_UNIVERSE.forEach((item) => {
+      sectorsSet.add(item.sector);
+      item.themes.forEach((t) => themesSet.add(t));
+    });
+
+    res.json({
+      totalEquities: SCANNER_UNIVERSE.length,
+      sectors: Array.from(sectorsSet).sort(),
+      themes: Array.from(themesSet).sort(),
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==========================================
+// TELEGRAM BUFFER WEBHOOK CONSUMER API
+// ==========================================
+
+// POST /api/telegram/sync-buffer - Consume pending mobile notes from Cloudflare Worker KV
+app.post('/api/telegram/sync-buffer', async (req, res) => {
+  try {
+    const result = await consumeTelegramBuffer(prisma);
+    res.json(result);
+  } catch (error: any) {
+    logToFile(`Error in POST /api/telegram/sync-buffer: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/telegram/status - Get Telegram buffer configuration status
+app.get('/api/telegram/status', (req, res) => {
+  try {
+    const status = getTelegramBufferStatus();
+    res.json(status);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/telegram/send-report - Generate executive PDF and dispatch to Telegram
+app.post('/api/telegram/send-report', async (req, res) => {
+  try {
+    const result = await generateAndSendDailyReport();
+    res.json(result);
+  } catch (error: any) {
+    console.error('Error in POST /api/telegram/send-report:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/telegram/preview-report-pdf - Stream executive PDF directly in browser
+app.get('/api/telegram/preview-report-pdf', async (req, res) => {
+  try {
+    const data = await fetchComprehensiveReportData();
+    const buffer = await generateExecutivePdfBuffer(data);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="TradeFlow_Executive_Briefing.pdf"');
+    res.setHeader('Content-Length', buffer.length);
+    res.end(buffer);
+  } catch (error: any) {
+    console.error('Error generating preview PDF:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Root Route: Redirect browser traffic to Vite frontend on port 8080
 app.get('/', (req, res) => {
   res.redirect('http://localhost:8080/');
@@ -5506,6 +6054,14 @@ const server = app.listen(port, () => {
   setInterval(() => {
     syncTrading212HoldingsToDB(prisma).catch(e => console.error('Periodic Trading 212 sync error:', e));
   }, 45000);
+
+  // Initial and periodic Telegram Buffer Sync
+  consumeTelegramBuffer(prisma).catch(e => console.error('Initial Telegram Buffer sync error:', e));
+  setInterval(() => {
+    if (process.env.TELEGRAM_BUFFER_URL) {
+      consumeTelegramBuffer(prisma).catch(e => console.error('Periodic Telegram Buffer sync error:', e));
+    }
+  }, 60000);
 });
 
 // Graceful shutdown

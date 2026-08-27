@@ -241,3 +241,133 @@ export function useBulkCreateAlerts() {
     },
   });
 }
+
+// ==========================================
+// SHORT OPTIONS PROXIMITY ALERTS (5% & 10%)
+// ==========================================
+
+export interface ShortOptionDefenseLevelInfo {
+  targetPrice: number;
+  condition: 'ABOVE' | 'BELOW';
+  description: string;
+  bufferPct: number;
+}
+
+export interface ShortOptionDefenseLevels {
+  strikePrice: number;
+  optionType: 'CALL' | 'PUT';
+  warning10Pct: ShortOptionDefenseLevelInfo;
+  critical5Pct: ShortOptionDefenseLevelInfo;
+}
+
+export interface ShortOptionAlertStatusItem {
+  holdingId: string;
+  symbol: string;
+  underlyingSymbol: string;
+  strikePrice: number;
+  optionType: 'CALL' | 'PUT';
+  expiryDate?: string;
+  quantity: number;
+  averageCost: number;
+  currentPrice: number;
+  marketValue: number;
+  brokerName?: string;
+  defenseLevels: ShortOptionDefenseLevels;
+  underlyingCurrentPrice?: number | null;
+  underlyingDistanceTo10Pct?: number | null;
+  underlyingDistanceTo5Pct?: number | null;
+  alert10Pct?: {
+    id: string;
+    status: 'ACTIVE' | 'TRIGGERED' | 'CANCELLED';
+    targetPrice: number;
+    condition: 'ABOVE' | 'BELOW';
+    triggeredAt?: string | null;
+    isMuted?: boolean;
+  } | null;
+  alert5Pct?: {
+    id: string;
+    status: 'ACTIVE' | 'TRIGGERED' | 'CANCELLED';
+    targetPrice: number;
+    condition: 'ABOVE' | 'BELOW';
+    triggeredAt?: string | null;
+    isMuted?: boolean;
+  } | null;
+}
+
+export interface SyncShortOptionAlertsResult {
+  success: boolean;
+  totalShortOptions: number;
+  existingAlertsCount: number;
+  createdAlertsCount: number;
+  createdAlerts: Array<{
+    id: string;
+    symbol: string;
+    targetPrice: number;
+    condition: string;
+    notes: string | null;
+  }>;
+}
+
+export async function fetchShortOptionAlertsStatus(): Promise<ShortOptionAlertStatusItem[]> {
+  const res = await fetch(`${API_BASE}/short-options`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch short option alerts status');
+  }
+  return res.json();
+}
+
+export async function syncShortOptionAlerts(): Promise<SyncShortOptionAlertsResult> {
+  const res = await fetch(`${API_BASE}/short-options/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to sync short option alerts');
+  }
+  return res.json();
+}
+
+export async function createAlertsForSingleShortOption(holdingId: string): Promise<{ success: boolean; alerts: PriceAlert[] }> {
+  const res = await fetch(`${API_BASE}/short-options/position/${holdingId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to set short option alerts for position');
+  }
+  return res.json();
+}
+
+export function useShortOptionAlertsStatus() {
+  return useQuery({
+    queryKey: ['short-options-alerts'],
+    queryFn: fetchShortOptionAlertsStatus,
+    refetchInterval: 15000,
+  });
+}
+
+export function useSyncShortOptionAlerts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: syncShortOptionAlerts,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+      queryClient.invalidateQueries({ queryKey: ['short-options-alerts'] });
+    },
+  });
+}
+
+export function useCreateSingleShortOptionAlerts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (holdingId: string) => createAlertsForSingleShortOption(holdingId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+      queryClient.invalidateQueries({ queryKey: ['short-options-alerts'] });
+    },
+  });
+}
+

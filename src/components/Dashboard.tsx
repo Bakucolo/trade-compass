@@ -38,18 +38,24 @@ import {
   Wallet,
   ChevronDown,
   ChevronUp,
+  FileText,
+  Send,
+  Loader2,
+  ExternalLink,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 import { usePortfolioQuotes } from '@/services/usePortfolioQuotes';
+import { useSendTelegramReport } from '@/services/telegramReportClientService';
 import { parseTrading212Ticker } from '../../server/services/trading212Service';
 
 interface DashboardProps {
   onNavigateTab?: (tab: string) => void;
   onNavigateToResearch?: (symbol: string) => void;
+  onNavigateToGraphs?: (symbol?: string) => void;
 }
 
-export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProps) {
+export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGraphs }: DashboardProps) {
   const [isPrivacyMode, setIsPrivacyMode] = useState<boolean>(() => {
     return localStorage.getItem('isPrivacyMode') === 'true';
   });
@@ -59,6 +65,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
   const [advisorPosition, setAdvisorPosition] = useState<any>(null);
   const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
   const [isBalancesOpen, setIsBalancesOpen] = useState(false);
+  const sendReportMutation = useSendTelegramReport();
 
   // Queries
   const { data: balancesData, isLoading: isBalancesLoading, refetch: refetchBalances } = usePortfolioBalances();
@@ -117,6 +124,29 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
       let curPrice = p.currentPrice > 0 ? p.currentPrice : (p.marketValue && qty !== 0 ? Math.abs(p.marketValue / (qty * multiplier)) : avgCost);
       let mktVal = Math.abs(p.marketValue || (qty * curPrice * multiplier) || 0);
 
+      // Filter out options that expired in the past
+      if (isOption && (p.expiryDate || p.expiry)) {
+        const expStr = p.expiryDate || p.expiry;
+        let expDate: Date;
+        if (/^\d{8}$/.test(expStr)) {
+          const y = expStr.substring(0, 4);
+          const m = expStr.substring(4, 6);
+          const d = expStr.substring(6, 8);
+          expDate = new Date(Number(y), Number(m) - 1, Number(d));
+        } else {
+          expDate = new Date(expStr);
+        }
+        if (!isNaN(expDate.getTime())) {
+          const today = new Date();
+          const todayNoTime = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+          const expNoTime = new Date(expDate.getFullYear(), expDate.getMonth(), expDate.getDate());
+          if (expNoTime.getTime() < todayNoTime.getTime()) {
+            // Already expired in the past, skip from active portfolio & defense center
+            return;
+          }
+        }
+      }
+
       // Look up live session quote
       const quote = portfolioQuotes[cleanSym] || portfolioQuotes[rawSym];
 
@@ -148,6 +178,17 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
         dPnLPct = (dPnL / mktVal) * 100;
       }
 
+      // Map underlying symbol and underlying stock price
+      const baseTicker = (p.underlyingSymbol || (isOption ? (cleanSym.match(/^[A-Z]+/)?.[0] || cleanSym) : cleanSym)).trim().toUpperCase();
+      let underlyingPrice: number | undefined = undefined;
+      if (p.underlyingPrice && p.underlyingPrice > 0) {
+        underlyingPrice = p.underlyingPrice;
+      } else if (portfolioQuotes[baseTicker]?.price && portfolioQuotes[baseTicker].price > 0) {
+        underlyingPrice = portfolioQuotes[baseTicker].price;
+      } else if (!isOption && curPrice > 0) {
+        underlyingPrice = curPrice;
+      }
+
       seenMap.set(dedupKey, {
         id: p.id || `${cleanSym}-${brokerSource}`,
         symbol: cleanSym,
@@ -170,8 +211,8 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
         source: brokerSource,
         assetType: isOption ? 'Option' : 'Stock',
         currency: p.currency || (quote?.currency === 'GBp' ? 'GBP' : quote?.currency) || 'USD',
-        underlyingSymbol: p.underlyingSymbol || cleanSym,
-        underlyingPrice: p.underlyingPrice || curPrice || 0,
+        underlyingSymbol: baseTicker,
+        underlyingPrice: underlyingPrice,
         strike: p.strikePrice || p.strike || undefined,
         optionType: p.optionType || undefined,
         expiry: p.expiryDate || p.expiry || undefined,
@@ -194,7 +235,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
       
       let isITM = false;
       let distance = Infinity;
-      if (isOption && pos.underlyingPrice && pos.strike) {
+      if (isOption && pos.underlyingPrice && pos.underlyingPrice > 0 && pos.strike && pos.strike > 0) {
         distance = Math.abs((pos.underlyingPrice - pos.strike) / pos.strike) * 100;
         const isCall = pos.optionType === 'Call' || pos.optionType === 'C';
         isITM = isCall ? (pos.underlyingPrice > pos.strike) : (pos.underlyingPrice < pos.strike);
@@ -311,6 +352,40 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
             {isPrivacyMode ? <EyeOff className="w-3.5 h-3.5 text-amber-400" /> : <Eye className="w-3.5 h-3.5" />}
             <span className="hidden sm:inline">{isPrivacyMode ? 'Masked' : 'Visible'}</span>
           </Button>
+
+          {/* Send PDF Briefing to Telegram */}
+          <div className="flex items-center">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => sendReportMutation.mutate()}
+              disabled={sendReportMutation.isPending}
+              className="h-9 text-xs gap-1.5 font-bold bg-sky-500/10 hover:bg-sky-500/20 border-sky-500/35 text-sky-300 shadow-[0_0_12px_rgba(56,189,248,0.15)] transition-all rounded-r-none border-r-0"
+              title="Synthesize and upload executive PDF briefing directly to your phone via Telegram"
+            >
+              <FileText className="w-3.5 h-3.5 text-sky-400" />
+              {sendReportMutation.isPending ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Generating PDF...</span>
+                </>
+              ) : (
+                <>
+                  <Send className="w-3 h-3 text-sky-400" />
+                  <span>PDF Briefing</span>
+                </>
+              )}
+            </Button>
+            <a
+              href="/api/telegram/preview-report-pdf"
+              target="_blank"
+              rel="noreferrer"
+              className="h-9 px-2 flex items-center justify-center rounded-r-lg border border-sky-500/35 bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 transition-colors"
+              title="Preview / Download raw PDF in browser"
+            >
+              <ExternalLink className="w-3 h-3 text-sky-400" />
+            </a>
+          </div>
 
           {/* Theme & Stylings Switcher */}
           <ThemeSwitcherButton variant="header" />
@@ -504,6 +579,8 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch }: DashboardProp
           setAdvisorPosition(pos);
           setIsAdvisorOpen(true);
         }}
+        onNavigateToResearch={onNavigateToResearch}
+        onNavigateToGraphs={onNavigateToGraphs || (() => goToTab('graphs'))}
       />
     </div>
   );

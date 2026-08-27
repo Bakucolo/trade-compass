@@ -6,6 +6,8 @@ import { GraphsPage } from '@/components/GraphsPage';
 import { MacroPage } from '@/components/MacroPage';
 import { TradesPage } from '@/components/TradesPage';
 import { IdeasPage } from '@/components/IdeasPage';
+import { LogPage } from '@/components/LogPage';
+import { ScannerPage } from '@/components/ScannerPage';
 import { ResearchPage } from '@/components/ResearchPage';
 import { AlertsPage } from '@/components/AlertsPage';
 import { BrokersPage } from '@/components/BrokersPage';
@@ -45,6 +47,7 @@ const Index = () => {
           <Dashboard
             onNavigateTab={setActiveTab}
             onNavigateToResearch={handleNavigateToResearch}
+            onNavigateToGraphs={handleNavigateToGraphs}
           />
         );
       case 'scorecards':
@@ -54,6 +57,7 @@ const Index = () => {
           <ManagementPage
             onNavigateToResearch={handleNavigateToResearch}
             onNavigateToPortfolio={() => setActiveTab('portfolio')}
+            onNavigateToGraphs={handleNavigateToGraphs}
           />
         );
       case 'macro':
@@ -61,12 +65,29 @@ const Index = () => {
           <MacroPage
             onNavigateToResearch={handleNavigateToResearch}
             onNavigateToGraphs={handleNavigateToGraphs}
+            onNavigateToTrades={() => setActiveTab('trades')}
           />
         );
       case 'graphs':
         return <GraphsPage onNavigateToResearch={handleNavigateToResearch} />;
+      case 'scanner':
+        return (
+          <ScannerPage
+            onNavigateToResearch={handleNavigateToResearch}
+            onNavigateToGraphs={handleNavigateToGraphs}
+            onNavigateToLog={() => setActiveTab('log')}
+            onNavigateToWatchlist={() => setActiveTab('watchlist')}
+          />
+        );
       case 'watchlist':
         return <WatchlistPage onNavigateToResearch={handleNavigateToResearch} />;
+      case 'log':
+        return (
+          <LogPage
+            onNavigateToResearch={handleNavigateToResearch}
+            onNavigateToIdeas={() => setActiveTab('ideas')}
+          />
+        );
       case 'alerts':
         return <AlertsPage onNavigateToResearch={handleNavigateToResearch} />;
       case 'trades':
@@ -77,7 +98,12 @@ const Index = () => {
         return <ResearchPage initialSymbol={researchTicker} onNavigateTab={setActiveTab} />;
       case 'portfolio':
       case 'brokers':
-        return <BrokersPage onNavigateToResearch={handleNavigateToResearch} />;
+        return (
+          <BrokersPage
+            onNavigateToResearch={handleNavigateToResearch}
+            onNavigateToGraphs={handleNavigateToGraphs}
+          />
+        );
       case 'settings':
         return <SettingsPage />;
       default:

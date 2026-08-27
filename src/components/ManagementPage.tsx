@@ -33,11 +33,13 @@ import { cn } from '@/lib/utils';
 interface ManagementPageProps {
   onNavigateToResearch?: (symbol: string) => void;
   onNavigateToPortfolio?: () => void;
+  onNavigateToGraphs?: (symbol?: string) => void;
 }
 
 export function ManagementPage({
   onNavigateToResearch,
   onNavigateToPortfolio,
+  onNavigateToGraphs,
 }: ManagementPageProps) {
   const [activeTab, setActiveTab] = useState('covered-calls');
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
@@ -270,6 +272,8 @@ export function ManagementPage({
           setSelectedAdvisorPosition(pos);
           setIsAdvisorModalOpen(true);
         }}
+        onNavigateToResearch={onNavigateToResearch}
+        onNavigateToGraphs={onNavigateToGraphs}
       />
 
       <PortfolioValuationModal

@@ -8,7 +8,6 @@ import {
   Lightbulb, 
   History, 
   Settings,
-  Link2,
   TrendingUp,
   ChevronLeft,
   ChevronRight,
@@ -18,10 +17,14 @@ import {
   Sparkles,
   Briefcase,
   ShieldCheck,
+  NotebookPen,
+  Radar,
+  Smartphone,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAlerts } from '@/services/alertService';
 import { useAgentActivities } from '@/services/agentActivityService';
+import { useThoughtLogs, useTelegramBufferStatus } from '@/services/thoughtLogService';
 import { AgentActivityDrawer } from './AgentActivityDrawer';
 import { ThemeSwitcherButton } from './ThemeSwitcherButton';
 
@@ -39,12 +42,13 @@ const navItems: NavItem[] = [
   { icon: Briefcase, label: 'Management', id: 'management' },
   { icon: Globe, label: 'Macro', id: 'macro' },
   { icon: CandlestickChart, label: 'Graphs', id: 'graphs' },
+  { icon: Radar, label: 'Scanner', id: 'scanner' },
   { icon: LineChart, label: 'Watchlist', id: 'watchlist' },
+  { icon: NotebookPen, label: 'Log', id: 'log' },
   { icon: Bell, label: 'Alerts', id: 'alerts' },
   { icon: History, label: 'Trades', id: 'trades' },
   { icon: Lightbulb, label: 'Ideas', id: 'ideas' },
   { icon: TrendingUp, label: 'Research', id: 'research' },
-  { icon: Link2, label: 'Brokers', id: 'brokers' },
   { icon: Settings, label: 'Settings', id: 'settings' },
 ];
 
@@ -63,6 +67,12 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
 
   const { data: agentActivities = [] } = useAgentActivities(10);
   const hasRunningAgent = agentActivities.some((a) => a.status === 'RUNNING');
+
+  const { data: thoughtLogs = [] } = useThoughtLogs();
+  const { data: telegramStatus } = useTelegramBufferStatus();
+  const telegramNotesCount = thoughtLogs.filter(
+    (l) => l.tags?.toLowerCase().includes('telegram') || l.title.includes('📱')
+  ).length;
 
   return (
     <>
@@ -109,6 +119,8 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
               >
                 <Icon className="w-5 h-5 flex-shrink-0" />
                 {!collapsed && <span className="text-sm font-medium flex-1 text-left">{item.label}</span>}
+                
+                {/* Alerts Badge */}
                 {!collapsed && item.id === 'alerts' && (triggeredCount > 0 || activeCount > 0) && (
                   <span
                     className={cn(
@@ -120,6 +132,25 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
                   >
                     {triggeredCount > 0 ? `${triggeredCount}!` : activeCount}
                   </span>
+                )}
+
+                {/* Log / Telegram Mobile Notes Badge */}
+                {!collapsed && item.id === 'log' && telegramNotesCount > 0 && (
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40 shadow-[0_0_10px_rgba(56,189,248,0.25)] flex items-center gap-1"
+                    title={`${telegramNotesCount} mobile notes from Telegram`}
+                  >
+                    <Smartphone className="w-2.5 h-2.5 text-sky-400" />
+                    <span>{telegramNotesCount}</span>
+                  </span>
+                )}
+
+                {/* Collapsed notification indicator pips */}
+                {collapsed && item.id === 'alerts' && triggeredCount > 0 && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400 animate-pulse shadow-[0_0_6px_rgba(251,191,36,0.8)]" />
+                )}
+                {collapsed && item.id === 'log' && telegramNotesCount > 0 && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-sky-400 animate-pulse shadow-[0_0_6px_rgba(56,189,248,0.8)]" />
                 )}
               </button>
             );

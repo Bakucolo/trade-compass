@@ -20,5 +20,8 @@ chroma_db/
 sec_filings/
 *.pdf
 .gitignore_new
+temp_audio/
+.wrangler/
+cloudflare-telegram-buffer/.wrangler/
 
 

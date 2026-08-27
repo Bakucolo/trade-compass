@@ -41,9 +41,10 @@ import { AgentActivityDrawer } from './AgentActivityDrawer';
 import { useAgentActivities } from '../services/agentActivityService';
 interface BrokersPageProps {
   onNavigateToResearch?: (symbol: string) => void;
+  onNavigateToGraphs?: (symbol?: string) => void;
 }
 
-export function BrokersPage({ onNavigateToResearch }: BrokersPageProps = {}) {
+export function BrokersPage({ onNavigateToResearch, onNavigateToGraphs }: BrokersPageProps = {}) {
   const { toast } = useToast();
 
   // --- Real-time Broker Balances & Buying Power ---
@@ -626,6 +627,7 @@ export function BrokersPage({ onNavigateToResearch }: BrokersPageProps = {}) {
           onRefresh={refreshPrices}
           isPrivacyMode={isPrivacyMode}
           onNavigateToResearch={onNavigateToResearch}
+          onNavigateToGraphs={onNavigateToGraphs}
         />
       </ErrorBoundary>
 
@@ -678,6 +680,8 @@ export function BrokersPage({ onNavigateToResearch }: BrokersPageProps = {}) {
           setAdvisorPosition(pos);
           setIsAdvisorOpen(true);
         }}
+        onNavigateToResearch={onNavigateToResearch}
+        onNavigateToGraphs={onNavigateToGraphs}
       />
 
       <div className="text-xs text-muted-foreground text-center pt-4">
