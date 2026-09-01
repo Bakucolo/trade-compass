@@ -56,6 +56,33 @@ export interface RankedThreatPosition {
   daysToExpiry: number | null;
 }
 
+export function isOptionCall(pos: {
+  optionType?: string | null;
+  symbol?: string | null;
+  description?: string | null;
+}): boolean {
+  if (pos.optionType) {
+    const norm = pos.optionType.trim().toUpperCase();
+    if (norm === 'C' || norm === 'CALL' || norm === 'CALLS') return true;
+    if (norm === 'P' || norm === 'PUT' || norm === 'PUTS') return false;
+  }
+  const text = `${pos.symbol || ''} ${pos.description || ''}`;
+  // Standard OCC format: e.g. "OSCR  250117P00015000" or "OSCR250117C00015000"
+  const occMatch = text.match(/\d{6}\s*([CP])\s*\d{8}/i);
+  if (occMatch) {
+    return occMatch[1].toUpperCase() === 'C';
+  }
+  // Loose OCC format: e.g. "250117P15" or "250117C15"
+  const looseOccMatch = text.match(/\d{6}\s*([CP])\s*\d+/i);
+  if (looseOccMatch) {
+    return looseOccMatch[1].toUpperCase() === 'C';
+  }
+  if (/\bcall\b/i.test(text)) return true;
+  if (/\bput\b/i.test(text)) return false;
+
+  return false;
+}
+
 /**
  * Calculate multi-factor Threat Score (0 to 100) for a position
  */
@@ -123,7 +150,7 @@ export function computePositionThreat(pos: UnifiedPosition): RankedThreatPositio
 
   if (isOption && hasValidUnderlyingPrice && hasValidStrike) {
     distancePct = Math.abs((pos.underlyingPrice! - pos.strike!) / pos.strike!) * 100;
-    const isCall = pos.optionType === 'Call' || pos.optionType === 'C' || (pos.symbol && pos.symbol.includes('C'));
+    const isCall = isOptionCall(pos);
     isITM = isCall ? (pos.underlyingPrice! > pos.strike!) : (pos.underlyingPrice! < pos.strike!);
   }
 
@@ -131,12 +158,13 @@ export function computePositionThreat(pos: UnifiedPosition): RankedThreatPositio
   if (isOption && isShort) {
     if (isITM) {
       // ITM Short Option
+      const optLabel = isOptionCall(pos) ? 'Call' : 'Put';
       if (isLosing) {
         threatScore += 45;
-        reasons.push(`Short ${pos.optionType || 'Option'} is ${distancePct.toFixed(1)}% ITM (Assignment risk elevated)`);
+        reasons.push(`Short ${optLabel} is ${distancePct.toFixed(1)}% ITM (Assignment risk elevated)`);
       } else {
         threatScore += 25;
-        reasons.push(`Short ${pos.optionType || 'Option'} is ${distancePct.toFixed(1)}% ITM (Covered/profitable)`);
+        reasons.push(`Short ${optLabel} is ${distancePct.toFixed(1)}% ITM (Covered/profitable)`);
       }
     } else if (distancePct < 3.5) {
       threatScore += 25;

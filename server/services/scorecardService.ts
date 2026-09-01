@@ -113,12 +113,32 @@ const SCORECARD_CACHE_TTL_MS = 60 * 1000; // 1 minute
 
 const SYMBOL_ALIASES: Record<string, string> = {
   'APF.L': 'ECOR.L',
+  'APF': 'ECOR.L',
   'MBGL_US_EQ': 'MBGL',
   'FET_US_EQ': 'FET',
   'FLEX_US_EQ': 'FLEX',
   'ENPH_US_EQ': 'ENPH',
   'SPAQl_EQ': 'SPAQ.L',
+  'SPAQ': 'SPAQ.L',
   'BURl_EQ': 'BUR.L',
+  'BUR': 'BUR.L',
+  'EOS': 'EOS.AX',
+  'EOS.AX': 'EOS.AX',
+  'BP.': 'BP.L',
+  'BP.L': 'BP.L',
+  'ONDO': 'ONDO.L',
+  'ONDO.L': 'ONDO.L',
+  'PNG': 'PNG.V',
+  'BOGO': 'BOGO.V',
+  'LIB': 'LIB.V',
+  'DMET': 'DMET.V',
+  'ZDC': 'ZDC.V',
+  'HSTR': 'HSTR.V',
+  'EMPR': 'EMPR.V',
+  'AUMB': 'AUMB.V',
+  'SWA': 'SWLF.V',
+  'AGX': 'SIL.V',
+  'AYA': 'AYA.TO',
 };
 
 // Calculate all multi-factor scores for a stock symbol

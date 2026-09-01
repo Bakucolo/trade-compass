@@ -33,11 +33,16 @@ export function ExecutiveStatsRibbon({
   isPrivacyMode,
   onTogglePrivacy,
 }: ExecutiveStatsRibbonProps) {
+  const [dashCurrencyMode, setDashCurrencyMode] = useState<'USD' | 'GBP' | 'DUAL'>('USD');
+
   const total = balancesData?.total;
   const netLiq = total?.netLiquidatingValue || 0;
   const dayPnL = total?.dayPnL || 0;
   const buyingPower = total?.buyingPower || 0;
   const unrealizedPnL = total?.unrealizedPnL || 0;
+
+  const fxRateGbpUsd = balancesData?.dualCurrency?.fxRateGbpUsd || 1.302;
+  const fxRateUsdGbp = balancesData?.dualCurrency?.fxRateUsdGbp || (1 / fxRateGbpUsd);
 
   // Day P&L %
   const prevCloseNetLiq = netLiq - dayPnL;
@@ -45,13 +50,14 @@ export function ExecutiveStatsRibbon({
   const isDayPositive = dayPnL >= 0;
 
   // Calculate Yesterday's / Prior Day Estimate from position data
-  // Using positions daily change and prior day close delta
   const yesterdayPnLEstimate = positions.reduce((acc, pos) => {
-    // If dailyPnL is available, calculate prior day delta
+    if (pos.yesterdayPnL !== undefined && pos.yesterdayPnL !== null && pos.yesterdayPnL !== 0) {
+      return acc + pos.yesterdayPnL;
+    }
     const val = pos.marketValue || 0;
-    const changePct = pos.dailyChangePercent || 0;
-    return acc + (val * (changePct / 100));
-  }, 0) || dayPnL;
+    const yestPct = pos.yesterdayPnLPercent || 0;
+    return acc + (val * (yestPct / 100));
+  }, 0);
 
   const yesterdayPctEstimate = netLiq > 0 ? (yesterdayPnLEstimate / (netLiq - yesterdayPnLEstimate)) * 100 : 0;
   const isYesterdayPositive = yesterdayPnLEstimate >= 0;
@@ -61,11 +67,13 @@ export function ExecutiveStatsRibbon({
   const marginCushionPercent = Math.min(100, Math.max(0, ibkrCushion));
   const isMarginHealthy = marginCushionPercent >= 30;
 
-  // Currency Formatter with Privacy Masking
+  // Currency Formatter with Privacy Masking & Dynamic USD / GBP conversion
   const fmt = (val: number, isPercent = false) => {
     if (isPrivacyMode) return '••••••';
     if (isPercent) return `${val >= 0 ? '+' : ''}${val.toFixed(2)}%`;
-    return `${val >= 0 ? '+' : '-'}$${Math.abs(val).toLocaleString(undefined, {
+    const convertedVal = dashCurrencyMode === 'GBP' ? val * fxRateUsdGbp : val;
+    const sym = dashCurrencyMode === 'GBP' ? '£' : '$';
+    return `${convertedVal >= 0 ? '+' : '-'}${sym}${Math.abs(convertedVal).toLocaleString(undefined, {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`;
@@ -73,6 +81,12 @@ export function ExecutiveStatsRibbon({
 
   const fmtCurrencyOnly = (val: number) => {
     if (isPrivacyMode) return '••••••';
+    if (dashCurrencyMode === 'GBP') {
+      return `£${(val * fxRateUsdGbp).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`;
+    }
     return `$${val.toLocaleString(undefined, {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
@@ -89,20 +103,41 @@ export function ExecutiveStatsRibbon({
             <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
               <Wallet className="w-3.5 h-3.5 text-primary" /> Net Liquidating Value
             </span>
-            <button
-              type="button"
-              onClick={onTogglePrivacy}
-              className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-accent/50"
-              title={isPrivacyMode ? 'Show Balances' : 'Hide Balances (Privacy Mode)'}
-            >
-              {isPrivacyMode ? <EyeOff className="w-3.5 h-3.5 text-amber-400" /> : <Eye className="w-3.5 h-3.5" />}
-            </button>
+            <div className="flex items-center gap-1">
+              <div className="flex items-center rounded-md border border-border/60 bg-background/60 p-0.5 text-[10px] font-mono font-bold">
+                <button
+                  type="button"
+                  onClick={() => setDashCurrencyMode(dashCurrencyMode === 'USD' ? 'GBP' : dashCurrencyMode === 'GBP' ? 'DUAL' : 'USD')}
+                  className="px-1.5 py-0.5 rounded text-muted-foreground hover:text-primary transition-colors flex items-center gap-1"
+                  title="Toggle Display Currency: USD ($) ⇄ GBP (£) ⇄ Dual"
+                >
+                  <span className={cn(dashCurrencyMode === 'USD' && "text-cyan-400 font-black")}>$</span>
+                  <span>/</span>
+                  <span className={cn(dashCurrencyMode === 'GBP' && "text-emerald-400 font-black")}>£</span>
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={onTogglePrivacy}
+                className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-md hover:bg-accent/50"
+                title={isPrivacyMode ? 'Show Balances' : 'Hide Balances (Privacy Mode)'}
+              >
+                {isPrivacyMode ? <EyeOff className="w-3.5 h-3.5 text-amber-400" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+            </div>
           </div>
 
           <div>
             <p className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-foreground">
               {fmtCurrencyOnly(netLiq)}
             </p>
+            {!isPrivacyMode && (
+              <div className="text-xs font-mono text-emerald-400 font-bold mt-0.5">
+                {dashCurrencyMode === 'GBP'
+                  ? `$${netLiq.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD eq.`
+                  : `£${(netLiq * fxRateUsdGbp).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} GBP eq.`}
+              </div>
+            )}
             <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground font-mono flex-wrap">
               <span className="text-orange-400">IBKR: {fmtCurrencyOnly(balancesData?.brokers?.ibkr?.netLiquidatingValue || 0)}</span>
               <span>•</span>

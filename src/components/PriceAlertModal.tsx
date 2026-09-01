@@ -38,6 +38,9 @@ interface PriceAlertModalProps {
   initialSymbol?: string;
   initialPrice?: number;
   initialStockName?: string;
+  initialTargetPrice?: number | string;
+  initialCondition?: 'ABOVE' | 'BELOW';
+  initialNotes?: string;
   editAlert?: PriceAlert | null;
   onSuccess?: () => void;
 }
@@ -55,6 +58,9 @@ export function PriceAlertModal({
   initialSymbol = '',
   initialPrice = 0,
   initialStockName = '',
+  initialTargetPrice,
+  initialCondition,
+  initialNotes,
   editAlert = null,
   onSuccess,
 }: PriceAlertModalProps) {
@@ -103,12 +109,18 @@ export function PriceAlertModal({
         const sym = (initialSymbol || '').toUpperCase();
         setSymbol(sym);
         setStockName(initialStockName || '');
-        setNotes('');
-        setCondition('ABOVE');
+        setNotes(initialNotes || '');
+        setCondition(initialCondition || 'ABOVE');
         setSearchQuery('');
         setSuggestions([]);
 
-        if (initialPrice > 0) {
+        if (initialTargetPrice !== undefined && initialTargetPrice !== null && String(initialTargetPrice).trim() !== '') {
+          setTargetPrice(String(initialTargetPrice));
+          if (initialPrice > 0) {
+            setCurrentPrice(initialPrice);
+          }
+          if (sym) fetchPriceForSymbol(sym, false);
+        } else if (initialPrice > 0) {
           setCurrentPrice(initialPrice);
           setTargetPrice((initialPrice * 1.05).toFixed(2));
           if (sym) fetchPriceForSymbol(sym, false);
@@ -120,7 +132,7 @@ export function PriceAlertModal({
         }
       }
     }
-  }, [open, initialSymbol, initialPrice, initialStockName, editAlert]);
+  }, [open, initialSymbol, initialPrice, initialStockName, initialTargetPrice, initialCondition, initialNotes, editAlert]);
 
   // Autocomplete search suggestions
   useEffect(() => {
@@ -207,6 +219,19 @@ export function PriceAlertModal({
       return;
     }
 
+    const payload = {
+      symbol: cleanSym,
+      targetPrice: numTarget,
+      condition,
+      notes: notes.trim() || undefined,
+    };
+
+    // Close modal immediately for instant feedback if not in continuous/keep-open mode
+    const shouldCloseNow = !keepOpen && !keepOpenMode;
+    if (shouldCloseNow) {
+      onOpenChange(false);
+    }
+
     try {
       if (editAlert) {
         // Update alert
@@ -216,15 +241,9 @@ export function PriceAlertModal({
           condition,
           notes: notes.trim() || undefined,
         });
-        onOpenChange(false);
       } else {
         // Create alert
-        await createAlertMutation.mutateAsync({
-          symbol: cleanSym,
-          targetPrice: numTarget,
-          condition,
-          notes: notes.trim() || undefined,
-        });
+        await createAlertMutation.mutateAsync(payload);
 
         // Record in batch created list
         setSessionAlerts((prev) => [
@@ -242,20 +261,18 @@ export function PriceAlertModal({
         if (keepOpen || keepOpenMode) {
           // Keep dialog open and prepare for next alert
           setNotes('');
-          // Suggest opposite side or reset
           if (currentPrice > 0) {
             setTargetPrice((currentPrice * (condition === 'ABOVE' ? 0.95 : 1.05)).toFixed(2));
             setCondition(condition === 'ABOVE' ? 'BELOW' : 'ABOVE');
           } else {
             setTargetPrice('');
           }
-        } else {
-          onOpenChange(false);
         }
       }
 
       if (onSuccess) onSuccess();
     } catch (err: any) {
+      console.error('Failed to save alert:', err);
       alert(`Failed to save alert: ${err.message}`);
     }
   };

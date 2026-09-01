@@ -167,13 +167,13 @@ export const fetchOptionsChain = async (
   return response.json();
 };
 
-export const useOptionsChain = (symbol: string, expiration?: string) => {
+export const useOptionsChain = (symbol: string, expiration?: string, options?: { enabled?: boolean }) => {
   const cleanSymbol = (symbol || '').trim().toUpperCase();
 
   return useQuery<OptionsChainData>({
     queryKey: ['optionsChain', cleanSymbol, expiration || 'FRONT'],
     queryFn: () => fetchOptionsChain(cleanSymbol, expiration),
-    enabled: Boolean(cleanSymbol && cleanSymbol.length > 0),
+    enabled: Boolean(cleanSymbol && cleanSymbol.length > 0 && (options?.enabled ?? true)),
     retry: 1,
     staleTime: 45 * 1000 // 45 seconds cache
   });

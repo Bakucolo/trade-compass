@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import zlib from 'zlib';
 import {
   fetchComprehensiveReportData,
   generateExecutivePdfBuffer,
@@ -162,6 +163,11 @@ describe('Telegram PDF Executive Report & Dispatcher Service', () => {
     // Check PDF magic header %PDF-1.
     const headerString = buffer.subarray(0, 8).toString('utf-8');
     expect(headerString).toContain('%PDF-');
+
+    // Check PDF metadata
+    const rawBinary = buffer.toString('binary');
+    expect(rawBinary).toContain('TradeFlow Executive Portfolio & Market Briefing');
+    expect(rawBinary).toContain('PDFKit');
   });
 
   it('should format multipart/form-data and send document to Telegram endpoint', async () => {

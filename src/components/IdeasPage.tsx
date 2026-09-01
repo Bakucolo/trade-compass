@@ -32,6 +32,7 @@ import {
   X,
   Check,
   Tag,
+  NotebookPen,
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -60,7 +61,7 @@ interface IdeasPageProps {
   onNavigateToResearch?: (symbol: string) => void;
 }
 
-export type IdeaSortOption = 'CONFIDENCE' | 'DATE' | 'POTENTIAL_ROI' | 'THEME' | 'SYMBOL';
+export type IdeaSortOption = 'DATE_DESC' | 'DATE_ASC' | 'CONFIDENCE' | 'POTENTIAL_ROI' | 'THEME' | 'SYMBOL';
 export type IdeaViewMode = 'GRID' | 'GROUPED';
 
 export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
@@ -69,7 +70,7 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
   const [filterSource, setFilterSource] = useState<'ALL' | 'AI_AGENT' | 'MANUAL'>('ALL');
   const [filterStatus, setFilterStatus] = useState<'ALL' | 'ACTIVE' | 'WATCHING' | 'PLAYED_OUT' | 'ARCHIVED'>('ALL');
   const [selectedThemeId, setSelectedThemeId] = useState<string>('ALL');
-  const [sortBy, setSortBy] = useState<IdeaSortOption>('CONFIDENCE');
+  const [sortBy, setSortBy] = useState<IdeaSortOption>('DATE_DESC');
   const [viewMode, setViewMode] = useState<IdeaViewMode>('GRID');
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
@@ -140,11 +141,14 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
   // Sort filtered ideas
   const sortedIdeas = useMemo(() => {
     return [...filteredIdeas].sort((a, b) => {
+      if (sortBy === 'DATE_DESC' || (sortBy as string) === 'DATE') {
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      }
+      if (sortBy === 'DATE_ASC') {
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      }
       if (sortBy === 'CONFIDENCE') {
         return (b.confidenceScore || 0) - (a.confidenceScore || 0);
-      }
-      if (sortBy === 'DATE') {
-        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       }
       if (sortBy === 'POTENTIAL_ROI') {
         return (b.potentialROI || 0) - (a.potentialROI || 0);
@@ -455,12 +459,13 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
             <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground" />
             <select
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
+              onChange={(e) => setSortBy(e.target.value as IdeaSortOption)}
               className="bg-transparent text-xs font-semibold text-foreground focus:outline-none cursor-pointer pr-1"
             >
+              <option value="DATE_DESC">Date Created (Newest First)</option>
+              <option value="DATE_ASC">Date Created (Oldest First)</option>
               <option value="CONFIDENCE">Highest Confidence</option>
               <option value="POTENTIAL_ROI">Max Potential ROI %</option>
-              <option value="DATE">Newest First</option>
               <option value="THEME">Market Theme</option>
               <option value="SYMBOL">Ticker (A–Z)</option>
             </select>
@@ -778,8 +783,8 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
               )}
             </div>
 
-            {/* Market Theme Pill */}
-            <div className="mb-2">
+            {/* Market Theme Pill & Date Created */}
+            <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
               <Badge
                 variant="outline"
                 className={cn(
@@ -790,6 +795,11 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
                 <span>{theme.emoji}</span>
                 <span>{theme.shortName}</span>
               </Badge>
+
+              <span className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground bg-accent/30 px-1.5 py-0.5 rounded-md border border-border/40">
+                <Clock className="w-2.5 h-2.5 text-muted-foreground/70" />
+                <span>{new Date(idea.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+              </span>
             </div>
 
             {/* Title */}
@@ -846,6 +856,16 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
                     className="bg-muted text-muted-foreground border-border text-[9px] px-1.5 py-0 h-4 font-mono uppercase"
                   >
                     <User className="w-2.5 h-2.5 mr-1" /> Manual
+                  </Badge>
+                )}
+
+                {tagsList.some((t) => t.toLowerCase().includes('thoughtlog') || t.toLowerCase() === 'log') && (
+                  <Badge
+                    variant="outline"
+                    className="bg-indigo-500/15 text-indigo-300 border-indigo-500/30 text-[9px] px-1.5 py-0 h-4 font-mono uppercase"
+                    title="Promoted from Log & Research Journal"
+                  >
+                    <NotebookPen className="w-2.5 h-2.5 mr-1" /> Log Thesis
                   </Badge>
                 )}
 

@@ -30,6 +30,7 @@ import { BrokerAccountBalance, IBKRCombinedBalance, IBKRAccountDetails, Portfoli
 import { BrokerDeepDiveModal } from "./BrokerDeepDiveModal";
 import { CurrencyAssetsModal } from "./CurrencyAssetsModal";
 import { BuyingPowerAnalyserModal } from "./BuyingPowerAnalyserModal";
+import { DualCurrencyComparisonCard } from "./DualCurrencyComparisonCard";
 import { UnifiedPosition } from "./types";
 
 interface PortfolioSummaryProps {
@@ -77,12 +78,17 @@ export function PortfolioSummary({
 }: PortfolioSummaryProps) {
   const [selectedBrokerKey, setSelectedBrokerKey] = useState<'ibkr' | 'tastytrade' | 'trading212' | null>(null);
   const [activeIbkrAccountTab, setActiveIbkrAccountTab] = useState<string>('combined');
+  const [currencyMode, setCurrencyMode] = useState<'USD' | 'GBP' | 'DUAL'>('DUAL');
   const [isCurrencyBreakdownOpen, setIsCurrencyBreakdownOpen] = useState(true);
   const [selectedCurrencyForModal, setSelectedCurrencyForModal] = useState<string | null>(null);
   const [isBuyingPowerModalOpen, setIsBuyingPowerModalOpen] = useState(false);
 
   const isPositiveDay = dailyPL >= 0;
   const isPositiveTotal = unrealizedPL >= 0;
+
+  // FX Rates & Conversion factors
+  const fxRateGbpUsd = portfolioData?.dualCurrency?.fxRateGbpUsd || 1.302;
+  const fxRateUsdGbp = portfolioData?.dualCurrency?.fxRateUsdGbp || (1 / fxRateGbpUsd);
 
   // Derived Combined IBKR numbers
   const ibkrCombined = brokerBalances?.ibkr;
@@ -141,14 +147,14 @@ export function PortfolioSummary({
   // Derived Trading 212 numbers
   const t212 = brokerBalances?.trading212;
   const t212NetUSD = t212?.netLiquidatingValue ?? accountBreakdown?.trading212 ?? 0;
-  const t212NetGBP = t212?.netLiquidatingValueGBP ?? (t212NetUSD / 1.302);
+  const t212NetGBP = t212?.netLiquidatingValueGBP ?? (t212NetUSD * fxRateUsdGbp);
   const t212CashUSD = t212?.cash ?? 0;
-  const t212CashGBP = t212?.cashGBP ?? (t212CashUSD / 1.302);
+  const t212CashGBP = t212?.cashGBP ?? (t212CashUSD * fxRateUsdGbp);
   const t212InvestedGBP = t212?.investedGBP ?? (t212NetGBP - t212CashGBP);
   const t212UnPnLUSD = t212?.unrealizedPnL ?? 0;
-  const t212UnPnLGBP = t212?.unrealizedPnLGBP ?? (t212UnPnLUSD / 1.302);
+  const t212UnPnLGBP = t212?.unrealizedPnLGBP ?? (t212UnPnLUSD * fxRateUsdGbp);
   const t212EqCount = t212?.equitiesCount ?? 0;
-  const t212EqValUSD = t212?.equitiesValue ?? (t212InvestedGBP * 1.302);
+  const t212EqValUSD = t212?.equitiesValue ?? (t212InvestedGBP * fxRateGbpUsd);
   const isT212Connected = connectedSources.trading212 ?? (t212?.status === 'connected' || t212NetUSD > 0);
 
   // Global Unified Aggregates & Allocation in USD
@@ -170,6 +176,17 @@ export function PortfolioSummary({
   const formatCurr = (val?: number, decimals = 2) => {
     if (val === undefined || val === null || isNaN(val)) return '$0.00';
     return `$${val.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+  };
+
+  const formatDynamicCurr = (valUSD?: number, decimals = 2) => {
+    if (valUSD === undefined || valUSD === null || isNaN(valUSD)) {
+      return currencyMode === 'GBP' ? '£0.00' : '$0.00';
+    }
+    if (currencyMode === 'GBP') {
+      const valGBP = valUSD * fxRateUsdGbp;
+      return `£${valGBP.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+    }
+    return `$${valUSD.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
   };
 
   const formatNativeCurr = (val?: number, currency = 'USD', decimals = 2) => {
@@ -210,18 +227,27 @@ export function PortfolioSummary({
 
   return (
     <div className="space-y-4 mb-6">
-      {/* Top Primary KPI Row: Unified USD Values */}
+      {/* ================= 1. DEDICATED TOTAL CURRENCY BALANCES & BRIDGE CARD ================= */}
+      <DualCurrencyComparisonCard
+        portfolioData={portfolioData}
+        currencyMode={currencyMode}
+        onCurrencyModeChange={setCurrencyMode}
+        isPrivacyMode={isPrivacyMode}
+        onTogglePrivacy={onTogglePrivacy}
+      />
+
+      {/* Top Primary KPI Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* 1. Net Liquidating Value */}
         <Card className="glass-card border-l-4 border-l-cyan-500 p-5 relative overflow-hidden group hover:border-cyan-500/80 transition-all">
           <div className="flex items-center justify-between mb-1 relative z-10">
             <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
               <CircleDollarSign className="w-3.5 h-3.5 text-cyan-400" />
-              Unified Net Liquidating Value
+              {currencyMode === 'GBP' ? 'Net Liquidation (GBP)' : 'Net Liquidation (USD)'}
             </span>
             <div className="flex items-center gap-1.5">
               <Badge className="bg-cyan-500/15 text-cyan-300 border-cyan-500/30 text-[9px] font-mono px-1.5 py-0">
-                USD UNIFIED
+                {currencyMode === 'GBP' ? 'GBP (£)' : currencyMode === 'DUAL' ? 'DUAL ($ / £)' : 'USD ($)'}
               </Badge>
               <button
                 onClick={onTogglePrivacy}
@@ -233,14 +259,25 @@ export function PortfolioSummary({
             </div>
           </div>
 
-          <div className={cn("text-3xl font-black font-mono text-foreground tracking-tight", isPrivacyMode && "blur-md select-none opacity-60")}>
-            {formatCurr(totalNet)}
+          <div className={cn("space-y-0.5", isPrivacyMode && "blur-md select-none opacity-60")}>
+            <div className="text-3xl font-black font-mono text-foreground tracking-tight">
+              {formatDynamicCurr(totalNet)}
+            </div>
+            {currencyMode === 'DUAL' ? (
+              <div className="text-sm font-bold font-mono text-emerald-400">
+                £{(totalNet * fxRateUsdGbp).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} GBP
+              </div>
+            ) : (
+              <div className="text-xs font-mono text-muted-foreground">
+                {currencyMode === 'GBP' ? `$${totalNet.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD eq.` : `£${(totalNet * fxRateUsdGbp).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} GBP eq.`}
+              </div>
+            )}
           </div>
 
           <div className="mt-2.5 flex items-center justify-between text-xs text-muted-foreground pt-2 border-t border-white/5 font-mono">
-            <span className="text-orange-400">IBKR: {formatCurr(ibkrTotalNetCombined, 0)}</span>
-            <span className="text-rose-400">Tasty: {formatCurr(tastyNet, 0)}</span>
-            <span className="text-blue-400">T212: {formatCurr(t212NetUSD, 0)}</span>
+            <span className="text-orange-400">IBKR: {formatDynamicCurr(ibkrTotalNetCombined, 0)}</span>
+            <span className="text-rose-400">Tasty: {formatDynamicCurr(tastyNet, 0)}</span>
+            <span className="text-blue-400">T212: {formatDynamicCurr(t212NetUSD, 0)}</span>
           </div>
         </Card>
 
@@ -258,13 +295,20 @@ export function PortfolioSummary({
             </Badge>
           </div>
 
-          <div className={cn("text-3xl font-black font-mono text-amber-400 tracking-tight", isPrivacyMode && "blur-md select-none opacity-60")}>
-            {formatCurr(totalCalculatedBP)}
+          <div className={cn("space-y-0.5", isPrivacyMode && "blur-md select-none opacity-60")}>
+            <div className="text-3xl font-black font-mono text-amber-400 tracking-tight">
+              {formatDynamicCurr(totalCalculatedBP)}
+            </div>
+            {currencyMode === 'DUAL' && (
+              <div className="text-sm font-bold font-mono text-amber-300/80">
+                £{(totalCalculatedBP * fxRateUsdGbp).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} GBP
+              </div>
+            )}
           </div>
 
           <div className="mt-2.5 flex items-center justify-between text-xs text-muted-foreground pt-2 border-t border-white/5 font-mono">
-            <span>Cash: {formatCurr(totalCashValue, 0)}</span>
-            <span>Excess: {formatCurr(ibkrExcess + tastyCash + t212CashUSD, 0)}</span>
+            <span>Cash: {formatDynamicCurr(totalCashValue, 0)}</span>
+            <span>Excess: {formatDynamicCurr(ibkrExcess + tastyCash + t212CashUSD, 0)}</span>
           </div>
         </Card>
 
@@ -282,18 +326,25 @@ export function PortfolioSummary({
             {isPositiveDay ? <ArrowUpRight className="w-4 h-4 text-emerald-400" /> : <ArrowDownRight className="w-4 h-4 text-rose-400" />}
           </div>
 
-          <div className={cn("text-2xl font-bold font-mono flex items-baseline gap-2", isPositiveDay ? "text-emerald-400" : "text-rose-400")}>
-            <span className={cn(isPrivacyMode && "blur-md select-none opacity-60")}>
-              {isPositiveDay ? '+' : ''}{formatCurr(dailyPL)}
-            </span>
-            <span className="text-xs font-sans font-semibold opacity-90">
-              ({isPositiveDay ? '+' : ''}{dailyPLPercent.toFixed(2)}%)
-            </span>
+          <div className={cn("space-y-0.5 font-mono", isPrivacyMode && "blur-md select-none opacity-60")}>
+            <div className={cn("text-2xl font-bold flex items-baseline gap-2", isPositiveDay ? "text-emerald-400" : "text-rose-400")}>
+              <span>
+                {isPositiveDay ? '+' : '-'}{formatDynamicCurr(Math.abs(dailyPL))}
+              </span>
+              <span className="text-xs font-sans font-semibold opacity-90">
+                ({isPositiveDay ? '+' : ''}{dailyPLPercent.toFixed(2)}%)
+              </span>
+            </div>
+            {currencyMode === 'DUAL' && (
+              <div className={cn("text-xs font-bold", isPositiveDay ? "text-emerald-300" : "text-rose-300")}>
+                {isPositiveDay ? '+' : '-'}£{(Math.abs(dailyPL) * fxRateUsdGbp).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} GBP
+              </div>
+            )}
           </div>
 
           <div className="mt-2.5 flex items-center justify-between text-xs text-muted-foreground pt-2 border-t border-white/5 font-mono">
-            <span>IBKR: {formatCurr(ibkrCombined?.dayPnL ?? activeIbkrAcct?.dayPnL ?? 0, 0)}</span>
-            <span>Tasty: {formatCurr(tasty?.dayPnL ?? 0, 0)}</span>
+            <span>IBKR: {formatDynamicCurr(ibkrCombined?.dayPnL ?? activeIbkrAcct?.dayPnL ?? 0, 0)}</span>
+            <span>Tasty: {formatDynamicCurr(tasty?.dayPnL ?? 0, 0)}</span>
           </div>
         </Card>
 
@@ -311,8 +362,15 @@ export function PortfolioSummary({
             <CircleDollarSign className="w-4 h-4 text-purple-400" />
           </div>
 
-          <div className={cn("text-2xl font-bold font-mono", isPositiveTotal ? "text-purple-400" : "text-rose-400", isPrivacyMode && "blur-md select-none opacity-60")}>
-            {isPositiveTotal ? '+' : ''}{formatCurr(unrealizedPL)}
+          <div className={cn("space-y-0.5 font-mono", isPrivacyMode && "blur-md select-none opacity-60")}>
+            <div className={cn("text-2xl font-bold", isPositiveTotal ? "text-purple-400" : "text-rose-400")}>
+              {isPositiveTotal ? '+' : '-'}{formatDynamicCurr(Math.abs(unrealizedPL))}
+            </div>
+            {currencyMode === 'DUAL' && (
+              <div className={cn("text-xs font-bold", isPositiveTotal ? "text-purple-300" : "text-rose-300")}>
+                {isPositiveTotal ? '+' : '-'}£{(Math.abs(unrealizedPL) * fxRateUsdGbp).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} GBP
+              </div>
+            )}
           </div>
 
           <div className="mt-2.5 flex items-center justify-between text-xs text-muted-foreground pt-2 border-t border-white/5 font-mono">

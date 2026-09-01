@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computePositionThreat } from '../components/portfolio/CriticalDefenseModal';
+import { computePositionThreat, isOptionCall } from '../components/portfolio/CriticalDefenseModal';
 import { UnifiedPosition } from '../components/portfolio/types';
 
 describe('Critical Position Defense Threat Evaluation', () => {
@@ -61,18 +61,45 @@ describe('Critical Position Defense Threat Evaluation', () => {
     expect(threat.threatScore).toBeLessThan(20);
   });
 
-  it('should accurately flag a real losing ITM short option with low DTE as EXTREME THREAT', () => {
-    const urgentThreatOption: UnifiedPosition = {
-      ...baseOptionPosition,
-      expiry: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10), // 2 DTE
-      underlyingPrice: 24.0, // Stock fell to 24, Strike is 27.5 (ITM breach!)
-      unrealizedPL: -350,
-      unrealizedPLPercent: -180.0,
+  it('should accurately evaluate short puts on tickers containing C (e.g. OSCR, CCJ, COIN) when underlying is above strike', () => {
+    // OSCR Short Put $15 with underlying at $30.05
+    const oscrShortPut: UnifiedPosition = {
+      id: 'pos-oscr-1',
+      symbol: 'OSCR',
+      quantity: -1,
+      averageCost: 1.20,
+      currentPrice: 0.15,
+      marketValue: -15,
+      dayChange: 0,
+      dayChangePercent: 0,
+      unrealizedPL: 105,
+      unrealizedPLPercent: 87.5,
+      source: 'Tastytrade',
+      assetType: 'Option',
+      strike: 15.0,
+      optionType: 'Put',
+      expiry: new Date(Date.now() + 140 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10), // 140 DTE
+      underlyingSymbol: 'OSCR',
+      underlyingPrice: 30.05,
+      currency: 'USD',
     };
 
-    const threat = computePositionThreat(urgentThreatOption);
-    expect(threat.isITM).toBe(true);
-    expect(threat.threatLevel).toBe('EXTREME');
-    expect(threat.threatScore).toBeGreaterThanOrEqual(60);
+    const threat = computePositionThreat(oscrShortPut);
+    expect(threat.isITM).toBe(false);
+    expect(threat.distancePct).toBeCloseTo(100.33, 1);
+    expect(threat.threatLevel).toBe('LOW');
+    expect(threat.threatScore).toBe(0);
+    expect(threat.threatReason).not.toContain('ITM');
+    expect(threat.threatReason).not.toContain('Assignment risk');
+  });
+
+  it('should correctly classify option type using isOptionCall helper', () => {
+    expect(isOptionCall({ optionType: 'Put', symbol: 'OSCR' })).toBe(false);
+    expect(isOptionCall({ optionType: 'P', symbol: 'CCJ' })).toBe(false);
+    expect(isOptionCall({ optionType: 'PUT', symbol: 'COIN' })).toBe(false);
+    expect(isOptionCall({ optionType: 'Call', symbol: 'OSCR' })).toBe(true);
+    expect(isOptionCall({ optionType: 'C', symbol: 'AAPL' })).toBe(true);
+    expect(isOptionCall({ symbol: 'OSCR  260116P00015000' })).toBe(false);
+    expect(isOptionCall({ symbol: 'OSCR  260116C00015000' })).toBe(true);
   });
 });

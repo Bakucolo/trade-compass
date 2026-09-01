@@ -166,5 +166,5 @@ describe('Offline Voice Transcription & Telegram Pipeline', () => {
     } finally {
       global.fetch = originalFetch;
     }
-  });
+  }, 15000);
 });

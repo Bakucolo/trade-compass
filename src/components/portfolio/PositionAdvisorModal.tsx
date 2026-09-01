@@ -50,6 +50,7 @@ import {
   useShortOptionAlertsStatus,
   useCreateSingleShortOptionAlerts
 } from '@/services/alertService';
+import { isOptionCall } from './CriticalDefenseModal';
 
 interface PositionAdvisorModalProps {
   position: UnifiedPosition | null;
@@ -380,7 +381,8 @@ export function PositionAdvisorModal({
               {/* ================= 2.5 AUTOMATED STRIKE PROXIMITY DEFENSE ALERTS (5% & 10%) ================= */}
               {position.assetType === 'Option' && position.quantity < 0 && position.strike && (
                 (() => {
-                  const optTypeStr = (position.optionType === 'Call' || position.optionType === 'C') ? 'CALL' : 'PUT';
+                  const isCall = isOptionCall(position);
+                  const optTypeStr = isCall ? 'CALL' : 'PUT';
                   const shortInfo = shortAlerts.find(a => a.holdingId === position.id || (a.underlyingSymbol === cleanBaseSymbol && a.strikePrice === position.strike));
                   const target10 = shortInfo?.defenseLevels?.warning10Pct?.targetPrice || (optTypeStr === 'CALL' ? Number((position.strike * 0.90).toFixed(2)) : Number((position.strike * 1.10).toFixed(2)));
                   const target5 = shortInfo?.defenseLevels?.critical5Pct?.targetPrice || (optTypeStr === 'CALL' ? Number((position.strike * 0.95).toFixed(2)) : Number((position.strike * 1.05).toFixed(2)));

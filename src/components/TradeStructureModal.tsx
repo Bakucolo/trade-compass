@@ -42,8 +42,294 @@ import {
   useSaveIdeaApproaches,
   useCreateTradeIdea,
 } from '@/services/ideaService';
+import { useCreateTrade, UnifiedTrade } from '@/services/tradeService';
 import { createAlert } from '@/services/alertService';
 import { toast } from 'sonner';
+
+/**
+ * Builds unified trade records from an AI structured trade approach
+ */
+export function buildTradesFromApproach(
+  approach: StructuredTradeApproach,
+  symbol: string,
+  sourceTitle?: string
+): Partial<UnifiedTrade>[] {
+  const cleanSymbol = symbol.toUpperCase().trim();
+  const opt = approach.optionDetails;
+  const isBullish = approach.sentiment === 'BULLISH';
+  const trades: Partial<UnifiedTrade>[] = [];
+  const baseDesc = `Structured Trade: ${approach.title} [Target: $${approach.targetPrice}, Stop: $${approach.stopLoss}]${sourceTitle ? ` • (${sourceTitle})` : ''}`;
+
+  // Expiration calculation
+  const dteDays = opt?.recommendedDte || 45;
+  const expDateObj = new Date(Date.now() + dteDays * 24 * 60 * 60 * 1000);
+  const expiryDate = expDateObj.toISOString().slice(0, 10);
+  const expDateOcc = `${String(expDateObj.getFullYear()).slice(2)}${String(expDateObj.getMonth() + 1).padStart(2, '0')}${String(expDateObj.getDate()).padStart(2, '0')}`;
+
+  switch (approach.category) {
+    case 'STOCK': {
+      const price = approach.primaryEntry || 100;
+      trades.push({
+        broker: 'Manual',
+        symbol: cleanSymbol,
+        underlyingSymbol: cleanSymbol,
+        assetType: 'EQUITY',
+        side: isBullish ? 'BUY' : 'SELL',
+        action: isBullish ? 'BUY' : 'SELL',
+        positionEffect: isBullish ? 'LONG' : 'SHORT',
+        quantity: 100,
+        price,
+        totalValue: price * 100,
+        valueEffect: isBullish ? 'DEBIT' : 'CREDIT',
+        description: baseDesc,
+        executedAt: new Date().toISOString(),
+      });
+      break;
+    }
+
+    case 'OPTIONS_LONG': {
+      const optType = isBullish ? 'CALL' : 'PUT';
+      const strike = opt?.longStrike || (isBullish ? opt?.callStrike : opt?.putStrike) || approach.primaryEntry;
+      const strikeFormatted = String(Math.round(strike * 1000)).padStart(8, '0');
+      const occSymbol = `${cleanSymbol.padEnd(6, ' ')}${expDateOcc}${optType === 'CALL' ? 'C' : 'P'}${strikeFormatted}`;
+      const estPrice = opt?.estimatedCost || Math.max(1, Number((approach.primaryEntry * 0.04).toFixed(2)));
+
+      trades.push({
+        broker: 'Manual',
+        symbol: occSymbol,
+        underlyingSymbol: cleanSymbol,
+        assetType: 'OPTION',
+        optionType: optType,
+        strikePrice: strike,
+        expiryDate,
+        side: 'BUY',
+        action: 'BUY_TO_OPEN',
+        positionEffect: 'LONG',
+        quantity: 1,
+        price: estPrice,
+        totalValue: estPrice * 100,
+        valueEffect: 'DEBIT',
+        description: `${baseDesc} - Long ${optType} $${strike}`,
+        executedAt: new Date().toISOString(),
+      });
+      break;
+    }
+
+    case 'SHORT_PUT': {
+      const strike = opt?.putStrike || opt?.shortStrike || Number((approach.primaryEntry * 0.95).toFixed(2));
+      const strikeFormatted = String(Math.round(strike * 1000)).padStart(8, '0');
+      const occSymbol = `${cleanSymbol.padEnd(6, ' ')}${expDateOcc}P${strikeFormatted}`;
+      const estPrice = opt?.estimatedCost || Math.max(1, Number((approach.primaryEntry * 0.025).toFixed(2)));
+
+      trades.push({
+        broker: 'Manual',
+        symbol: occSymbol,
+        underlyingSymbol: cleanSymbol,
+        assetType: 'OPTION',
+        optionType: 'PUT',
+        strikePrice: strike,
+        expiryDate,
+        side: 'SELL',
+        action: 'SELL_TO_OPEN',
+        positionEffect: 'SHORT',
+        quantity: -1,
+        price: estPrice,
+        totalValue: estPrice * 100,
+        valueEffect: 'CREDIT',
+        description: `${baseDesc} - Cash-Secured Short Put $${strike}`,
+        executedAt: new Date().toISOString(),
+      });
+      break;
+    }
+
+    case 'COVERED_CALL': {
+      const stockPrice = approach.primaryEntry || 100;
+      // Stock Leg
+      trades.push({
+        broker: 'Manual',
+        symbol: cleanSymbol,
+        underlyingSymbol: cleanSymbol,
+        assetType: 'EQUITY',
+        side: 'BUY',
+        action: 'BUY',
+        positionEffect: 'LONG',
+        quantity: 100,
+        price: stockPrice,
+        totalValue: stockPrice * 100,
+        valueEffect: 'DEBIT',
+        description: `${baseDesc} (Covered Call: Stock Leg 100 shares)`,
+        executedAt: new Date().toISOString(),
+      });
+
+      // Short Call Leg
+      const callStrike = opt?.callStrike || opt?.shortStrike || Number((stockPrice * 1.05).toFixed(2));
+      const strikeFormatted = String(Math.round(callStrike * 1000)).padStart(8, '0');
+      const occSymbol = `${cleanSymbol.padEnd(6, ' ')}${expDateOcc}C${strikeFormatted}`;
+      const callPrice = opt?.estimatedCost || Math.max(1, Number((stockPrice * 0.025).toFixed(2)));
+
+      trades.push({
+        broker: 'Manual',
+        symbol: occSymbol,
+        underlyingSymbol: cleanSymbol,
+        assetType: 'OPTION',
+        optionType: 'CALL',
+        strikePrice: callStrike,
+        expiryDate,
+        side: 'SELL',
+        action: 'SELL_TO_OPEN',
+        positionEffect: 'SHORT',
+        quantity: -1,
+        price: callPrice,
+        totalValue: callPrice * 100,
+        valueEffect: 'CREDIT',
+        description: `${baseDesc} (Covered Call: Short Call $${callStrike} Leg)`,
+        executedAt: new Date().toISOString(),
+      });
+      break;
+    }
+
+    case 'COLLAR': {
+      const stockPrice = approach.primaryEntry || 100;
+      // Stock Leg
+      trades.push({
+        broker: 'Manual',
+        symbol: cleanSymbol,
+        underlyingSymbol: cleanSymbol,
+        assetType: 'EQUITY',
+        side: 'BUY',
+        action: 'BUY',
+        positionEffect: 'LONG',
+        quantity: 100,
+        price: stockPrice,
+        totalValue: stockPrice * 100,
+        valueEffect: 'DEBIT',
+        description: `${baseDesc} (Collar: Stock Leg)`,
+        executedAt: new Date().toISOString(),
+      });
+
+      // Long Put Floor Leg
+      const putStrike = opt?.putStrike || Number((stockPrice * 0.92).toFixed(2));
+      const putFormatted = String(Math.round(putStrike * 1000)).padStart(8, '0');
+      trades.push({
+        broker: 'Manual',
+        symbol: `${cleanSymbol.padEnd(6, ' ')}${expDateOcc}P${putFormatted}`,
+        underlyingSymbol: cleanSymbol,
+        assetType: 'OPTION',
+        optionType: 'PUT',
+        strikePrice: putStrike,
+        expiryDate,
+        side: 'BUY',
+        action: 'BUY_TO_OPEN',
+        positionEffect: 'LONG',
+        quantity: 1,
+        price: Number((stockPrice * 0.02).toFixed(2)),
+        totalValue: Number((stockPrice * 0.02 * 100).toFixed(2)),
+        valueEffect: 'DEBIT',
+        description: `${baseDesc} (Collar: Protective Put Floor $${putStrike})`,
+        executedAt: new Date().toISOString(),
+      });
+
+      // Short Call Ceiling Leg
+      const callStrike = opt?.callStrike || Number((stockPrice * 1.08).toFixed(2));
+      const callFormatted = String(Math.round(callStrike * 1000)).padStart(8, '0');
+      trades.push({
+        broker: 'Manual',
+        symbol: `${cleanSymbol.padEnd(6, ' ')}${expDateOcc}C${callFormatted}`,
+        underlyingSymbol: cleanSymbol,
+        assetType: 'OPTION',
+        optionType: 'CALL',
+        strikePrice: callStrike,
+        expiryDate,
+        side: 'SELL',
+        action: 'SELL_TO_OPEN',
+        positionEffect: 'SHORT',
+        quantity: -1,
+        price: Number((stockPrice * 0.02).toFixed(2)),
+        totalValue: Number((stockPrice * 0.02 * 100).toFixed(2)),
+        valueEffect: 'CREDIT',
+        description: `${baseDesc} (Collar: Financing Call Ceiling $${callStrike})`,
+        executedAt: new Date().toISOString(),
+      });
+      break;
+    }
+
+    case 'SPREAD': {
+      const longStrike = opt?.longStrike || approach.primaryEntry;
+      const shortStrike = opt?.shortStrike || (isBullish ? Number((approach.primaryEntry * 1.08).toFixed(2)) : Number((approach.primaryEntry * 0.92).toFixed(2)));
+      const optType = isBullish ? 'CALL' : 'PUT';
+
+      // Long Leg
+      const longFormatted = String(Math.round(longStrike * 1000)).padStart(8, '0');
+      trades.push({
+        broker: 'Manual',
+        symbol: `${cleanSymbol.padEnd(6, ' ')}${expDateOcc}${optType === 'CALL' ? 'C' : 'P'}${longFormatted}`,
+        underlyingSymbol: cleanSymbol,
+        assetType: 'OPTION',
+        optionType: optType,
+        strikePrice: longStrike,
+        expiryDate,
+        side: 'BUY',
+        action: 'BUY_TO_OPEN',
+        positionEffect: 'LONG',
+        quantity: 1,
+        price: Number((opt?.estimatedCost || 3.5).toFixed(2)),
+        totalValue: Number(((opt?.estimatedCost || 3.5) * 100).toFixed(2)),
+        valueEffect: 'DEBIT',
+        description: `${baseDesc} (Spread Long Leg $${longStrike})`,
+        executedAt: new Date().toISOString(),
+      });
+
+      // Short Leg
+      const shortFormatted = String(Math.round(shortStrike * 1000)).padStart(8, '0');
+      trades.push({
+        broker: 'Manual',
+        symbol: `${cleanSymbol.padEnd(6, ' ')}${expDateOcc}${optType === 'CALL' ? 'C' : 'P'}${shortFormatted}`,
+        underlyingSymbol: cleanSymbol,
+        assetType: 'OPTION',
+        optionType: optType,
+        strikePrice: shortStrike,
+        expiryDate,
+        side: 'SELL',
+        action: 'SELL_TO_OPEN',
+        positionEffect: 'SHORT',
+        quantity: -1,
+        price: Number((Math.max(0.5, (opt?.estimatedCost || 3.5) * 0.4)).toFixed(2)),
+        totalValue: Number((Math.max(0.5, (opt?.estimatedCost || 3.5) * 0.4) * 100).toFixed(2)),
+        valueEffect: 'CREDIT',
+        description: `${baseDesc} (Spread Short Leg $${shortStrike})`,
+        executedAt: new Date().toISOString(),
+      });
+      break;
+    }
+
+    default: {
+      const optType = isBullish ? 'CALL' : 'PUT';
+      const strike = opt?.longStrike || opt?.callStrike || opt?.putStrike || approach.primaryEntry;
+      const strikeFormatted = String(Math.round(strike * 1000)).padStart(8, '0');
+      trades.push({
+        broker: 'Manual',
+        symbol: `${cleanSymbol.padEnd(6, ' ')}${expDateOcc}${optType === 'CALL' ? 'C' : 'P'}${strikeFormatted}`,
+        underlyingSymbol: cleanSymbol,
+        assetType: 'OPTION',
+        optionType: optType,
+        strikePrice: strike,
+        expiryDate,
+        side: 'BUY',
+        action: 'BUY_TO_OPEN',
+        positionEffect: 'LONG',
+        quantity: 1,
+        price: opt?.estimatedCost || 4.0,
+        totalValue: (opt?.estimatedCost || 4.0) * 100,
+        valueEffect: 'DEBIT',
+        description: baseDesc,
+        executedAt: new Date().toISOString(),
+      });
+      break;
+    }
+  }
+
+  return trades;
+}
 
 interface TradeStructureModalProps {
   isOpen: boolean;
@@ -54,6 +340,8 @@ interface TradeStructureModalProps {
   initialThesis?: string;
   initialSentiment?: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   onSavedSuccess?: () => void;
+  onNavigateToTrades?: () => void;
+  onNavigateToIdeas?: () => void;
 }
 
 export function TradeStructureModal({
@@ -65,14 +353,18 @@ export function TradeStructureModal({
   initialThesis,
   initialSentiment = 'BULLISH',
   onSavedSuccess,
+  onNavigateToTrades,
+  onNavigateToIdeas,
 }: TradeStructureModalProps) {
   const structureTradeMutation = useStructureTrade();
   const saveApproachesMutation = useSaveIdeaApproaches();
   const createIdeaMutation = useCreateTradeIdea();
+  const createTradeMutation = useCreateTrade();
 
   const [structureResult, setStructureResult] = useState<TradeStructureResult | null>(null);
   const [selectedApproachIds, setSelectedApproachIds] = useState<Set<string>>(new Set());
   const [isAlertsLoading, setIsAlertsLoading] = useState(false);
+  const [isSavingTrades, setIsSavingTrades] = useState(false);
 
   const activeSymbol = idea?.symbol || initialSymbol || '';
   const activeSentiment = idea?.type || initialSentiment || 'BULLISH';
@@ -140,6 +432,76 @@ export function TradeStructureModal({
     setSelectedApproachIds(new Set());
   };
 
+  // 1-Click: Save Single Option/Stock Structure Directly to Trades Section
+  const handleSaveApproachToTrades = async (approach: StructuredTradeApproach, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setIsSavingTrades(true);
+
+    try {
+      const trades = buildTradesFromApproach(approach, activeSymbol, idea?.title || initialThesis);
+      for (const t of trades) {
+        await createTradeMutation.mutateAsync(t);
+      }
+
+      toast.success(`Saved "${approach.title}" to Trades!`, {
+        description: `Logged ${trades.length} trade leg(s) in your Trades tab to track execution and live P&L.`,
+        action: onNavigateToTrades ? {
+          label: 'View in Trades',
+          onClick: () => {
+            onClose();
+            onNavigateToTrades();
+          }
+        } : undefined,
+      });
+
+      onSavedSuccess?.();
+    } catch (err: any) {
+      toast.error(`Failed to save to Trades: ${err.message}`);
+    } finally {
+      setIsSavingTrades(false);
+    }
+  };
+
+  // Bulk Save Selected Approaches to Trades Section
+  const handleBulkSaveToTrades = async () => {
+    if (!structureResult || selectedApproachIds.size === 0) {
+      toast.warning('Please select at least one trade approach.');
+      return;
+    }
+
+    setIsSavingTrades(true);
+    const selectedList = structureResult.approaches.filter((a) => selectedApproachIds.has(a.id));
+    let totalLegs = 0;
+
+    try {
+      for (const app of selectedList) {
+        const trades = buildTradesFromApproach(app, activeSymbol, idea?.title || initialThesis);
+        for (const t of trades) {
+          await createTradeMutation.mutateAsync(t);
+          totalLegs++;
+        }
+      }
+
+      toast.success(`Saved ${selectedList.length} trade structure(s) (${totalLegs} legs) to Trades!`, {
+        description: 'You can now follow and track them in the Trades section.',
+        action: onNavigateToTrades ? {
+          label: 'View in Trades',
+          onClick: () => {
+            onClose();
+            onNavigateToTrades();
+          }
+        } : undefined,
+      });
+
+      onSavedSuccess?.();
+      onClose();
+    } catch (err: any) {
+      toast.error(`Failed to save to Trades: ${err.message}`);
+    } finally {
+      setIsSavingTrades(false);
+    }
+  };
+
   // 1-Click: Save Selected Approaches into Idea
   const handleSaveToIdea = async () => {
     if (!structureResult || selectedApproachIds.size === 0) {
@@ -163,28 +525,26 @@ export function TradeStructureModal({
       } else {
         // Create new Idea from Research
         const primaryApproach = selectedList[0];
-        const formattedTitle = `${activeSymbol.toUpperCase()} ${primaryApproach.approachName} (${primaryApproach.strategyType})`;
+        const formattedTitle = `${activeSymbol.toUpperCase()} ${primaryApproach.approachName || primaryApproach.title} (${primaryApproach.category})`;
         
-        const contentMarkdown = `### 🎯 Thesis: ${primaryApproach.approachName}
-${primaryApproach.thesis}
+        const contentMarkdown = `### 🎯 Thesis: ${primaryApproach.title}
+${primaryApproach.subtitle || ''}
 
 ---
 
 ### 📋 Selected Execution Structures (${selectedList.length})
 ${selectedList.map((app, i) => `
-#### ${i + 1}. ${app.approachName} (${app.strategyType})
-- **Sentiment**: ${app.sentiment} | **Horizon**: ${app.timeframe}
-- **Capital Required**: $${app.capitalRequired?.toLocaleString() || 'N/A'}
-- **Max Profit**: $${app.maxProfit?.toLocaleString() || 'Uncapped'} (${app.maxProfitPercent ? `+${app.maxProfitPercent}%` : ''})
-- **Max Risk**: $${app.maxRisk?.toLocaleString() || 'Defined'}
-- **Win Rate / POP**: ${app.winRatePercent || 65}% | **Efficiency**: ${app.capitalEfficiencyRating || 'A'}
-- **Breakevens**: ${app.breakEvenLevels?.map(b => `$${b}`).join(', ') || 'N/A'}
+#### ${i + 1}. ${app.title} (${app.category})
+- **Sentiment**: ${app.sentiment} | **Suitability**: ${app.suitability}
+- **Capital Required**: ${app.capitalRequiredEstimate}
+- **Max Profit**: ${app.maxProfit} | **Max Risk**: ${app.maxRisk}
+- **Win Probability**: ~${app.winProbabilityEstimate}% | **R:R**: ${app.riskRewardRatio}
+- **Primary Entry**: $${app.primaryEntry} | **Target**: $${app.targetPrice} | **Stop**: $${app.stopLoss}
 
-**Contract Legs**:
-${app.legs?.map((leg, lIdx) => `- ${leg.action} ${leg.quantity}x ${leg.assetType} ${leg.strike ? `@ $${leg.strike}` : ''} ${leg.expiry ? `(Exp: ${leg.expiry})` : ''}`).join('\n')}
+${app.optionDetails ? `**Option Details**: ${app.optionDetails.strategyName} (${app.optionDetails.expiryDescription}) - Break-Even: $${app.optionDetails.breakEvenPrice}` : ''}
 
-- 🛑 **Invalidation**: ${app.invalidationTrigger}
-- 🎯 **Profit Target**: ${app.profitTakingPlan}
+- 🛑 **Invalidation**: ${app.invalidationTrigger || 'Stop loss breach'}
+- 🎯 **Profit Target**: ${app.profitTakingPlan || 'Take profit at target'}
 `).join('\n---\n')}
 `;
 
@@ -195,9 +555,9 @@ ${app.legs?.map((leg, lIdx) => `- ${leg.action} ${leg.quantity}x ${leg.assetType
           timeframe: 'SWING',
           entryPrice: activePrice || null,
           content: contentMarkdown,
-          tags: `${activeSymbol.toUpperCase()}, ${primaryApproach.strategyType}, StructuredTrade, Research`,
+          tags: `${activeSymbol.toUpperCase()}, ${primaryApproach.category}, StructuredTrade`,
           status: 'ACTIVE',
-          confidenceScore: primaryApproach.winRatePercent || 75,
+          confidenceScore: primaryApproach.winProbabilityEstimate || 75,
         });
 
         toast.success(`Successfully created new Trade Idea for ${activeSymbol.toUpperCase()}!`, {
@@ -500,6 +860,18 @@ ${app.legs?.map((leg, lIdx) => `- ${leg.action} ${leg.quantity}x ${leg.assetType
 
                         <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
                           <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => handleSaveApproachToTrades(app, e)}
+                            disabled={isSavingTrades}
+                            className="h-7 text-[11px] gap-1 bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20 font-bold px-2 rounded-lg"
+                            title="Save this option/stock structure directly to Trades section to follow"
+                          >
+                            <TrendingUp className="w-3 h-3 text-emerald-400" />
+                            <span>Follow in Trades</span>
+                          </Button>
+
+                          <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => handleCreateAlertsForApproach(app)}
@@ -610,15 +982,15 @@ ${app.legs?.map((leg, lIdx) => `- ${leg.action} ${leg.quantity}x ${leg.assetType
                 size="sm"
                 onClick={() => {
                   structureTradeMutation.mutate({
-                    ideaId: idea.id,
-                    symbol: idea.symbol,
-                    title: idea.title,
-                    content: idea.content,
-                    type: idea.type,
-                    entryPrice: idea.entryPrice,
-                    targetPrice: idea.targetPrice,
-                    stopLoss: idea.stopLoss,
-                    timeframe: idea.timeframe,
+                    ideaId: idea?.id,
+                    symbol: idea?.symbol || activeSymbol,
+                    title: idea?.title || `${activeSymbol} Trade Structure`,
+                    content: idea?.content || initialThesis,
+                    type: idea?.type || activeSentiment,
+                    entryPrice: idea?.entryPrice || activePrice,
+                    targetPrice: idea?.targetPrice,
+                    stopLoss: idea?.stopLoss,
+                    timeframe: idea?.timeframe || 'SWING',
                   });
                 }}
                 className="text-xs font-bold gap-1.5"
@@ -635,19 +1007,36 @@ ${app.legs?.map((leg, lIdx) => `- ${leg.action} ${leg.quantity}x ${leg.assetType
             {selectedApproachIds.size > 0 ? (
               <span className="text-primary font-bold">{selectedApproachIds.size} approach(es) selected</span>
             ) : (
-              <span>Select approaches to attach to your trade idea</span>
+              <span>Select approaches to save to Trades or Ideas</span>
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             <Button variant="ghost" size="sm" onClick={onClose} className="text-xs">
               Cancel
             </Button>
 
             <Button
+              variant="outline"
+              size="sm"
+              onClick={handleBulkSaveToTrades}
+              disabled={isSavingTrades || selectedApproachIds.size === 0}
+              className="bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25 font-bold text-xs shadow-sm gap-1.5 px-3.5 h-9"
+              title="Save all selected structured approaches to the Trades section"
+            >
+              {isSavingTrades ? (
+                <><Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" /> Saving to Trades...</>
+              ) : (
+                <><TrendingUp className="w-3.5 h-3.5 text-emerald-400" /> Follow Selected ({selectedApproachIds.size}) in Trades</>
+              )}
+            </Button>
+
+            <Button
+              size="sm"
               onClick={handleSaveToIdea}
               disabled={saveApproachesMutation.isPending || selectedApproachIds.size === 0}
-              className="bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-md gap-1.5 px-4"
+              className="bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-md gap-1.5 px-3.5 h-9"
+              title="Save all selected approaches to Trade Ideas"
             >
               {saveApproachesMutation.isPending ? (
                 <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving to Idea...</>

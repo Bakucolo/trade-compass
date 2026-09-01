@@ -5,8 +5,14 @@ export interface BatchStockQuote {
   name: string;
   price: number;
   previousClose: number;
+  open?: number;
   change: number;
   changesPercentage: number;
+  yesterdayChange?: number;
+  yesterdayChangePercent?: number;
+  overnightChangePercent?: number;
+  weekChangePercent?: number;
+  monthChangePercent?: number;
   currency: string;
   timestamp: number;
 }

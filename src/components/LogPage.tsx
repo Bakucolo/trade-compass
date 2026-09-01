@@ -31,6 +31,7 @@ import {
   FileText,
   Clock,
   Filter,
+  Bell,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -54,15 +55,33 @@ import {
   useTelegramBufferSync,
   useThoughtLogFolders,
   extractSymbolsFromText,
+  extractPriceAlertCandidates,
 } from '@/services/thoughtLogService';
-import { Smartphone, FolderPlus, Folder, FolderOpen, Mic, ChevronDown } from 'lucide-react';
+import {
+  Smartphone,
+  FolderPlus,
+  Folder,
+  FolderOpen,
+  Mic,
+  ChevronDown,
+  GripVertical,
+  MoveRight,
+  Check,
+  X,
+  Eye,
+  BarChart2,
+} from 'lucide-react';
 import { AddToWatchlistModal } from './AddToWatchlistModal';
 import { MoveToFolderModal } from './MoveToFolderModal';
+import { TradeStructureModal } from './TradeStructureModal';
+import { PriceAlertModal } from './PriceAlertModal';
 import { useSendTelegramReport } from '@/services/telegramReportClientService';
+import { useCreateTradeIdea, useTradeIdeas } from '@/services/ideaService';
 
 interface LogPageProps {
   onNavigateToResearch?: (symbol: string) => void;
   onNavigateToIdeas?: () => void;
+  onNavigateToTrades?: () => void;
 }
 
 const SENTIMENT_OPTIONS = [
@@ -123,7 +142,7 @@ const AGENT_ACTION_BUTTONS: Array<{
   },
 ];
 
-export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProps) {
+export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToTrades }: LogPageProps) {
   const queryClient = useQueryClient();
 
   // Filters & Search
@@ -138,11 +157,12 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
     search: searchQuery,
     sentiment: isTelegramFilter ? 'ALL' : sentimentFilter,
     tag: isTelegramFilter ? 'Telegram' : (selectedTagFilter || undefined),
-    folder: selectedFolderFilter !== 'ALL' ? selectedFolderFilter : undefined,
+    folder: selectedFolderFilter,
   });
 
   const { data: foldersData } = useThoughtLogFolders();
   const { data: allLogs = [] } = useThoughtLogs();
+  const { data: allIdeas = [] } = useTradeIdeas();
   const totalTelegramCount = allLogs.filter(
     (l) => l.tags?.toLowerCase().includes('telegram') || l.title.includes('📱')
   ).length;
@@ -153,6 +173,7 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
   const runAgentMutation = useRunThoughtAgent();
   const telegramSyncMutation = useTelegramBufferSync();
   const sendReportMutation = useSendTelegramReport();
+  const createIdeaMutation = useCreateTradeIdea();
 
   // Active Selected Log
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
@@ -171,6 +192,112 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
   const [activeActionTab, setActiveActionTab] = useState<'editor' | 'agent_output'>('editor');
   const [watchlistModalSymbol, setWatchlistModalSymbol] = useState<string | null>(null);
   const [moveToFolderTarget, setMoveToFolderTarget] = useState<ThoughtLogRecord | null>(null);
+
+  // Trade Structurer State
+  const [isTradeStructureModalOpen, setIsTradeStructureModalOpen] = useState(false);
+  const [tradeStructureSymbol, setTradeStructureSymbol] = useState<string>('');
+  const [tradeStructureThesis, setTradeStructureThesis] = useState<string>('');
+  const [tradeStructureSentiment, setTradeStructureSentiment] = useState<'BULLISH' | 'BEARISH' | 'NEUTRAL'>('BULLISH');
+
+  // Drag & Drop and Folder Management State
+  const [draggingLog, setDraggingLog] = useState<ThoughtLogRecord | null>(null);
+  const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+  const [isNewFolderInputOpen, setIsNewFolderInputOpen] = useState(false);
+  const [newFolderNameInput, setNewFolderNameInput] = useState('');
+
+  // Drop on folder handler
+  const handleDropOnFolder = async (e: React.DragEvent, targetFolderName: string) => {
+    e.preventDefault();
+    setDragOverFolder(null);
+
+    const logId = e.dataTransfer.getData('text/plain') || draggingLog?.id;
+    if (!logId) return;
+
+    const targetLog = allLogs.find((l) => l.id === logId) || (draggingLog?.id === logId ? draggingLog : null);
+    const currentFolder = targetLog?.folder || 'General';
+
+    if (currentFolder === targetFolderName) {
+      toast.info(`Note is already in folder "${targetFolderName}".`);
+      setDraggingLog(null);
+      return;
+    }
+
+    try {
+      await updateLogMutation.mutateAsync({
+        id: logId,
+        data: { folder: targetFolderName },
+      });
+
+      if (selectedLogId === logId) {
+        setEditFolder(targetFolderName);
+      }
+
+      toast.success(
+        `Moved "${(targetLog?.title || 'Note').slice(0, 30)}" to folder "${targetFolderName}"!`
+      );
+    } catch (err: any) {
+      toast.error(`Failed to move note: ${err.message}`);
+    } finally {
+      setDraggingLog(null);
+    }
+  };
+
+  const handleCreateNewFolder = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const trimmed = newFolderNameInput.trim();
+    if (!trimmed) return;
+
+    setSelectedFolderFilter(trimmed);
+    setNewFolderNameInput('');
+    setIsNewFolderInputOpen(false);
+    toast.success(`Created & selected folder "${trimmed}"!`);
+  };
+
+  // Price Alert Modal State for Log Section
+  const [isAlertModalOpen, setIsAlertModalOpen] = useState(false);
+  const [alertModalConfig, setAlertModalConfig] = useState<{
+    symbol: string;
+    price?: number;
+    targetPrice?: number | string;
+    condition?: 'ABOVE' | 'BELOW';
+    notes?: string;
+  } | null>(null);
+
+  // Open Price Alert Modal with Auto-Detected Target or Defaults
+  const handleOpenSetAlert = (candidate?: {
+    symbol: string;
+    price?: number;
+    targetPrice?: number | string;
+    condition?: 'ABOVE' | 'BELOW' | 'AUTO';
+  }, sourceLog?: ThoughtLogRecord) => {
+    const rawContent = sourceLog ? `${sourceLog.title} ${sourceLog.content}` : `${editTitle} ${editContent}`;
+    const detectedSyms = extractSymbolsFromText(rawContent);
+    const sym = candidate?.symbol || detectedSyms[0] || 'AAPL';
+    const tgt = candidate?.targetPrice;
+    const cond = candidate?.condition && candidate.condition !== 'AUTO' ? candidate.condition : undefined;
+    const sourceText = sourceLog ? sourceLog.content : editContent;
+    const note = `Created from ThoughtLog: "${(sourceLog?.title || editTitle || sourceText).slice(0, 80)}"`;
+
+    setAlertModalConfig({
+      symbol: sym,
+      price: candidate?.price,
+      targetPrice: tgt,
+      condition: cond,
+      notes: note,
+    });
+    setIsAlertModalOpen(true);
+  };
+
+  // Open Trade Structurer for Active Thought Log
+  const handleOpenTradeStructure = (symbolOverride?: string) => {
+    const sym = symbolOverride || (extractSymbolsFromText(`${editTitle} ${editContent}`)[0]) || 'NVDA';
+    setTradeStructureSymbol(sym);
+    setTradeStructureThesis(editContent || editTitle);
+    setTradeStructureSentiment(
+      editSentiment === 'BEARISH' ? 'BEARISH' : editSentiment === 'NEUTRAL' ? 'NEUTRAL' : 'BULLISH'
+    );
+    setIsTradeStructureModalOpen(true);
+  };
 
   // Auto-select first log or populate default
   useEffect(() => {
@@ -269,9 +396,18 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
         });
         toast.success(`Saved "${updated.title}" in folder [${updated.folder || 'General'}]`);
       } else {
-        const created = await createLogMutation.mutateAsync(payload);
+        const created: any = await createLogMutation.mutateAsync(payload);
         setSelectedLogId(created.id);
-        toast.success(`Created new thought log "${created.title}" in [${created.folder || 'General'}]`);
+        if (created.createdAlerts && created.createdAlerts.length > 0) {
+          const alertSummary = created.createdAlerts
+            .map((a: any) => `${a.symbol} @ $${a.targetPrice} (${a.condition})`)
+            .join(', ');
+          toast.success(`🔔 Auto-created Price Alert for ${alertSummary}!`, {
+            description: `Saved to [${created.folder || 'Alerts'}] folder and actively monitoring spot prices.`,
+          });
+        } else {
+          toast.success(`Created new thought log "${created.title}" in [${created.folder || 'General'}]`);
+        }
       }
     } catch (err: any) {
       toast.error(`Failed to save thought log: ${err.message}`);
@@ -349,6 +485,74 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
   const detectedTickers = useMemo(() => {
     return extractSymbolsFromText(`${editTitle} ${editContent}`);
   }, [editTitle, editContent]);
+
+  // Automatically detect price alerts and levels from active draft in real time
+  const detectedAlertsInActiveDraft = useMemo(() => {
+    return extractPriceAlertCandidates(`${editTitle}\n${editContent}`);
+  }, [editTitle, editContent]);
+
+  // Fast map to check which symbols across the app currently have active trade ideas
+  const ideasBySymbol = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const idea of allIdeas) {
+      if (idea.symbol) {
+        const sym = idea.symbol.toUpperCase();
+        map.set(sym, (map.get(sym) || 0) + 1);
+      }
+    }
+    return map;
+  }, [allIdeas]);
+
+  // Find linked ideas for the active log / detected symbols
+  const linkedIdeasForCurrentLog = useMemo(() => {
+    if (!detectedTickers.length && !editTitle) return [];
+    const tickersUpper = new Set(detectedTickers.map((t) => t.toUpperCase()));
+    return allIdeas.filter((idea) => {
+      const sym = idea.symbol?.toUpperCase();
+      const matchSymbol = sym && tickersUpper.has(sym);
+      const matchTitle = editTitle && idea.title?.toLowerCase().includes(editTitle.toLowerCase().trim().slice(0, 15));
+      return matchSymbol || matchTitle;
+    });
+  }, [allIdeas, detectedTickers, editTitle]);
+
+  // 1-Click: Save Active Thought Log & Thesis to Ideas Section
+  const handleSaveToIdeas = async () => {
+    const primarySymbol = detectedTickers[0] || (editTitle.match(/\$([A-Z]+)/)?.[1]) || 'GENERAL';
+    const ideaSentiment = editSentiment === 'BEARISH' ? 'BEARISH' : editSentiment === 'NEUTRAL' ? 'NEUTRAL' : 'BULLISH';
+
+    // Find current spot price if available from telemetry
+    const matchedMarket = currentMarketData.find((m) => m.symbol.toUpperCase() === primarySymbol.toUpperCase());
+    const entryPrice = matchedMarket?.price || null;
+
+    let contentToSave = editContent.trim();
+    if (currentAgentOutput) {
+      contentToSave += `\n\n---\n\n### 🤖 AI Copilot Institutional Analysis\n${currentAgentOutput}`;
+    }
+
+    try {
+      await createIdeaMutation.mutateAsync({
+        title: editTitle || `${primarySymbol.toUpperCase()} Trade Thesis`,
+        symbol: primarySymbol.toUpperCase(),
+        type: ideaSentiment,
+        timeframe: 'SWING',
+        entryPrice: entryPrice,
+        content: contentToSave,
+        tags: editTags ? `${editTags}, ThoughtLog, ${editFolder}` : `ThoughtLog, ${editFolder}`,
+        status: 'ACTIVE',
+        confidenceScore: 75,
+      });
+
+      toast.success(`Saved "${editTitle || primarySymbol}" to Trade Ideas!`, {
+        description: 'You can now view, manage, and follow this thesis in your Ideas section.',
+        action: onNavigateToIdeas ? {
+          label: 'View in Ideas',
+          onClick: () => onNavigateToIdeas(),
+        } : undefined,
+      });
+    } catch (err: any) {
+      toast.error(`Failed to save to Trade Ideas: ${err.message}`);
+    }
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 pb-20">
@@ -458,62 +662,204 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
               />
             </div>
 
-            {/* Folder Navigator Ribbon */}
-            <div className="space-y-1.5 pt-0.5 border-t border-border/40">
-              <div className="flex items-center justify-between text-[11px] font-bold text-muted-foreground px-0.5 pt-1">
-                <span className="flex items-center gap-1 uppercase tracking-wider text-[10px]">
-                  <Folder className="w-3 h-3 text-primary" />
-                  Folders
+            {/* Master Folder Hub & Drop Station */}
+            <div className="space-y-2 pt-1 border-t border-border/40">
+              <div className="flex items-center justify-between text-xs font-bold text-muted-foreground px-0.5">
+                <span className="flex items-center gap-1.5 uppercase tracking-wider text-[11px] text-foreground font-extrabold">
+                  <FolderOpen className="w-3.5 h-3.5 text-primary" />
+                  Folders & Collections
                 </span>
-                {selectedFolderFilter !== 'ALL' && (
+                <div className="flex items-center gap-1.5">
+                  {selectedFolderFilter !== 'ALL' && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedFolderFilter('ALL')}
+                      className="text-[10px] text-primary hover:underline font-semibold"
+                    >
+                      Show All
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={() => setSelectedFolderFilter('ALL')}
-                    className="text-[10px] text-primary hover:underline"
+                    onClick={() => setIsNewFolderInputOpen(!isNewFolderInputOpen)}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-[10px] font-bold border border-primary/30 transition-all shadow-sm"
+                    title="Create a new folder"
                   >
-                    Clear folder filter
+                    <FolderPlus className="w-3 h-3" />
+                    <span>+ Folder</span>
                   </button>
-                )}
+                </div>
               </div>
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-[11px]">
+
+              {/* Inline New Folder Creator */}
+              {isNewFolderInputOpen && (
+                <form
+                  onSubmit={handleCreateNewFolder}
+                  className="flex items-center gap-1.5 p-1.5 rounded-xl bg-background/80 border border-primary/40 shadow-inner animate-in fade-in zoom-in-95 duration-200"
+                >
+                  <Folder className="w-3.5 h-3.5 text-primary ml-1 shrink-0" />
+                  <Input
+                    autoFocus
+                    placeholder="New folder name (e.g. Biotech, AI)..."
+                    value={newFolderNameInput}
+                    onChange={(e) => setNewFolderNameInput(e.target.value)}
+                    className="h-7 text-xs bg-transparent border-0 focus-visible:ring-0 focus-visible:ring-offset-0 px-1 font-medium"
+                  />
+                  <Button type="submit" size="sm" className="h-6 px-2 text-[10px] font-bold bg-primary text-primary-foreground shrink-0">
+                    Create
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setIsNewFolderInputOpen(false);
+                      setNewFolderNameInput('');
+                    }}
+                    className="h-6 px-1.5 text-muted-foreground hover:text-foreground shrink-0"
+                  >
+                    <X className="w-3 h-3" />
+                  </Button>
+                </form>
+              )}
+
+              {/* Drag & Drop Guidance Banner */}
+              {draggingLog && (
+                <div className="p-2 rounded-xl bg-gradient-to-r from-primary/20 via-indigo-500/20 to-purple-500/20 border border-primary/50 text-xs text-primary font-bold flex items-center gap-2 animate-pulse shadow-md">
+                  <MoveRight className="w-3.5 h-3.5 shrink-0 animate-bounce" />
+                  <span className="truncate">
+                    Drop <strong>"{draggingLog.title || 'Note'}"</strong> into any folder capsule below:
+                  </span>
+                </div>
+              )}
+
+              {/* Folder Capsules Grid & Drop Targets */}
+              <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto pr-0.5 scrollbar-thin">
+                {/* 1. All Folder Option */}
                 <button
                   type="button"
                   onClick={() => setSelectedFolderFilter('ALL')}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                  }}
+                  onDragEnter={() => setDragOverFolder('General')}
+                  onDragLeave={() => setDragOverFolder(null)}
+                  onDrop={(e) => handleDropOnFolder(e, 'General')}
                   className={cn(
-                    "px-2.5 py-1 rounded-lg font-bold transition-all shrink-0 flex items-center gap-1",
+                    "px-2.5 py-1.5 rounded-xl text-left font-bold text-xs transition-all flex items-center justify-between border relative group",
                     selectedFolderFilter === 'ALL'
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : "bg-background/60 text-muted-foreground hover:text-foreground border border-border/60"
+                      ? "bg-primary text-primary-foreground border-primary shadow-md"
+                      : "bg-background/60 text-muted-foreground hover:text-foreground border-border/60 hover:bg-accent/40",
+                    draggingLog && "border-dashed border-primary/60 bg-primary/5",
+                    dragOverFolder === 'General' && "scale-105 ring-2 ring-primary border-primary bg-primary/25 text-white font-extrabold shadow-[0_0_15px_rgba(99,102,241,0.5)]"
                   )}
+                  title="Drop here to move into General / Unfiled"
                 >
-                  <FolderOpen className="w-3 h-3" />
-                  <span>All ({allLogs.length})</span>
+                  <div className="flex items-center gap-1.5 min-w-0 truncate">
+                    <FolderOpen className={cn("w-3.5 h-3.5 shrink-0", selectedFolderFilter === 'ALL' ? "text-primary-foreground" : "text-primary")} />
+                    <span className="truncate">All Notes</span>
+                  </div>
+                  <Badge variant="outline" className={cn("text-[9.5px] px-1.5 py-0 font-mono shrink-0 ml-1 border-0", selectedFolderFilter === 'ALL' ? "bg-primary-foreground/20 text-primary-foreground" : "bg-accent text-muted-foreground")}>
+                    {allLogs.length}
+                  </Badge>
                 </button>
 
-                {(foldersData?.folders || []).map((f) => (
+                {/* 2. Telegram Buffer Option */}
+                {totalTelegramCount > 0 && (
                   <button
-                    key={f.name}
                     type="button"
-                    onClick={() => setSelectedFolderFilter(selectedFolderFilter === f.name ? 'ALL' : f.name)}
+                    onClick={() => {
+                      setSelectedFolderFilter(selectedFolderFilter === 'Telegram' ? 'ALL' : 'Telegram');
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                    }}
+                    onDragEnter={() => setDragOverFolder('Telegram')}
+                    onDragLeave={() => setDragOverFolder(null)}
+                    onDrop={(e) => handleDropOnFolder(e, 'Telegram')}
                     className={cn(
-                      "px-2.5 py-1 rounded-lg font-medium transition-all shrink-0 flex items-center gap-1",
-                      selectedFolderFilter === f.name
-                        ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/50 shadow-sm"
-                        : "bg-background/60 text-muted-foreground hover:text-foreground border border-border/60 hover:bg-accent/40"
+                      "px-2.5 py-1.5 rounded-xl text-left font-bold text-xs transition-all flex items-center justify-between border relative group",
+                      selectedFolderFilter === 'Telegram'
+                        ? "bg-sky-500/25 text-sky-300 border-sky-500/50 shadow-md"
+                        : "bg-sky-500/10 text-sky-300/80 hover:text-sky-300 border-sky-500/20 hover:bg-sky-500/15",
+                      draggingLog && "border-dashed border-sky-400 bg-sky-500/10",
+                      dragOverFolder === 'Telegram' && "scale-105 ring-2 ring-sky-400 border-sky-400 bg-sky-500/30 text-white font-extrabold shadow-[0_0_15px_rgba(56,189,248,0.5)]"
                     )}
+                    title="Drop here to move into Telegram folder"
                   >
-                    <Folder className="w-3 h-3 text-indigo-400" />
-                    <span>{f.name}</span>
-                    {f.count > 0 && (
-                      <span className="text-[10px] font-mono opacity-70">({f.count})</span>
-                    )}
+                    <div className="flex items-center gap-1.5 min-w-0 truncate">
+                      <Smartphone className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                      <span className="truncate">Telegram</span>
+                    </div>
+                    <Badge variant="outline" className="text-[9.5px] px-1.5 py-0 font-mono bg-sky-500/20 text-sky-300 border-sky-500/30 shrink-0 ml-1">
+                      {totalTelegramCount}
+                    </Badge>
                   </button>
-                ))}
+                )}
+
+                {/* 3. System & Custom Folder Drop Capsules */}
+                {[
+                  { name: 'General', icon: Folder, color: 'text-slate-400' },
+                  { name: 'Ideas', icon: Lightbulb, color: 'text-amber-400' },
+                  { name: 'Research', icon: Search, color: 'text-purple-400' },
+                  { name: 'Earnings', icon: BarChart2, color: 'text-rose-400' },
+                  { name: 'Watchlist', icon: Eye, color: 'text-emerald-400' },
+                  { name: 'Alerts', icon: Bell, color: 'text-amber-400' },
+                  { name: 'Macro', icon: Globe, color: 'text-blue-400' },
+                  { name: 'Trading', icon: Zap, color: 'text-orange-400' },
+                  ...((foldersData?.folders || [])
+                    .filter((f) => !['General', 'Ideas', 'Research', 'Earnings', 'Watchlist', 'Alerts', 'Macro', 'Trading', 'Telegram'].includes(f.name))
+                    .map((f) => ({ name: f.name, icon: Folder, color: 'text-indigo-400' }))
+                  )
+                ].map((folder) => {
+                  const Icon = folder.icon;
+                  const count = (foldersData?.folders.find((f) => f.name === folder.name)?.count) ||
+                    (folder.name === 'General' ? (foldersData?.unfiledCount || allLogs.filter(l => !l.folder || l.folder === 'General').length) :
+                    allLogs.filter(l => l.folder === folder.name).length);
+                  const isSelected = selectedFolderFilter === folder.name;
+                  const isHoveredDrop = dragOverFolder === folder.name;
+
+                  return (
+                    <button
+                      key={folder.name}
+                      type="button"
+                      onClick={() => setSelectedFolderFilter(isSelected ? 'ALL' : folder.name)}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                      }}
+                      onDragEnter={() => setDragOverFolder(folder.name)}
+                      onDragLeave={() => setDragOverFolder(null)}
+                      onDrop={(e) => handleDropOnFolder(e, folder.name)}
+                      className={cn(
+                        "px-2.5 py-1.5 rounded-xl text-left text-xs transition-all flex items-center justify-between border relative group",
+                        isSelected
+                          ? "bg-indigo-500/25 text-indigo-200 border-indigo-500/60 font-bold shadow-md"
+                          : "bg-background/60 text-muted-foreground hover:text-foreground border-border/60 hover:bg-accent/40 font-medium",
+                        draggingLog && "border-dashed border-primary/50 bg-primary/5",
+                        isHoveredDrop && "scale-105 ring-2 ring-primary border-primary bg-primary/25 text-white font-extrabold shadow-[0_0_16px_rgba(99,102,241,0.5)]"
+                      )}
+                      title={`Click to filter. Drag note here to move to "${folder.name}"`}
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0 truncate">
+                        <Icon className={cn("w-3.5 h-3.5 shrink-0", folder.color)} />
+                        <span className="truncate">{folder.name}</span>
+                      </div>
+                      {count > 0 && (
+                        <Badge variant="outline" className={cn("text-[9.5px] px-1.5 py-0 font-mono shrink-0 ml-1 border-0", isSelected ? "bg-indigo-500/30 text-indigo-200" : "bg-accent/60 text-muted-foreground")}>
+                          {count}
+                        </Badge>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
             {/* Sentiment Filter Tabs */}
-            <div className="flex items-center gap-1 overflow-x-auto pb-0.5 scrollbar-none text-[11px] pt-1 border-t border-border/40">
+            <div className="flex items-center gap-1 overflow-x-auto pb-0.5 scrollbar-none text-[11px] pt-1.5 border-t border-border/40">
               <button
                 type="button"
                 onClick={() => setSentimentFilter('ALL')}
@@ -533,7 +879,7 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
                   className={cn(
                     "px-2.5 py-1 rounded-lg font-bold transition-all shrink-0 flex items-center gap-1",
                     sentimentFilter === 'TELEGRAM'
-                      ? "bg-sky-500/25 text-sky-300 border border-sky-500/50 shadow-sm"
+                      ? "bg-sky-500/25 text-sky-300 border-sky-500/50 shadow-sm"
                       : "text-sky-400 hover:text-sky-300 bg-sky-500/10 border border-sky-500/20"
                   )}
                   title="Show only notes received from Telegram"
@@ -579,21 +925,42 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
               logs.map((log) => {
                 const isSelected = log.id === selectedLogId;
                 const sentimentMatch = SENTIMENT_OPTIONS.find((s) => s.value === log.sentiment);
+                const isBeingDragged = draggingLog?.id === log.id;
 
                 return (
                   <div
                     key={log.id}
+                    draggable={true}
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('text/plain', log.id);
+                      e.dataTransfer.effectAllowed = 'move';
+                      setDraggingLog(log);
+                    }}
+                    onDragEnd={() => {
+                      setDraggingLog(null);
+                      setDragOverFolder(null);
+                    }}
                     onClick={() => handleSelectLog(log)}
                     className={cn(
                       "p-3.5 rounded-2xl border cursor-pointer transition-all space-y-2 relative group",
                       isSelected
                         ? "bg-gradient-to-br from-indigo-950/25 via-card/90 to-card/95 border-indigo-500/50 shadow-md ring-1 ring-indigo-500/30"
-                        : "bg-card/60 hover:bg-card/80 border-border/50 hover:border-border/80"
+                        : "bg-card/60 hover:bg-card/80 border-border/50 hover:border-border/80",
+                      isBeingDragged && "opacity-40 border-dashed border-primary ring-2 ring-primary/40 shadow-2xl scale-[0.98]"
                     )}
+                    title="Drag and drop onto any folder above to move this note"
                   >
-                    {/* Top Row: Sentiment & Folder & Pin */}
+                    {/* Top Row: Grip Handle, Sentiment & Folder & Pin */}
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 flex-wrap">
+                        {/* Drag Grip Handle */}
+                        <div
+                          className="cursor-grab active:cursor-grabbing text-muted-foreground/40 group-hover:text-muted-foreground hover:text-primary transition-colors p-0.5"
+                          title="Drag to move to folder"
+                        >
+                          <GripVertical className="w-3.5 h-3.5" />
+                        </div>
+
                         {log.isPinned && (
                           <span className="p-1 rounded-md bg-amber-500/15 text-amber-400 border border-amber-500/30" title="Pinned to top">
                             <Pin className="w-3 h-3" />
@@ -623,8 +990,8 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
                             e.stopPropagation();
                             setMoveToFolderTarget(log);
                           }}
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-secondary/80 hover:bg-secondary border border-border/60 text-[9px] font-medium text-foreground/80 hover:text-foreground transition-all"
-                          title="Move to another folder"
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-secondary/80 hover:bg-secondary border border-border/60 text-[9px] font-medium text-foreground/80 hover:text-foreground transition-all shadow-sm"
+                          title="Click to move to another folder (or drag and drop above)"
                         >
                           <Folder className="w-2.5 h-2.5 text-primary" />
                           <span>{log.folder || 'General'}</span>
@@ -641,6 +1008,12 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
                             Voice
                           </Badge>
                         )}
+                        {(log.tags?.toLowerCase().includes('alert') || log.folder === 'Alerts' || log.agentOutput?.includes('Auto Price Alert')) && (
+                          <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/40 text-[9px] font-mono flex items-center gap-1 shadow-sm">
+                            <Bell className="w-2.5 h-2.5 text-amber-400" />
+                            Alert
+                          </Badge>
+                        )}
                         {log.agentOutput && (
                           <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/40 text-[9px] font-mono">
                             <Sparkles className="w-2.5 h-2.5 mr-0.5 text-amber-300" />
@@ -650,6 +1023,18 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
                       </div>
 
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const cardAlerts = extractPriceAlertCandidates(`${log.title} ${log.content}`);
+                            handleOpenSetAlert(cardAlerts[0], log);
+                          }}
+                          className="p-1 rounded hover:bg-amber-500/20 text-muted-foreground hover:text-amber-300 transition-colors"
+                          title="Set price alert for this thought log (auto-detects price if mentioned)"
+                        >
+                          <Bell className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           type="button"
                           onClick={(e) => handleTogglePin(log, e)}
@@ -685,12 +1070,26 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
                         {new Date(log.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                       </span>
                       {log.symbols && (
-                        <div className="flex items-center gap-1">
-                          {log.symbols.split(',').slice(0, 3).map((sym) => (
-                            <span key={sym.trim()} className="px-1.5 py-0.2 rounded bg-accent/40 font-bold text-foreground">
-                              ${sym.trim()}
-                            </span>
-                          ))}
+                        <div className="flex items-center gap-1 flex-wrap justify-end">
+                          {log.symbols.split(',').slice(0, 3).map((sym) => {
+                            const clean = sym.trim().toUpperCase();
+                            const hasIdea = ideasBySymbol.has(clean);
+                            return (
+                              <span
+                                key={clean}
+                                className={cn(
+                                  "px-1.5 py-0.2 rounded font-bold text-foreground inline-flex items-center gap-0.5 text-[9.5px]",
+                                  hasIdea
+                                    ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                                    : "bg-accent/40"
+                                )}
+                                title={hasIdea ? `Active idea in Ideas tab for $${clean}` : undefined}
+                              >
+                                {hasIdea && <Lightbulb className="w-2.5 h-2.5 text-amber-300" />}
+                                ${clean}
+                              </span>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -773,7 +1172,59 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap justify-end">
+                  {/* Linked Ideas shortcut indicator */}
+                  {linkedIdeasForCurrentLog.length > 0 && onNavigateToIdeas && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        onNavigateToIdeas();
+                        toast.info(`Switched to Ideas section (${linkedIdeasForCurrentLog.length} idea(s) found)`);
+                      }}
+                      className="h-8 text-xs font-bold gap-1.5 bg-amber-500/15 text-amber-300 border-amber-500/40 hover:bg-amber-500/25 shadow-sm"
+                      title="View linked Trade Idea(s) in Ideas section"
+                    >
+                      <Lightbulb className="w-3.5 h-3.5 text-amber-300" />
+                      <span>View in Ideas ({linkedIdeasForCurrentLog.length})</span>
+                    </Button>
+                  )}
+
+                  {/* Set Price Alert Button */}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleOpenSetAlert(detectedAlertsInActiveDraft[0])}
+                    className="h-8 text-xs font-bold gap-1.5 bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/35 text-amber-300 shadow-sm"
+                    title="Set a price alert for symbols mentioned in this log (auto-detects price if sent)"
+                  >
+                    <Bell className="w-3.5 h-3.5 text-amber-400" />
+                    <span>
+                      Set Alert
+                      {detectedAlertsInActiveDraft.length > 0
+                        ? ` (${detectedAlertsInActiveDraft[0].symbol} @ $${detectedAlertsInActiveDraft[0].targetPrice})`
+                        : detectedTickers.length > 0
+                        ? ` (${detectedTickers[0]})`
+                        : ''}
+                    </span>
+                  </Button>
+
+                  {/* Save to Trade Ideas Button */}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleSaveToIdeas}
+                    disabled={createIdeaMutation.isPending}
+                    className="h-8 text-xs font-bold gap-1.5 bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/35 text-amber-300 shadow-sm"
+                    title="Promote and save this thought log & thesis to Trade Ideas section"
+                  >
+                    {createIdeaMutation.isPending ? (
+                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /><span>Saving...</span></>
+                    ) : (
+                      <><Lightbulb className="w-3.5 h-3.5 text-amber-400" /><span>Save to Ideas</span></>
+                    )}
+                  </Button>
+
                   <Button
                     size="sm"
                     variant="outline"
@@ -825,37 +1276,90 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
                   {detectedTickers.length > 0 && (
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-[10px] uppercase font-bold text-muted-foreground font-mono">Detected:</span>
-                      {detectedTickers.map((ticker) => (
-                        <div
-                          key={ticker}
-                          className="inline-flex items-center gap-1 bg-primary/15 border border-primary/30 rounded-lg px-2 py-0.5 shadow-sm"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => onNavigateToResearch?.(ticker)}
-                            className="text-xs font-mono font-bold text-primary hover:text-white transition-colors flex items-center gap-1"
-                            title={`Open ${ticker} in Research page`}
+                      {detectedTickers.map((ticker) => {
+                        const hasIdea = ideasBySymbol.has(ticker.toUpperCase());
+                        const alertMatch = detectedAlertsInActiveDraft.find((a) => a.symbol === ticker.toUpperCase());
+                        return (
+                          <div
+                            key={ticker}
+                            className="inline-flex items-center gap-1 bg-primary/15 border border-primary/30 rounded-lg px-2 py-0.5 shadow-sm"
                           >
-                            <span>${ticker}</span>
-                            <ExternalLink className="w-2.5 h-2.5 opacity-60" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setWatchlistModalSymbol(ticker);
-                            }}
-                            className="text-muted-foreground hover:text-amber-300 p-0.5 rounded hover:bg-amber-500/15 transition-all ml-0.5"
-                            title={`Save ${ticker} to Watchlist`}
-                          >
-                            <FolderPlus className="w-3 h-3 text-amber-400" />
-                          </button>
-                        </div>
-                      ))}
+                            <button
+                              type="button"
+                              onClick={() => onNavigateToResearch?.(ticker)}
+                              className="text-xs font-mono font-bold text-primary hover:text-white transition-colors flex items-center gap-1"
+                              title={`Open ${ticker} in Research page`}
+                            >
+                              <span>${ticker}</span>
+                              <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenSetAlert(alertMatch || { symbol: ticker })}
+                              className="text-amber-400 hover:text-amber-300 p-0.5 transition-colors"
+                              title={alertMatch ? `Set price alert for ${ticker} @ $${alertMatch.targetPrice}` : `Set price alert for ${ticker}`}
+                            >
+                              <Bell className="w-3 h-3 text-amber-400" />
+                            </button>
+                            {hasIdea && onNavigateToIdeas && (
+                              <button
+                                type="button"
+                                onClick={() => onNavigateToIdeas()}
+                                className="text-amber-400 hover:text-amber-300 p-0.5 transition-colors"
+                                title={`View active Trade Idea for $${ticker} in Ideas tab`}
+                              >
+                                <Lightbulb className="w-3 h-3 text-amber-300" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
               </div>
+
+              {/* Interactive Live Price Alert Detection Banner */}
+              {detectedAlertsInActiveDraft.length > 0 && (
+                <div className="p-3 px-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-xs animate-in fade-in slide-in-from-top-1 duration-200">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0">
+                      <Bell className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[11px] font-bold text-amber-200 uppercase tracking-wide">
+                          {detectedAlertsInActiveDraft.length === 1 ? '🎯 Detected Price Alert' : `🎯 ${detectedAlertsInActiveDraft.length} Detected Price Alerts`}:
+                        </span>
+                        {detectedAlertsInActiveDraft.map((cand) => (
+                          <span
+                            key={`${cand.symbol}-${cand.targetPrice}`}
+                            className="inline-flex items-center gap-1 text-xs font-mono font-bold bg-background/80 text-foreground px-2 py-0.5 rounded-md border border-amber-500/40 shadow-xs"
+                          >
+                            <span className="text-primary font-bold">{cand.symbol}</span>
+                            <span className="text-amber-300">@ ${cand.targetPrice}</span>
+                            <span className="text-[10px] text-muted-foreground font-normal">({cand.condition})</span>
+                          </span>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Target price parsed from message. Saving will automatically arm this alert, or customize it below.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleOpenSetAlert(detectedAlertsInActiveDraft[0])}
+                      className="h-7.5 px-3 text-xs font-bold gap-1.5 bg-amber-500/25 text-amber-200 border-amber-500/50 hover:bg-amber-500/35 shadow-xs"
+                    >
+                      <Bell className="w-3.5 h-3.5" />
+                      <span>Set Alert ({detectedAlertsInActiveDraft[0].symbol} @ ${detectedAlertsInActiveDraft[0].targetPrice})</span>
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               {/* Main Thoughts Text Area */}
               <div className="space-y-1.5">
@@ -901,7 +1405,12 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
                       <button
                         key={act.id}
                         type="button"
-                        onClick={() => handleTriggerAgent(act.id)}
+                        onClick={() => {
+                          if (act.id === 'PROPOSE_STRUCTURES') {
+                            handleOpenTradeStructure();
+                          }
+                          handleTriggerAgent(act.id);
+                        }}
                         disabled={isAgentExecuting}
                         className="p-2.5 rounded-xl bg-card/70 hover:bg-card border border-border/60 hover:border-indigo-500/50 text-left transition-all group flex flex-col justify-between space-y-1 hover:shadow-md disabled:opacity-50"
                       >
@@ -968,7 +1477,29 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Button
+                        size="sm"
+                        onClick={() => handleOpenTradeStructure()}
+                        className="h-7 text-[11px] font-bold gap-1 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white shadow-sm"
+                        title="Pick from structured options/stock execution strategies and save to Trades tab"
+                      >
+                        <Zap className="w-3 h-3 text-amber-200" />
+                        <span>Structure & Follow in Trades</span>
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleSaveToIdeas}
+                        disabled={createIdeaMutation.isPending}
+                        className="h-7 text-[11px] font-bold gap-1 bg-amber-500/10 text-amber-300 border-amber-500/40 hover:bg-amber-500/20"
+                        title="Save this completed AI institutional analysis directly to the Ideas tab"
+                      >
+                        <Lightbulb className="w-3 h-3 text-amber-300" />
+                        <span>Save as Idea</span>
+                      </Button>
+
                       <Button
                         variant="outline"
                         size="sm"
@@ -1008,6 +1539,32 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
                     </div>
                   </div>
 
+                  {/* Interactive Trade Structure Fast-Action Banner */}
+                  <div className="p-3 rounded-xl bg-gradient-to-r from-amber-500/10 via-purple-500/10 to-indigo-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        <Zap className="w-4 h-4 text-amber-300" />
+                      </div>
+                      <div>
+                        <span className="text-xs font-bold text-foreground block">
+                          Execute Derivatives & Follow in Trades
+                        </span>
+                        <span className="text-[10.5px] text-muted-foreground">
+                          Choose from AI-computed Spreads, LEAPs, Covered Calls, or Short Puts and log directly into your Trades tracking table.
+                        </span>
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={() => handleOpenTradeStructure()}
+                      className="h-7.5 text-xs font-bold gap-1.5 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white shadow-sm shrink-0"
+                    >
+                      <Sparkles className="w-3 h-3 text-amber-200" />
+                      <span>Pick Structure & Follow</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </Button>
+                  </div>
+
                   {/* Live Market Telemetry Chips (if detected) */}
                   {currentMarketData.length > 0 && (
                     <div className="p-3 rounded-xl bg-slate-950/60 border border-border/40 space-y-2">
@@ -1015,41 +1572,76 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
                         Live Market Telemetry Grounding ({currentMarketData.length} Assets)
                       </span>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                        {currentMarketData.map((m) => (
-                          <div
-                            key={m.symbol}
-                            className="p-2 rounded-lg bg-card/60 border border-border/40 hover:border-primary/40 transition-all flex items-center justify-between text-xs font-mono group"
-                          >
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => onNavigateToResearch?.(m.symbol)}
-                                className="font-bold text-foreground hover:text-primary flex items-center gap-1 transition-colors"
-                                title={`Open ${m.symbol} in Research page`}
-                              >
-                                ${m.symbol}
-                                <ExternalLink className="w-2.5 h-2.5 opacity-60" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setWatchlistModalSymbol(m.symbol);
-                                }}
-                                className="text-muted-foreground hover:text-amber-400 p-0.5 rounded hover:bg-amber-500/10 transition-colors"
-                                title={`Save ${m.symbol} to Watchlist`}
-                              >
-                                <FolderPlus className="w-3 h-3 text-amber-400" />
-                              </button>
+                        {currentMarketData.map((m) => {
+                          const hasIdea = ideasBySymbol.has(m.symbol.toUpperCase());
+                          return (
+                            <div
+                              key={m.symbol}
+                              className="p-2 rounded-lg bg-card/60 border border-border/40 hover:border-primary/40 transition-all flex items-center justify-between text-xs font-mono group"
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => onNavigateToResearch?.(m.symbol)}
+                                  className="font-bold text-foreground hover:text-primary flex items-center gap-1 transition-colors"
+                                  title={`Open ${m.symbol} in Research page`}
+                                >
+                                  ${m.symbol}
+                                  <ExternalLink className="w-2.5 h-2.5 opacity-60" />
+                                </button>
+                                {hasIdea && onNavigateToIdeas && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onNavigateToIdeas()}
+                                    className="text-amber-400 hover:text-amber-300 p-0.5 rounded hover:bg-amber-500/20 transition-colors"
+                                    title={`View active Trade Idea for $${m.symbol} in Ideas section`}
+                                  >
+                                    <Lightbulb className="w-3 h-3 text-amber-300" />
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenTradeStructure(m.symbol);
+                                  }}
+                                  className="text-muted-foreground hover:text-amber-400 p-0.5 rounded hover:bg-amber-500/10 transition-colors"
+                                  title={`Structure trade on ${m.symbol} & save to Trades`}
+                                >
+                                  <Zap className="w-3 h-3 text-amber-400" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenSetAlert({ symbol: m.symbol, price: m.price });
+                                  }}
+                                  className="text-muted-foreground hover:text-amber-400 p-0.5 rounded hover:bg-amber-500/10 transition-colors"
+                                  title={`Set price alert on ${m.symbol} (Spot: $${m.price.toFixed(2)})`}
+                                >
+                                  <Bell className="w-3 h-3 text-amber-400" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setWatchlistModalSymbol(m.symbol);
+                                  }}
+                                  className="text-muted-foreground hover:text-amber-400 p-0.5 rounded hover:bg-amber-500/10 transition-colors"
+                                  title={`Save ${m.symbol} to Watchlist`}
+                                >
+                                  <FolderPlus className="w-3 h-3 text-amber-400" />
+                                </button>
+                              </div>
+                              <div className="text-right">
+                                <span className="font-bold block">${m.price.toFixed(2)}</span>
+                                <span className={cn("text-[10px] font-bold", m.changePercent >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                                  {m.changePercent >= 0 ? '+' : ''}{m.changePercent.toFixed(2)}%
+                                </span>
+                              </div>
                             </div>
-                            <div className="text-right">
-                              <span className="font-bold block">${m.price.toFixed(2)}</span>
-                              <span className={cn("text-[10px] font-bold", m.changePercent >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                                {m.changePercent >= 0 ? '+' : ''}{m.changePercent.toFixed(2)}%
-                              </span>
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -1084,6 +1676,35 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas }: LogPageProp
           }
         }}
       />
+
+      {/* AI Trade Structuring Modal with 1-Click Save to Trades */}
+      <TradeStructureModal
+        isOpen={isTradeStructureModalOpen}
+        onClose={() => setIsTradeStructureModalOpen(false)}
+        initialSymbol={tradeStructureSymbol}
+        initialThesis={tradeStructureThesis}
+        initialSentiment={tradeStructureSentiment}
+        onNavigateToTrades={onNavigateToTrades}
+        onNavigateToIdeas={onNavigateToIdeas}
+      />
+
+      {/* Price Alert Modal with Auto-Detected Target & Live Quotes */}
+      {isAlertModalOpen && (
+        <PriceAlertModal
+          open={isAlertModalOpen}
+          onOpenChange={setIsAlertModalOpen}
+          initialSymbol={alertModalConfig?.symbol || ''}
+          initialPrice={alertModalConfig?.price || 0}
+          initialTargetPrice={alertModalConfig?.targetPrice}
+          initialCondition={alertModalConfig?.condition}
+          initialNotes={alertModalConfig?.notes}
+          onSuccess={() => {
+            toast.success(`Price alert created for ${alertModalConfig?.symbol}!`, {
+              description: 'Actively monitoring live quotes in your Alerts center.',
+            });
+          }}
+        />
+      )}
     </div>
   );
 }

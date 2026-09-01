@@ -33,6 +33,8 @@ import { Card, CardContent } from './ui/card';
 import {
   useAlerts,
   useDeleteAlert,
+  useDeleteMutedAlerts,
+  useBulkMuteAlerts,
   useResetAlert,
   useMuteAlert,
   useUnmuteAlert,
@@ -70,6 +72,8 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
 
   const { data: alerts = [], isLoading, isRefetching, refetch } = useAlerts();
   const deleteAlertMutation = useDeleteAlert();
+  const deleteMutedMutation = useDeleteMutedAlerts();
+  const bulkMuteMutation = useBulkMuteAlerts();
   const resetAlertMutation = useResetAlert();
   const muteAlertMutation = useMuteAlert();
   const unmuteAlertMutation = useUnmuteAlert();
@@ -210,6 +214,13 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
     }
   };
 
+  const handleSetNewAlertFromExisting = (alertItem: PriceAlert) => {
+    setEditingAlert(null); // Create mode for brand-new follow-up alert
+    setModalSymbol(alertItem.symbol);
+    setModalPrice(alertItem.currentPrice || alertItem.triggeredPrice || alertItem.targetPrice || 0);
+    setIsModalOpen(true);
+  };
+
   const handleOpenResearch = (symbol: string) => {
     if (onNavigateToResearch) {
       onNavigateToResearch(symbol);
@@ -235,6 +246,39 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
     } catch (err: any) {
       toast({
         title: "Failed to sync alerts",
+        description: err.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleBulkMuteAllFired = async () => {
+    try {
+      const res = await bulkMuteMutation.mutateAsync();
+      toast({
+        title: "All Triggered Alerts Muted",
+        description: `Muted ${res.count} fired alert(s).`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Failed to mute alerts",
+        description: err.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteAllMuted = async () => {
+    if (!window.confirm(`Are you sure you want to permanently delete all ${mutedCount} muted alerts?`)) return;
+    try {
+      const res = await deleteMutedMutation.mutateAsync();
+      toast({
+        title: "Muted Alerts Deleted",
+        description: `Removed ${res.count} muted alert(s).`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Failed to delete muted alerts",
         description: err.message,
         variant: "destructive",
       });
@@ -279,6 +323,36 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Mute All Fired */}
+          {unmutedTriggeredCount > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleBulkMuteAllFired}
+              disabled={bulkMuteMutation.isPending}
+              className="gap-1.5 border-rose-500/40 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 shadow-sm"
+              title="Mute and acknowledge all fired alerts"
+            >
+              <VolumeX className="w-3.5 h-3.5" />
+              <span>Mute All Fired ({unmutedTriggeredCount})</span>
+            </Button>
+          )}
+
+          {/* Delete All Muted */}
+          {mutedCount > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDeleteAllMuted}
+              disabled={deleteMutedMutation.isPending}
+              className="gap-1.5 border-slate-700 bg-slate-800/80 hover:bg-rose-950/40 hover:border-rose-500/50 text-muted-foreground hover:text-rose-300 shadow-sm"
+              title="Permanently delete all muted and archived alerts"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete All Muted ({mutedCount})</span>
+            </Button>
+          )}
+
           <Button
             variant="outline"
             size="sm"
@@ -659,32 +733,51 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
                   </div>
 
                   {/* Right: Action Buttons */}
-                  <div className="flex items-center gap-1.5 self-end md:self-center">
-                    {/* Mute Button (If Triggered & Unmuted) */}
-                    {isTriggered && !isMuted && (
+                  <div className="flex items-center gap-1.5 self-end md:self-center flex-wrap">
+                    {/* Set Alert Button directly from alert item */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSetNewAlertFromExisting(item)}
+                      className={cn(
+                        "h-8 text-xs gap-1 font-bold shadow-sm transition-all",
+                        isTriggered && !isMuted
+                          ? "border-primary/50 bg-primary/10 hover:bg-primary/20 text-primary"
+                          : "border-border/70 hover:border-primary/40 text-foreground hover:bg-accent/40"
+                      )}
+                      title={`Set a new follow-up price alert for ${item.symbol}`}
+                    >
+                      <Plus className="w-3.5 h-3.5 text-primary" />
+                      <span>Set Alert</span>
+                    </Button>
+
+                    {/* Mute / Unmute Button */}
+                    {!isMuted ? (
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => handleMute(item)}
-                        className="h-8 text-xs gap-1 border-slate-700 bg-slate-800/80 hover:bg-slate-700 text-slate-200"
-                        title="Mute alert so it stops notifying while keeping trigger history"
+                        className={cn(
+                          "h-8 text-xs gap-1",
+                          isTriggered
+                            ? "border-slate-700 bg-slate-800/80 hover:bg-slate-700 text-slate-200"
+                            : "border-border/70 hover:bg-accent/40 text-muted-foreground hover:text-foreground"
+                        )}
+                        title="Mute alert so it stops notifying while keeping alert in list"
                       >
                         <BellOff className="w-3.5 h-3.5 text-slate-400" />
-                        Mute
+                        <span>Mute</span>
                       </Button>
-                    )}
-
-                    {/* Unmute Button (If Muted) */}
-                    {isMuted && (
+                    ) : (
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => handleUnmute(item)}
-                        className="h-8 text-xs gap-1 border-border/70 hover:bg-accent text-muted-foreground hover:text-foreground"
-                        title="Unmute alert"
+                        className="h-8 text-xs gap-1 border-slate-700 bg-slate-800/90 hover:bg-slate-700 text-amber-300"
+                        title="Unmute and re-enable alert"
                       >
                         <Bell className="w-3.5 h-3.5 text-amber-400" />
-                        Unmute
+                        <span>Unmute</span>
                       </Button>
                     )}
 
@@ -731,9 +824,9 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                      className="h-8 w-8 text-muted-foreground hover:text-rose-400 hover:bg-rose-950/30 transition-colors"
                       onClick={() => handleDelete(item.id, item.symbol)}
-                      title="Delete Alert"
+                      title={`Permanently delete alert for ${item.symbol}`}
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>

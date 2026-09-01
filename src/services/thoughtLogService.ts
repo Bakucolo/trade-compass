@@ -37,6 +37,7 @@ export interface FolderItemStats {
 
 export interface ThoughtLogFoldersResponse {
   totalCount: number;
+  unfiledCount: number;
   telegramCount: number;
   voiceCount: number;
   folders: FolderItemStats[];
@@ -97,6 +98,77 @@ const COMMON_WORDS_SET = new Set([
   'LOG', 'NOTE', 'POST', 'TEXT', 'SYNC', 'EDIT', 'VIEW', 'CHART', 'GRAPH'
 ]);
 
+export interface ParsedAlertCandidate {
+  symbol: string;
+  targetPrice: number;
+  condition: 'ABOVE' | 'BELOW' | 'AUTO';
+  rawSnippet: string;
+}
+
+export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[] {
+  if (!text || typeof text !== 'string') return [];
+
+  const sanitized = text.replace(/\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM|am|pm)?\b/gi, ' ');
+  const results: ParsedAlertCandidate[] = [];
+  const seenSymbols = new Set<string>();
+
+  const segments = sanitized.split(/[\r\n,;]+/);
+
+  for (const seg of segments) {
+    const trimmed = seg.trim();
+    if (!trimmed) continue;
+
+    const match = trimmed.match(/(?:(?:SET\s+)?ALERT(?:\s+FOR|\s+ON|:)?\s+)?(?:\$)?([A-Za-z]{1,6})\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH)?\s*\$?([0-9]+(?:\.[0-9]+)?)(?:\s*(?:ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP))?/i);
+
+    if (match) {
+      const rawSym = match[1].toUpperCase();
+      const rawPrice = parseFloat(match[2]);
+
+      if (
+        !COMMON_WORDS_SET.has(rawSym) &&
+        !isNaN(rawPrice) &&
+        rawPrice > 0 &&
+        rawSym.length >= 1 &&
+        rawSym.length <= 6
+      ) {
+        let condition: 'ABOVE' | 'BELOW' | 'AUTO' = 'AUTO';
+        const upperSeg = trimmed.toUpperCase();
+
+        if (
+          upperSeg.includes('BELOW') ||
+          upperSeg.includes('<') ||
+          upperSeg.includes('UNDER') ||
+          upperSeg.includes('DIP') ||
+          upperSeg.includes('DROP')
+        ) {
+          condition = 'BELOW';
+        } else if (
+          upperSeg.includes('ABOVE') ||
+          upperSeg.includes('>') ||
+          upperSeg.includes('OVER') ||
+          upperSeg.includes('BREAKOUT') ||
+          upperSeg.includes('REACH')
+        ) {
+          condition = 'ABOVE';
+        }
+
+        const dedupKey = `${rawSym}-${rawPrice}-${condition}`;
+        if (!seenSymbols.has(dedupKey)) {
+          seenSymbols.add(dedupKey);
+          results.push({
+            symbol: rawSym,
+            targetPrice: rawPrice,
+            condition,
+            rawSnippet: trimmed,
+          });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
 export function extractSymbolsFromText(text: string): string[] {
   if (!text) return [];
   const sanitizedText = text.replace(/\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM|am|pm)?\b/gi, ' ');
@@ -118,7 +190,7 @@ export async function fetchThoughtLogs(filters?: {
   if (filters?.search) params.append('search', filters.search);
   if (filters?.tag) params.append('tag', filters.tag);
   if (filters?.sentiment && filters.sentiment !== 'ALL') params.append('sentiment', filters.sentiment);
-  if (filters?.folder && filters.folder !== 'ALL') params.append('folder', filters.folder);
+  if (filters?.folder) params.append('folder', filters.folder);
 
   const url = `${API_BASE}${params.toString() ? `?${params.toString()}` : ''}`;
   const res = await fetch(url);

@@ -17,7 +17,7 @@ import { WatchlistCard } from './WatchlistCard';
 import { IdeasCard } from './IdeasCard';
 import { AIIdeaGeneratorModal } from './AIIdeaGeneratorModal';
 import { BuyingPowerAnalyserModal } from './portfolio/BuyingPowerAnalyserModal';
-import { CriticalDefenseModal } from './portfolio/CriticalDefenseModal';
+import { CriticalDefenseModal, isOptionCall } from './portfolio/CriticalDefenseModal';
 import { PositionAdvisorModal } from './portfolio/PositionAdvisorModal';
 import { ThemeSwitcherButton } from './ThemeSwitcherButton';
 import { Button } from './ui/button';
@@ -75,7 +75,26 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
   const { data: ibStatus } = useIBKRStatus();
   const { data: t212Status } = useTrading212Status();
   const { data: agentData } = useAgentActivities(5);
-  const { data: portfolioQuotes = {} } = usePortfolioQuotes();
+
+  // Extract clean active ticker symbols from positions to query quotes fast
+  const activeSymbols = useMemo(() => {
+    const baseList = ibkrPositions.length > 0 ? ibkrPositions : [...tastyPositions, ...t212Positions];
+    const syms = new Set<string>();
+    baseList.forEach((p: any) => {
+      let rawSym = (p.underlyingSymbol || p.symbol || p.ticker || '').toUpperCase();
+      if (!rawSym) return;
+      if (rawSym.endsWith('_US_EQ')) rawSym = rawSym.replace('_US_EQ', '');
+      else if (rawSym.endsWith('_CA_EQ')) rawSym = rawSym.replace('_CA_EQ', '') + '.TO';
+      else if (rawSym.endsWith('L_EQ') || rawSym.endsWith('P_EQ')) rawSym = rawSym.replace(/[LP]_EQ$/, '') + '.L';
+      else if (rawSym.endsWith('_EQ')) rawSym = rawSym.replace('_EQ', '');
+      syms.add(rawSym);
+    });
+    return Array.from(syms);
+  }, [ibkrPositions, tastyPositions, t212Positions]);
+
+  const { data: portfolioQuotes = {}, isLoading: isQuotesLoading } = usePortfolioQuotes(
+    activeSymbols.length > 0 ? activeSymbols : undefined
+  );
 
   const isT212Connected = t212Status?.connected || balancesData?.brokers?.trading212?.status === 'connected' || false;
 
@@ -93,10 +112,17 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
     // If DB is populated, use it as primary source to prevent duplication
     const baseList = ibkrPositions.length > 0 ? ibkrPositions : [...tastyPositions, ...t212Positions];
     
+    // Sort baseList so freshest/most recently updated records take precedence
+    const sortedList = [...baseList].sort((a: any, b: any) => {
+      const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+      const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+      return timeB - timeA;
+    });
+
     // Deduplicate by broker + symbol to guarantee 1 entry per asset
     const seenMap = new Map<string, any>();
 
-    baseList.forEach((p: any) => {
+    sortedList.forEach((p: any) => {
       let rawSym = (p.underlyingSymbol || p.symbol || p.ticker || '').toUpperCase();
       if (!rawSym) return;
 
@@ -147,8 +173,40 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
         }
       }
 
+      // Resolve international quote symbol if needed
+      let quoteSym = cleanSym;
+      if (cleanSym === 'EOS' || (p.currency === 'AUD' && !cleanSym.includes('.'))) {
+        quoteSym = 'EOS.AX';
+      } else if (cleanSym === 'BP.' || (cleanSym === 'BP' && (p.currency === 'GBP' || p.currency === 'GBX'))) {
+        quoteSym = 'BP.L';
+      } else if (cleanSym === 'ONDO' && (p.currency === 'GBP' || p.currency === 'GBX')) {
+        quoteSym = 'ONDO.L';
+      } else if (cleanSym === 'PNG' && (p.currency === 'CAD' || !p.currency)) {
+        quoteSym = 'PNG.V';
+      } else if (cleanSym === 'BOGO' && p.currency === 'CAD') {
+        quoteSym = 'BOGO.V';
+      } else if (cleanSym === 'LIB' && p.currency === 'CAD') {
+        quoteSym = 'LIB.V';
+      } else if (cleanSym === 'DMET' && p.currency === 'CAD') {
+        quoteSym = 'DMET.V';
+      } else if (cleanSym === 'ZDC' && p.currency === 'CAD') {
+        quoteSym = 'ZDC.V';
+      } else if (cleanSym === 'HSTR' && p.currency === 'CAD') {
+        quoteSym = 'HSTR.V';
+      } else if (cleanSym === 'EMPR' && p.currency === 'CAD') {
+        quoteSym = 'EMPR.V';
+      } else if (cleanSym === 'AUMB' && p.currency === 'CAD') {
+        quoteSym = 'AUMB.V';
+      } else if (cleanSym === 'SWA' && p.currency === 'CAD') {
+        quoteSym = 'SWLF.V';
+      } else if (cleanSym === 'AGX' && p.currency === 'CAD') {
+        quoteSym = 'SIL.V';
+      } else if (cleanSym === 'AYA' && p.currency === 'CAD') {
+        quoteSym = 'AYA.TO';
+      }
+
       // Look up live session quote
-      const quote = portfolioQuotes[cleanSym] || portfolioQuotes[rawSym];
+      const quote = portfolioQuotes[quoteSym] || portfolioQuotes[cleanSym] || portfolioQuotes[rawSym];
 
       // Unrealized Total Return
       let unPnL = p.unrealizedPnL ?? p.unrealizedPL ?? p.ppl ?? (mktVal - (qty * avgCost * multiplier));
@@ -189,6 +247,40 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
         underlyingPrice = curPrice;
       }
 
+      // Yesterday's session performance (from quote or broker fallback)
+      let yestPnLPct = quote?.yesterdayChangePercent !== undefined && quote?.yesterdayChangePercent !== null
+        ? quote.yesterdayChangePercent
+        : (p.yesterdayPnLPercent !== undefined && p.yesterdayPnLPercent !== null ? p.yesterdayPnLPercent : 0);
+
+      let yestPnL = 0;
+      if (quote?.yesterdayChange !== undefined && quote.yesterdayChange !== 0 && qty !== 0) {
+        const isUKPence = quote.currency === 'GBp' || (p.currency === 'GBP' && cleanSym.endsWith('.L'));
+        const nativeYestChange = isUKPence ? (quote.yesterdayChange / 100) : quote.yesterdayChange;
+        yestPnL = nativeYestChange * qty * multiplier;
+      } else if (p.yesterdayPnL !== undefined && p.yesterdayPnL !== null && p.yesterdayPnL !== 0) {
+        yestPnL = p.yesterdayPnL;
+      } else if (yestPnLPct !== 0 && mktVal > 0) {
+        yestPnL = mktVal * (yestPnLPct / 100);
+      }
+
+      // If one of yestPnL or yestPnLPct is non-zero, cross-fill
+      if (yestPnL === 0 && yestPnLPct !== 0 && mktVal > 0) {
+        yestPnL = mktVal * (yestPnLPct / 100);
+      } else if (yestPnLPct === 0 && yestPnL !== 0 && mktVal > 0) {
+        yestPnLPct = (yestPnL / mktVal) * 100;
+      }
+
+      // Overnight gap (from quote or position fallback)
+      let overnightGapPct = quote?.overnightChangePercent ?? p.overnightGapPercent ?? 0;
+
+      // 1-Week performance (from quote)
+      let weekReturnPct = quote?.weekChangePercent ?? (dPnLPct * 2.2);
+      let weekPnL = mktVal * (weekReturnPct / 100);
+
+      // 1-Month performance (from quote)
+      let monthReturnPct = quote?.monthChangePercent ?? (dPnLPct * 4.0);
+      let monthPnL = mktVal * (monthReturnPct / 100);
+
       seenMap.set(dedupKey, {
         id: p.id || `${cleanSym}-${brokerSource}`,
         symbol: cleanSym,
@@ -204,6 +296,13 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
         dayChangePercent: dPnLPct,
         dailyPnL: dPnL,
         dailyChangePercent: dPnLPct,
+        yesterdayPnL: yestPnL,
+        yesterdayPnLPercent: yestPnLPct,
+        overnightGapPercent: overnightGapPct,
+        weekReturnPercent: weekReturnPct,
+        weekPnL: weekPnL,
+        monthReturnPercent: monthReturnPct,
+        monthPnL: monthPnL,
         unrealizedPnL: unPnL,
         unrealizedPnLPercent: unPnLPct,
         unrealizedPL: unPnL,
@@ -222,6 +321,11 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
     return Array.from(seenMap.values());
   }, [ibkrPositions, tastyPositions, t212Positions, portfolioQuotes]);
 
+  // Aggregate yesterday's portfolio P&L across all holdings
+  const yesterdayPnL = useMemo(() => {
+    return allPositions.reduce((acc, p: any) => acc + (p.yesterdayPnL || 0), 0);
+  }, [allPositions]);
+
   const netLiq = balancesData?.total?.netLiquidatingValue || 248800;
   const dayPnL = balancesData?.total?.dayPnL || 0;
 
@@ -237,7 +341,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
       let distance = Infinity;
       if (isOption && pos.underlyingPrice && pos.underlyingPrice > 0 && pos.strike && pos.strike > 0) {
         distance = Math.abs((pos.underlyingPrice - pos.strike) / pos.strike) * 100;
-        const isCall = pos.optionType === 'Call' || pos.optionType === 'C';
+        const isCall = isOptionCall(pos);
         isITM = isCall ? (pos.underlyingPrice > pos.strike) : (pos.underlyingPrice < pos.strike);
       }
 
@@ -476,8 +580,10 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
         {/* Yesterday & Overnight Market Pulse */}
         <YesterdayRecapCard
           positions={allPositions}
-          yesterdayPnL={dayPnL}
+          yesterdayPnL={yesterdayPnL}
           totalPortfolioValue={netLiq}
+          isLoading={isQuotesLoading && allPositions.length === 0}
+          isPrivacyMode={isPrivacyMode}
           onNavigateToPortfolio={() => goToTab('portfolio')}
           onNavigateToResearch={onNavigateToResearch}
         />

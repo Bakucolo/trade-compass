@@ -17,11 +17,12 @@ import {
   RefreshCw,
   Clock
 } from 'lucide-react';
-import { useTrades, UnifiedTrade } from '@/services/tradeService';
+import { useTrades, useSyncTrades, UnifiedTrade } from '@/services/tradeService';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { useToast } from '@/components/ui/use-toast';
 
 interface DashboardTradesCardProps {
   onNavigateToTrades?: () => void;
@@ -32,18 +33,41 @@ export function DashboardTradesCard({
   onNavigateToTrades,
   onNavigateToResearch,
 }: DashboardTradesCardProps) {
+  const { toast } = useToast();
   const [filterSide, setFilterSide] = useState<'ALL' | 'BUY' | 'SELL'>('ALL');
   const [filterAsset, setFilterAsset] = useState<'ALL' | 'EQUITY' | 'OPTION'>('ALL');
+  const [filterBroker, setFilterBroker] = useState<'ALL' | 'IBKR' | 'TASTY'>('ALL');
 
   const { data: tradesResponse, isLoading, isFetching, refetch } = useTrades({
-    limit: 25,
+    limit: 50,
   });
+  const syncTradesMutation = useSyncTrades();
 
   const allTrades = tradesResponse?.trades || [];
   const metrics = tradesResponse?.metrics;
 
+  const handleSyncClick = async () => {
+    try {
+      const res = await syncTradesMutation.mutateAsync({});
+      toast({
+        title: "Trades Synced",
+        description: `Successfully synchronized ${res.syncedCount || 0} trade executions across connected brokers.`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Sync Failed",
+        description: err.message,
+        variant: "destructive"
+      });
+    }
+  };
+
   const filteredTrades = useMemo(() => {
     return allTrades.filter((trade) => {
+      // Filter by Broker
+      if (filterBroker === 'IBKR' && !trade.broker.toLowerCase().includes('interactive')) return false;
+      if (filterBroker === 'TASTY' && !trade.broker.toLowerCase().includes('tasty')) return false;
+
       // Filter by Buy / Sell
       if (filterSide === 'BUY' && trade.side !== 'BUY') return false;
       if (filterSide === 'SELL' && trade.side !== 'SELL') return false;
@@ -54,7 +78,7 @@ export function DashboardTradesCard({
 
       return true;
     }).slice(0, 8); // Top 8 recent executions for the dashboard card
-  }, [allTrades, filterSide, filterAsset]);
+  }, [allTrades, filterBroker, filterSide, filterAsset]);
 
   const handleRowClick = (trade: UnifiedTrade) => {
     const symbolToOpen = trade.underlyingSymbol || trade.symbol.split(' ')[0];
@@ -114,11 +138,12 @@ export function DashboardTradesCard({
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => refetch()}
+              onClick={handleSyncClick}
+              disabled={syncTradesMutation.isPending}
               className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground"
-              title="Refresh recent trade executions"
+              title="Sync live executions from IBKR & Tastytrade"
             >
-              <RefreshCw className={cn('w-3.5 h-3.5', isFetching && 'animate-spin')} />
+              <RefreshCw className={cn('w-3.5 h-3.5', (isFetching || syncTradesMutation.isPending) && 'animate-spin text-primary')} />
             </Button>
 
             {onNavigateToTrades && (
@@ -184,74 +209,108 @@ export function DashboardTradesCard({
 
         {/* Filter Pills */}
         <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
-          {/* Side Filter Pills (All / Buys / Sells) */}
+          {/* Broker Filter Pills */}
           <div className="flex items-center gap-1 bg-slate-950/60 p-0.5 rounded-xl border border-border/60">
             <button
-              onClick={() => setFilterSide('ALL')}
+              onClick={() => setFilterBroker('ALL')}
               className={cn(
-                'px-2.5 py-1 text-xs font-semibold rounded-lg transition-all',
-                filterSide === 'ALL'
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
+                'px-2 py-0.5 text-[11px] font-medium rounded-lg transition-all',
+                filterBroker === 'ALL' ? 'bg-primary text-primary-foreground font-bold shadow-sm' : 'text-muted-foreground hover:text-foreground'
               )}
             >
-              All Flow
+              All Brokers
             </button>
             <button
-              onClick={() => setFilterSide('BUY')}
+              onClick={() => setFilterBroker('IBKR')}
               className={cn(
-                'px-2.5 py-1 text-xs font-semibold rounded-lg transition-all flex items-center gap-1',
-                filterSide === 'BUY'
-                  ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm'
-                  : 'text-emerald-400/80 hover:text-emerald-300'
+                'px-2 py-0.5 text-[11px] font-medium rounded-lg transition-all',
+                filterBroker === 'IBKR' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold shadow-sm' : 'text-amber-400/70 hover:text-amber-300'
               )}
             >
-              <ArrowUpRight className="w-3 h-3" />
-              Buys
+              IBKR
             </button>
             <button
-              onClick={() => setFilterSide('SELL')}
+              onClick={() => setFilterBroker('TASTY')}
               className={cn(
-                'px-2.5 py-1 text-xs font-semibold rounded-lg transition-all flex items-center gap-1',
-                filterSide === 'SELL'
-                  ? 'bg-rose-500 text-white font-bold shadow-sm'
-                  : 'text-rose-400/80 hover:text-rose-300'
+                'px-2 py-0.5 text-[11px] font-medium rounded-lg transition-all',
+                filterBroker === 'TASTY' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 font-bold shadow-sm' : 'text-purple-400/70 hover:text-purple-300'
               )}
             >
-              <ArrowDownRight className="w-3 h-3" />
-              Sells
+              Tastytrade
             </button>
           </div>
 
-          {/* Asset Type Filter Pills */}
-          <div className="flex items-center gap-1 bg-slate-950/60 p-0.5 rounded-xl border border-border/60">
-            <button
-              onClick={() => setFilterAsset('ALL')}
-              className={cn(
-                'px-2 py-0.5 text-[11px] font-medium rounded-lg transition-all',
-                filterAsset === 'ALL' ? 'bg-accent text-foreground font-semibold' : 'text-muted-foreground'
-              )}
-            >
-              All Assets
-            </button>
-            <button
-              onClick={() => setFilterAsset('EQUITY')}
-              className={cn(
-                'px-2 py-0.5 text-[11px] font-medium rounded-lg transition-all',
-                filterAsset === 'EQUITY' ? 'bg-accent text-foreground font-semibold' : 'text-muted-foreground'
-              )}
-            >
-              Stocks
-            </button>
-            <button
-              onClick={() => setFilterAsset('OPTION')}
-              className={cn(
-                'px-2 py-0.5 text-[11px] font-medium rounded-lg transition-all',
-                filterAsset === 'OPTION' ? 'bg-accent text-foreground font-semibold' : 'text-muted-foreground'
-              )}
-            >
-              Options
-            </button>
+          {/* Side & Asset Filters */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Side Filter Pills (All / Buys / Sells) */}
+            <div className="flex items-center gap-1 bg-slate-950/60 p-0.5 rounded-xl border border-border/60">
+              <button
+                onClick={() => setFilterSide('ALL')}
+                className={cn(
+                  'px-2 py-0.5 text-[11px] font-medium rounded-lg transition-all',
+                  filterSide === 'ALL'
+                    ? 'bg-accent text-foreground font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                All Flow
+              </button>
+              <button
+                onClick={() => setFilterSide('BUY')}
+                className={cn(
+                  'px-2 py-0.5 text-[11px] font-medium rounded-lg transition-all flex items-center gap-1',
+                  filterSide === 'BUY'
+                    ? 'bg-emerald-500 text-slate-950 font-bold shadow-sm'
+                    : 'text-emerald-400/80 hover:text-emerald-300'
+                )}
+              >
+                <ArrowUpRight className="w-3 h-3" />
+                Buys
+              </button>
+              <button
+                onClick={() => setFilterSide('SELL')}
+                className={cn(
+                  'px-2 py-0.5 text-[11px] font-medium rounded-lg transition-all flex items-center gap-1',
+                  filterSide === 'SELL'
+                    ? 'bg-rose-500 text-white font-bold shadow-sm'
+                    : 'text-rose-400/80 hover:text-rose-300'
+                )}
+              >
+                <ArrowDownRight className="w-3 h-3" />
+                Sells
+              </button>
+            </div>
+
+            {/* Asset Type Filter Pills */}
+            <div className="flex items-center gap-1 bg-slate-950/60 p-0.5 rounded-xl border border-border/60">
+              <button
+                onClick={() => setFilterAsset('ALL')}
+                className={cn(
+                  'px-2 py-0.5 text-[11px] font-medium rounded-lg transition-all',
+                  filterAsset === 'ALL' ? 'bg-accent text-foreground font-semibold' : 'text-muted-foreground'
+                )}
+              >
+                All Assets
+              </button>
+              <button
+                onClick={() => setFilterAsset('EQUITY')}
+                className={cn(
+                  'px-2 py-0.5 text-[11px] font-medium rounded-lg transition-all',
+                  filterAsset === 'EQUITY' ? 'bg-accent text-foreground font-semibold' : 'text-muted-foreground'
+                )}
+              >
+                Stocks
+              </button>
+              <button
+                onClick={() => setFilterAsset('OPTION')}
+                className={cn(
+                  'px-2 py-0.5 text-[11px] font-medium rounded-lg transition-all',
+                  filterAsset === 'OPTION' ? 'bg-accent text-foreground font-semibold' : 'text-muted-foreground'
+                )}
+              >
+                Options
+              </button>
+            </div>
           </div>
         </div>
       </CardHeader>
@@ -273,6 +332,7 @@ export function DashboardTradesCard({
           filteredTrades.map((trade) => {
             const isBuy = trade.side === 'BUY';
             const isOption = trade.assetType === 'OPTION';
+            const isIBKR = trade.broker.toLowerCase().includes('interactive');
             const displaySymbol = trade.underlyingSymbol || trade.symbol.split(' ')[0] || trade.symbol;
 
             return (
@@ -325,9 +385,16 @@ export function DashboardTradesCard({
                         </span>
                       )}
 
-                      {/* Broker Source */}
-                      <span className="text-[9px] font-mono text-muted-foreground/80 bg-slate-900/60 px-1.5 py-0 rounded border border-white/5 hidden sm:inline">
-                        {trade.broker}
+                      {/* Broker Source Badge */}
+                      <span
+                        className={cn(
+                          'text-[9px] font-mono font-bold px-1.5 py-0 rounded border',
+                          isIBKR
+                            ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                            : 'bg-purple-500/15 text-purple-300 border-purple-500/30'
+                        )}
+                      >
+                        {isIBKR ? 'IBKR' : 'Tastytrade'}
                       </span>
                     </div>
 

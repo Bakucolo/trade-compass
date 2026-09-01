@@ -7,7 +7,7 @@ import {
   Newspaper, LineChart, PieChart, ActivitySquare,
   Globe, Clock, Sparkles, AlertTriangle, FileText, Download,
   SlidersHorizontal, Settings2, Scale, ExternalLink,
-  Layers, ArrowUpRight, ArrowDownRight, ShieldCheck,
+  Layers, ArrowUpRight, ArrowDownRight, ArrowRight, RefreshCw, ShieldCheck, ShieldAlert, Target,
   CheckCircle2, Compass, Zap, Flame, Lightbulb, Bookmark,
   PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2, FolderPlus
 } from 'lucide-react';
@@ -32,6 +32,7 @@ import { StructuredTradesCard } from './research/StructuredTradesCard';
 import { OptionsLiquidityCard } from './research/OptionsLiquidityCard';
 import { OptionsChainView } from './research/OptionsChainView';
 import { RedFlagsAndRisksCard } from './research/RedFlagsAndRisksCard';
+import { DilutionAndSbcCard } from './research/DilutionAndSbcCard';
 import { useOptionsChain } from '@/services/optionsChainService';
 import { TradeStructureModal } from './TradeStructureModal';
 import ReactMarkdown from 'react-markdown';
@@ -102,6 +103,17 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
   const [ideaModalState, setIdeaModalState] = useState<{ open: boolean; initialThesis?: string }>({ open: false });
   const [isAddToWatchlistOpen, setIsAddToWatchlistOpen] = useState(false);
 
+  // Dossier On-Demand Request State (prevents slow automatic blocking page loads)
+  const [requestedSymbols, setRequestedSymbols] = useState<Record<string, boolean>>({});
+  const isDossierRequested = Boolean(selectedSymbol && requestedSymbols[selectedSymbol]);
+
+  const handleRequestDossier = (symbol?: string) => {
+    const sym = (symbol || selectedSymbol || '').trim().toUpperCase();
+    if (sym) {
+      setRequestedSymbols((prev) => ({ ...prev, [sym]: true }));
+    }
+  };
+
   useEffect(() => {
     if (initialSymbol) {
       setSelectedSymbol(initialSymbol);
@@ -152,13 +164,23 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
     enabled: debouncedSearch.length > 0,
   });
 
-  // Data Queries for Selected Stock (Backend Dossier & Options Liquidity)
-  const { data: dossier, isLoading: isQuoteLoading, error: quoteError, isError: isQuoteError } = useResearchDossier(selectedSymbol);
-  const { data: optionsLiquidity } = useOptionsLiquidity(selectedSymbol);
-  const { data: optionsChainData } = useOptionsChain(selectedSymbol);
+  // Data Queries for Selected Stock (Backend Dossier & Options Liquidity on-demand)
+  const {
+    data: dossier,
+    isLoading: isQuoteLoading,
+    error: quoteError,
+    isError: isQuoteError,
+    refetch: refetchDossier,
+    isFetching: isDossierFetching,
+  } = useResearchDossier(selectedSymbol, { enabled: isDossierRequested });
 
-  // AI Analysis Query
-  const { data: aiData, isLoading: aiLoading, isError: aiError } = useAIAnalysis(selectedSymbol);
+  const { data: optionsLiquidity } = useOptionsLiquidity(selectedSymbol, { enabled: isDossierRequested });
+  const { data: optionsChainData } = useOptionsChain(selectedSymbol, undefined, { enabled: isDossierRequested });
+
+  // AI Analysis Query (Only runs on demand when requested and active on AI tab)
+  const { data: aiData, isLoading: aiLoading, isError: aiError } = useAIAnalysis(selectedSymbol, {
+    enabled: isDossierRequested && activeDataTab === 'ai-analysis',
+  });
 
   const quote = dossier ? {
     symbol: dossier.header?.symbol,
@@ -416,6 +438,30 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
             <FolderPlus className="w-3.5 h-3.5 text-amber-400" />
             <span>+ Watchlist</span>
           </Button>
+
+          {/* On-Demand Dossier Request / Refresh Button */}
+          {!isDossierRequested ? (
+            <Button
+              onClick={() => handleRequestDossier(selectedSymbol)}
+              className="h-9 flex items-center gap-1.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/40 transition-all font-bold text-xs px-3.5"
+              title={`Load live institutional research dossier for ${selectedSymbol}`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-emerald-200 animate-pulse" />
+              <span>Request Dossier</span>
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refetchDossier()}
+              disabled={isDossierFetching}
+              className="h-9 text-xs gap-1.5 border-border/70 hover:bg-accent/40 font-semibold"
+              title={`Refresh live research dossier for ${selectedSymbol}`}
+            >
+              <RefreshCw className={cn("w-3.5 h-3.5", isDossierFetching && "animate-spin text-primary")} />
+              <span className="hidden sm:inline">Refresh Dossier</span>
+            </Button>
+          )}
 
           {/* Full Page (100% Width) View Mode Toggle */}
           <Button
@@ -677,7 +723,72 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
 
         {/* Main Content Area: Expands to 100% width in Full Page mode or xl:col-span-3 in split view */}
         <div className={cn("space-y-6", isFullPageMode ? "w-full" : "xl:col-span-3")}>
-          {isLoading ? (
+          {!isDossierRequested ? (
+            <Card className="bg-card/70 backdrop-blur-2xl border border-border/70 shadow-xl rounded-2xl overflow-hidden relative">
+              <div className="h-1.5 w-full bg-gradient-to-r from-emerald-500 via-teal-500 to-indigo-600" />
+              <CardContent className="p-8 sm:p-12 text-center space-y-6">
+                <div className="inline-flex w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500/20 via-teal-500/20 to-primary/20 border border-emerald-500/30 items-center justify-center text-emerald-400 shadow-lg mx-auto">
+                  <Globe className="w-8 h-8" />
+                </div>
+
+                <div className="max-w-xl mx-auto space-y-2">
+                  <div className="flex items-center justify-center gap-2">
+                    <Badge variant="outline" className="text-xs font-mono font-bold uppercase px-2.5 py-0.5 border-emerald-500/40 text-emerald-400 bg-emerald-500/10">
+                      {selectedSymbol}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">• Fast On-Demand Intelligence</span>
+                  </div>
+                  <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
+                    Ready to Research {selectedSymbol}
+                  </h2>
+                  <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+                    Heavy research dossiers are compiled on-demand so page navigation is instant. Click below to load live fundamentals, valuation multiples, balance sheet telemetry, options liquidity, and catalysts.
+                  </p>
+                </div>
+
+                {/* Feature Grid Pills */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 max-w-2xl mx-auto text-left">
+                  <div className="p-3 rounded-xl bg-card/60 border border-border/50 flex flex-col gap-1">
+                    <span className="text-[10px] uppercase font-bold text-primary flex items-center gap-1">
+                      <PieChart className="w-3 h-3" /> Valuation
+                    </span>
+                    <span className="text-xs font-semibold text-foreground">P/E, EV/Sales, FCF</span>
+                  </div>
+                  <div className="p-3 rounded-xl bg-card/60 border border-border/50 flex flex-col gap-1">
+                    <span className="text-[10px] uppercase font-bold text-indigo-400 flex items-center gap-1">
+                      <Building2 className="w-3 h-3" /> Fundamentals
+                    </span>
+                    <span className="text-xs font-semibold text-foreground">Margins & Solvency</span>
+                  </div>
+                  <div className="p-3 rounded-xl bg-card/60 border border-border/50 flex flex-col gap-1">
+                    <span className="text-[10px] uppercase font-bold text-cyan-400 flex items-center gap-1">
+                      <Activity className="w-3 h-3" /> Opt. Liquidity
+                    </span>
+                    <span className="text-xs font-semibold text-foreground">Greeks & Spreads</span>
+                  </div>
+                  <div className="p-3 rounded-xl bg-card/60 border border-border/50 flex flex-col gap-1">
+                    <span className="text-[10px] uppercase font-bold text-amber-400 flex items-center gap-1">
+                      <Newspaper className="w-3 h-3" /> News & Filings
+                    </span>
+                    <span className="text-xs font-semibold text-foreground">Catalyst Wire</span>
+                  </div>
+                </div>
+
+                {/* Main Request Button */}
+                <div className="pt-2">
+                  <Button
+                    size="lg"
+                    onClick={() => handleRequestDossier(selectedSymbol)}
+                    className="h-11 px-8 bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white font-bold text-sm shadow-xl shadow-emerald-500/25 hover:shadow-emerald-500/40 gap-2.5 rounded-xl transition-all"
+                  >
+                    <Sparkles className="w-4 h-4 text-emerald-200 animate-pulse" />
+                    <span>Request Research Dossier for {selectedSymbol}</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ) : isLoading ? (
             <Card className="h-[420px] flex items-center justify-center bg-card/50 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl">
               <div className="flex flex-col items-center gap-3">
                 <Loader2 className="h-10 w-10 animate-spin text-primary" />
@@ -696,7 +807,7 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                 <p className="font-mono text-xs text-destructive/80 bg-destructive/10 p-3 rounded-xl max-w-lg mx-auto overflow-auto">
                   {quoteError instanceof Error ? quoteError.message : 'Unable to retrieve live market fundamentals.'}
                 </p>
-                <Button size="sm" variant="outline" onClick={() => setSelectedSymbol(selectedSymbol)} className="text-xs">
+                <Button size="sm" variant="outline" onClick={() => refetchDossier()} className="text-xs">
                   Retry Dossier
                 </Button>
               </CardContent>
@@ -900,6 +1011,17 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                       <Button
                         size="sm"
                         variant="outline"
+                        onClick={() => setActiveDataTab('dilution-sbc')}
+                        className="h-8 text-xs font-bold bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20 gap-1.5 shadow-sm"
+                        title="Audit Stock-Based Compensation & ATM Offerings Dilution"
+                      >
+                        <Scale className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Dilution & SBC</span>
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="outline"
                         onClick={() => setActiveDataTab('ir-presentations')}
                         className="h-8 text-xs font-bold bg-purple-500/10 text-purple-300 border-purple-500/30 hover:bg-purple-500/20 gap-1.5 shadow-sm"
                       >
@@ -933,7 +1055,7 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
 
               {/* ================= DATA TABS RIBBON ================= */}
               <Tabs value={activeDataTab} onValueChange={setActiveDataTab} className="w-full">
-                <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-11 h-auto p-1.5 bg-card/70 backdrop-blur-xl border border-border/70 rounded-2xl gap-1.5">
+                <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-12 h-auto p-1.5 bg-card/70 backdrop-blur-xl border border-border/70 rounded-2xl gap-1.5">
                   <TabsTrigger
                     value="overview"
                     className="rounded-xl py-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
@@ -976,6 +1098,12 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                     className="rounded-xl py-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-600 data-[state=active]:to-teal-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
                   >
                     <TrendingUp className="w-3.5 h-3.5 text-emerald-300" /> Growth & Forward
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="dilution-sbc"
+                    className="rounded-xl py-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-amber-600 data-[state=active]:via-orange-600 data-[state=active]:to-amber-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all text-xs font-bold flex items-center justify-center gap-1.5"
+                  >
+                    <Scale className="w-3.5 h-3.5 text-amber-300" /> Dilution & SBC
                   </TabsTrigger>
                   <TabsTrigger
                     value="red-flags-risks"
@@ -1058,6 +1186,11 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                   <GrowthAndValuationCard symbol={selectedSymbol} />
                 </TabsContent>
 
+                {/* ================= DILUTION & STOCK-BASED COMPENSATION (SBC) TAB ================= */}
+                <TabsContent value="dilution-sbc" className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <DilutionAndSbcCard symbol={selectedSymbol} />
+                </TabsContent>
+
                 {/* ================= 0. RED FLAGS, WARNINGS & FORENSIC RISKS TAB ================= */}
                 <TabsContent value="red-flags-risks" className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
                   <RedFlagsAndRisksCard
@@ -1078,6 +1211,8 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
 
                 {/* ================= 1. OVERVIEW TAB ================= */}
                 <TabsContent value="overview" className="mt-6 space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  {/* Embedded Dilution & SBC Quick Spotlight */}
+                  <DilutionAndSbcCard symbol={selectedSymbol} />
                   {/* 4 Metric Spotlight Cards */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <Card className="bg-card/60 backdrop-blur-xl border border-border/60 hover:border-primary/40 transition-all rounded-2xl shadow-sm">
@@ -1679,7 +1814,7 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
         isOpen={isAddToWatchlistOpen}
         onClose={() => setIsAddToWatchlistOpen(false)}
         symbol={selectedSymbol}
-        companyName={overviewData?.name || selectedSymbol}
+        companyName={quote?.name || dossier?.header?.shortName || selectedSymbol}
       />
     </div>
   );

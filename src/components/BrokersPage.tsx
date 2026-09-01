@@ -11,7 +11,7 @@ import { PerformanceLeaderboard } from './portfolio/PerformanceLeaderboard';
 import { HoldingsTable } from './portfolio/HoldingsTable';
 import { PortfolioAuditModal } from './portfolio/PortfolioAuditModal';
 import { PortfolioValuationModal } from './portfolio/PortfolioValuationModal';
-import { CriticalDefenseModal } from './portfolio/CriticalDefenseModal';
+import { CriticalDefenseModal, isOptionCall } from './portfolio/CriticalDefenseModal';
 import { PositionAdvisorModal } from './portfolio/PositionAdvisorModal';
 import { UnifiedPosition } from './portfolio/types';
 import { getCompanyStyleAndThemes } from '../services/stockThematics';
@@ -420,7 +420,7 @@ export function BrokersPage({ onNavigateToResearch, onNavigateToGraphs }: Broker
       let distance = Infinity;
       if (isOption && pos.underlyingPrice && pos.strike) {
         distance = Math.abs((pos.underlyingPrice - pos.strike) / pos.strike) * 100;
-        const isCall = pos.optionType === 'Call' || pos.optionType === 'C';
+        const isCall = isOptionCall(pos);
         isITM = isCall ? (pos.underlyingPrice > pos.strike) : (pos.underlyingPrice < pos.strike);
       }
 

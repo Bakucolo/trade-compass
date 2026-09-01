@@ -188,7 +188,8 @@ export async function fetchComprehensiveReportData(): Promise<ExecutiveReportDat
       const underlying = h.underlyingSymbol || h.symbol.split(' ')[0] || h.symbol;
       const spotPrice = spotMap.get(underlying) || h.currentPrice || 100;
 
-      const isCall = h.optionType === 'CALL';
+      const optTypeUpper = (h.optionType || '').toUpperCase();
+      const isCall = optTypeUpper === 'CALL' || optTypeUpper === 'C';
       const isITM = isCall ? spotPrice > h.strikePrice : spotPrice < h.strikePrice;
       const distPct = spotPrice > 0 ? Math.abs((spotPrice - h.strikePrice) / spotPrice) * 100 : 0;
 
@@ -440,7 +441,7 @@ export async function generateExecutivePdfBuffer(data: ExecutiveReportData): Pro
     });
 
     // =========================================================================
-    // PAGE 1: HEADER & PORTFOLIO OVERVIEW & CRITICAL DEFENSE
+    // PAGE 1: HEADER, CRITICAL DEFENSE, DIP OPPORTUNITIES & ALERTS
     // =========================================================================
 
     // Top Header Banner Box
@@ -458,61 +459,19 @@ export async function generateExecutivePdfBuffer(data: ExecutiveReportData): Pro
 
     doc.moveDown(2.5);
 
-    // Section 1: Portfolio Health & Key Metrics
+    // Section 1: Positions Requiring Defense & Management
     const section1Top = 115;
     doc.fillColor(colors.primaryNavy).fontSize(12).font('Helvetica-Bold')
-      .text('1. PORTFOLIO VALUATION & HEALTH OVERVIEW', 40, section1Top);
+      .text('1. CRITICAL POSITION DEFENSE CENTER (Action Required)', 40, section1Top);
     doc.rect(40, section1Top + 16, 532, 1).fill(colors.cardBorder);
 
-    // 4 Key Metric Metric Stat Boxes
-    const boxY = section1Top + 24;
-    const boxW = 125;
-    const boxH = 48;
-    const gap = 10.6;
-
-    // Box 1: Total Net Liquidating Value
-    doc.roundedRect(40, boxY, boxW, boxH, 4).fillAndStroke(colors.cardBg, colors.cardBorder);
-    doc.fillColor(colors.slateMuted).fontSize(7.5).font('Helvetica-Bold').text('NET LIQUIDATING VALUE', 48, boxY + 8);
-    doc.fillColor(colors.primaryNavy).fontSize(13).font('Helvetica-Bold')
-      .text(`$${data.portfolio.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 48, boxY + 22);
-
-    // Box 2: Total Open Unrealized P&L
-    const box2X = 40 + boxW + gap;
-    doc.roundedRect(box2X, boxY, boxW, boxH, 4).fillAndStroke(colors.cardBg, colors.cardBorder);
-    doc.fillColor(colors.slateMuted).fontSize(7.5).font('Helvetica-Bold').text('TOTAL UNREALIZED P&L', box2X + 8, boxY + 8);
-    const plColor = data.portfolio.totalUnrealizedPL >= 0 ? colors.emeraldGreen : colors.roseRed;
-    const plSign = data.portfolio.totalUnrealizedPL >= 0 ? '+' : '-';
-    doc.fillColor(plColor).fontSize(12).font('Helvetica-Bold')
-      .text(`${plSign}$${Math.abs(data.portfolio.totalUnrealizedPL).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${data.portfolio.totalUnrealizedPLPercent.toFixed(1)}%)`, box2X + 8, boxY + 22);
-
-    // Box 3: Day P&L
-    const box3X = box2X + boxW + gap;
-    doc.roundedRect(box3X, boxY, boxW, boxH, 4).fillAndStroke(colors.cardBg, colors.cardBorder);
-    doc.fillColor(colors.slateMuted).fontSize(7.5).font('Helvetica-Bold').text('DAY P&L CHANGE', box3X + 8, boxY + 8);
-    const dayColor = data.portfolio.totalDayPL >= 0 ? colors.emeraldGreen : colors.roseRed;
-    const daySign = data.portfolio.totalDayPL >= 0 ? '+' : '-';
-    doc.fillColor(dayColor).fontSize(12).font('Helvetica-Bold')
-      .text(`${daySign}$${Math.abs(data.portfolio.totalDayPL).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, box3X + 8, boxY + 22);
-
-    // Box 4: Active Asset Mix
-    const box4X = box3X + boxW + gap;
-    doc.roundedRect(box4X, boxY, boxW, boxH, 4).fillAndStroke(colors.cardBg, colors.cardBorder);
-    doc.fillColor(colors.slateMuted).fontSize(7.5).font('Helvetica-Bold').text('ACTIVE ASSETS & BROKERS', box4X + 8, boxY + 8);
-    doc.fillColor(colors.primaryNavy).fontSize(11).font('Helvetica-Bold')
-      .text(`${data.portfolio.equitiesCount} Eq / ${data.portfolio.optionsCount} Opt (${data.portfolio.brokersCount} Brokers)`, box4X + 8, boxY + 22);
-
-    // Section 2: Positions Requiring Defense & Management
-    const section2Top = boxY + boxH + 18;
-    doc.fillColor(colors.primaryNavy).fontSize(12).font('Helvetica-Bold')
-      .text('2. CRITICAL POSITION DEFENSE CENTER (Action Required)', 40, section2Top);
-    doc.rect(40, section2Top + 16, 532, 1).fill(colors.cardBorder);
-
+    let defY = section1Top + 24;
     if (data.defensePositions.length === 0) {
-      doc.roundedRect(40, section2Top + 24, 532, 34, 4).fillAndStroke('#ecfdf5', '#a7f3d0');
+      doc.roundedRect(40, defY, 532, 34, 4).fillAndStroke('#ecfdf5', '#a7f3d0');
       doc.fillColor(colors.emeraldGreen).fontSize(9).font('Helvetica-Bold')
-        .text('✓ All active positions are operating within safe risk bounds. No emergency option rolls needed.', 52, section2Top + 36);
+        .text('✓ All active positions are operating within safe risk bounds. No emergency option rolls needed.', 52, defY + 12);
+      defY += 44;
     } else {
-      let defY = section2Top + 24;
       // Defense Table Header
       doc.rect(40, defY, 532, 18).fill(colors.slateDark);
       doc.fillColor('#ffffff').fontSize(7.5).font('Helvetica-Bold');
@@ -524,7 +483,7 @@ export async function generateExecutivePdfBuffer(data: ExecutiveReportData): Pro
       doc.text('RECOMMENDED ACTION', 470, defY + 5);
 
       defY += 18;
-      data.defensePositions.slice(0, 4).forEach((p, idx) => {
+      data.defensePositions.slice(0, 5).forEach((p, idx) => {
         const rowBg = idx % 2 === 0 ? '#ffffff' : colors.cardBg;
         doc.rect(40, defY, 532, 28).fillAndStroke(rowBg, '#e2e8f0');
 
@@ -560,15 +519,16 @@ export async function generateExecutivePdfBuffer(data: ExecutiveReportData): Pro
 
         defY += 28;
       });
+      defY += 10;
     }
 
-    // Section 3: Top 5 High-Conviction Dip Buying Opportunities
-    const section3Top = 385;
+    // Section 2: Top 5 High-Conviction Dip Buying Opportunities
+    const section2Top = Math.max(220, defY + 10);
     doc.fillColor(colors.primaryNavy).fontSize(12).font('Helvetica-Bold')
-      .text('3. TOP 5 HIGH-CONVICTION DIP-BUYING OPPORTUNITIES', 40, section3Top);
-    doc.rect(40, section3Top + 16, 532, 1).fill(colors.cardBorder);
+      .text('2. TOP 5 HIGH-CONVICTION DIP-BUYING OPPORTUNITIES', 40, section2Top);
+    doc.rect(40, section2Top + 16, 532, 1).fill(colors.cardBorder);
 
-    let dipY = section3Top + 24;
+    let dipY = section2Top + 24;
     doc.rect(40, dipY, 532, 18).fill(colors.accentIndigo);
     doc.fillColor('#ffffff').fontSize(7.5).font('Helvetica-Bold');
     doc.text('SCORE', 48, dipY + 5);
@@ -610,13 +570,13 @@ export async function generateExecutivePdfBuffer(data: ExecutiveReportData): Pro
       });
     }
 
-    // Section 4: Triggered Alerts & Proximity Warnings
-    const section4Top = dipY + 16;
+    // Section 3: Triggered Alerts & Proximity Warnings
+    const section3Top = dipY + 16;
     doc.fillColor(colors.primaryNavy).fontSize(12).font('Helvetica-Bold')
-      .text('4. TRIGGERED & ACTIVE CRITICAL PROXIMITY ALERTS', 40, section4Top);
-    doc.rect(40, section4Top + 16, 532, 1).fill(colors.cardBorder);
+      .text('3. TRIGGERED & ACTIVE CRITICAL PROXIMITY ALERTS', 40, section3Top);
+    doc.rect(40, section3Top + 16, 532, 1).fill(colors.cardBorder);
 
-    let alertY = section4Top + 24;
+    let alertY = section3Top + 24;
     if (data.alerts.triggered.length === 0) {
       doc.roundedRect(40, alertY, 532, 28, 4).fillAndStroke(colors.cardBg, colors.cardBorder);
       doc.fillColor(colors.slateMuted).fontSize(8).font('Helvetica')
@@ -643,7 +603,7 @@ export async function generateExecutivePdfBuffer(data: ExecutiveReportData): Pro
     doc.rect(40, 83, 532, 2).fill(colors.accentCyan);
 
     doc.fillColor('#ffffff').fontSize(14).font('Helvetica-Bold')
-      .text('5. GLOBAL MACRO ENVIRONMENT & VOLATILITY DOSSIER', 54, 50);
+      .text('4. GLOBAL MACRO ENVIRONMENT & VOLATILITY DOSSIER', 54, 50);
     doc.fillColor('#94a3b8').fontSize(8.5).font('Helvetica')
       .text(`Macro Regime: ${data.macro.regimeTitle} • Institutional Score: ${data.macro.macroScore}/100`, 54, 68);
 
@@ -800,18 +760,14 @@ export async function generateAndSendDailyReport(): Promise<{
   const dateSlug = reportData.generatedAt.toISOString().slice(0, 10);
   const filename = `TradeFlow_Executive_Briefing_${dateSlug}.pdf`;
 
-  const totalValStr = `$${reportData.portfolio.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const plSign = reportData.portfolio.totalUnrealizedPL >= 0 ? '+' : '-';
-  const plStr = `${plSign}$${Math.abs(reportData.portfolio.totalUnrealizedPL).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
   const defCount = reportData.defensePositions.length;
   const topDips = reportData.topDipBuys.map((d) => `$${d.symbol}`).join(', ') || 'None';
 
   const caption = `📊 *TradeFlow Daily Executive Briefing* (${dateSlug})\n\n` +
-    `💰 *Portfolio NLV:* ${totalValStr} (Open P&L: ${plStr})\n` +
     `🛡️ *Positions Needing Defense:* ${defCount} ${defCount > 0 ? '⚠️' : '✅'}\n` +
     `📉 *Top 5 Dip Buys:* ${topDips}\n` +
     `🌐 *Macro Regime:* ${reportData.macro.regimeTitle} (VIX: ${reportData.macro.vixLevel.toFixed(1)}, 10Y: ${reportData.macro.yield10y.toFixed(2)}%)\n\n` +
-    `📄 *Detailed PDF attached below:*`;
+    `📄 *Detailed PDF briefing attached below:*`;
 
   const sendResult = await sendPdfReportToTelegram(pdfBuffer, filename, caption);
 

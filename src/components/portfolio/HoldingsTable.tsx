@@ -51,7 +51,7 @@ import {
 } from "@/services/alertService";
 import { StockNoteModal } from "../StockNoteModal";
 import { PositionAdvisorModal } from "./PositionAdvisorModal";
-import { CriticalDefenseModal } from "./CriticalDefenseModal";
+import { CriticalDefenseModal, isOptionCall } from "./CriticalDefenseModal";
 import { 
     InvestmentStyle, 
     STYLE_CONFIG, 
@@ -196,7 +196,7 @@ export function HoldingsTable({
             let distance = Infinity;
             if (isOption && pos.underlyingPrice && pos.strike) {
                 distance = Math.abs((pos.underlyingPrice - pos.strike) / pos.strike) * 100;
-                const isCall = pos.optionType === 'Call' || pos.optionType === 'C';
+                const isCall = isOptionCall(pos);
                 isITM = isCall ? (pos.underlyingPrice > pos.strike) : (pos.underlyingPrice < pos.strike);
             }
 
@@ -436,7 +436,7 @@ export function HoldingsTable({
                 const getRiskScore = (p: UnifiedPosition) => {
                     let isITM = 0;
                     if (p.assetType === 'Option' && p.underlyingPrice && p.underlyingPrice > 0 && p.strike && p.strike > 0) {
-                        const isCall = p.optionType === 'Call' || p.optionType === 'C';
+                        const isCall = isOptionCall(p);
                         isITM = isCall ? (p.underlyingPrice > p.strike ? 2 : 0) : (p.underlyingPrice < p.strike ? 2 : 0);
                     }
                     const dte = getDTE(p.expiry);
@@ -670,7 +670,7 @@ export function HoldingsTable({
         let isITM = false;
         if (isOption && pos.underlyingPrice && pos.strike) {
             distance = Math.abs((pos.underlyingPrice - pos.strike) / pos.strike) * 100;
-            const isCall = pos.optionType === 'Call' || pos.optionType === 'C';
+            const isCall = isOptionCall(pos);
             isITM = isCall ? (pos.underlyingPrice > pos.strike) : (pos.underlyingPrice < pos.strike);
         }
 
@@ -885,11 +885,11 @@ export function HoldingsTable({
                                 </span>
                                 <Badge className={cn(
                                     "text-[10px] px-2 py-0.5 font-bold uppercase shadow-sm tracking-wide",
-                                    (pos.optionType === 'Call' || pos.optionType === 'C')
+                                    isOptionCall(pos)
                                         ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-emerald-500/10"
                                         : "bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-rose-500/10"
                                 )}>
-                                    {(pos.optionType === 'Call' || pos.optionType === 'C') ? 'CALL' : 'PUT'}
+                                    {isOptionCall(pos) ? 'CALL' : 'PUT'}
                                 </Badge>
                             </div>
 

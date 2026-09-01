@@ -89,11 +89,11 @@ export const fetchResearchDossier = async (ticker: string) => {
   return response.json();
 };
 
-export const useResearchDossier = (ticker: string) => {
+export const useResearchDossier = (ticker: string, options?: { enabled?: boolean }) => {
   return useQuery({
     queryKey: ['researchDossier', ticker],
     queryFn: () => fetchResearchDossier(ticker),
-    enabled: Boolean(ticker && ticker.trim().length > 0),
+    enabled: Boolean(ticker && ticker.trim().length > 0 && (options?.enabled ?? true)),
     retry: 1,
     staleTime: 60 * 1000 // 1 minute
   });
@@ -108,11 +108,11 @@ export const fetchAIAnalysis = async (ticker: string) => {
   return response.json();
 };
 
-export const useAIAnalysis = (ticker: string) => {
+export const useAIAnalysis = (ticker: string, options?: { enabled?: boolean }) => {
   return useQuery({
     queryKey: ['aiAnalysis', ticker],
     queryFn: () => fetchAIAnalysis(ticker),
-    enabled: Boolean(ticker && ticker.trim().length > 0),
+    enabled: Boolean(ticker && ticker.trim().length > 0 && (options?.enabled ?? true)),
     retry: 0,
     staleTime: 5 * 60 * 1000 // 5 minutes, since it costs API tokens
   });
@@ -127,11 +127,11 @@ export const fetchOptionsLiquidity = async (ticker: string): Promise<OptionsLiqu
   return response.json();
 };
 
-export const useOptionsLiquidity = (ticker: string) => {
+export const useOptionsLiquidity = (ticker: string, options?: { enabled?: boolean }) => {
   return useQuery({
     queryKey: ['optionsLiquidity', ticker],
     queryFn: () => fetchOptionsLiquidity(ticker),
-    enabled: Boolean(ticker && ticker.trim().length > 0),
+    enabled: Boolean(ticker && ticker.trim().length > 0 && (options?.enabled ?? true)),
     retry: 1,
     staleTime: 90 * 1000 // 90 seconds
   });

@@ -20,11 +20,13 @@ import {
   NotebookPen,
   Radar,
   Smartphone,
+  Calendar,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAlerts } from '@/services/alertService';
 import { useAgentActivities } from '@/services/agentActivityService';
 import { useThoughtLogs, useTelegramBufferStatus } from '@/services/thoughtLogService';
+import { useEarningsData } from '@/services/earningsService';
 import { AgentActivityDrawer } from './AgentActivityDrawer';
 import { ThemeSwitcherButton } from './ThemeSwitcherButton';
 
@@ -42,6 +44,7 @@ const navItems: NavItem[] = [
   { icon: Briefcase, label: 'Management', id: 'management' },
   { icon: Globe, label: 'Macro', id: 'macro' },
   { icon: CandlestickChart, label: 'Graphs', id: 'graphs' },
+  { icon: Calendar, label: 'Earnings', id: 'earnings' },
   { icon: Radar, label: 'Scanner', id: 'scanner' },
   { icon: LineChart, label: 'Watchlist', id: 'watchlist' },
   { icon: NotebookPen, label: 'Log', id: 'log' },
@@ -73,6 +76,9 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
   const telegramNotesCount = thoughtLogs.filter(
     (l) => l.tags?.toLowerCase().includes('telegram') || l.title.includes('📱')
   ).length;
+
+  const { data: earningsData } = useEarningsData();
+  const earningsThisWeek = earningsData?.summary?.reportingThisWeek || 0;
 
   return (
     <>
@@ -134,6 +140,16 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
                   </span>
                 )}
 
+                {/* Earnings Badge (Reporting this week) */}
+                {!collapsed && item.id === 'earnings' && earningsThisWeek > 0 && (
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-xs"
+                    title={`${earningsThisWeek} companies reporting this week`}
+                  >
+                    {earningsThisWeek}
+                  </span>
+                )}
+
                 {/* Log / Telegram Mobile Notes Badge */}
                 {!collapsed && item.id === 'log' && telegramNotesCount > 0 && (
                   <span
@@ -148,6 +164,9 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
                 {/* Collapsed notification indicator pips */}
                 {collapsed && item.id === 'alerts' && triggeredCount > 0 && (
                   <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400 animate-pulse shadow-[0_0_6px_rgba(251,191,36,0.8)]" />
+                )}
+                {collapsed && item.id === 'earnings' && earningsThisWeek > 0 && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.8)]" />
                 )}
                 {collapsed && item.id === 'log' && telegramNotesCount > 0 && (
                   <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-sky-400 animate-pulse shadow-[0_0_6px_rgba(56,189,248,0.8)]" />

@@ -39,6 +39,10 @@ describe('ThoughtLog Folder Management & Telegram Categorization', () => {
       expect(requestedUrl).toContain('/api/thought-logs?folder=Ideas');
       expect(logs.length).toBe(1);
       expect(logs[0].folder).toBe('Ideas');
+
+      // Test querying ALL folder
+      await fetchThoughtLogs({ folder: 'ALL' });
+      expect(requestedUrl).toContain('/api/thought-logs?folder=ALL');
     } finally {
       global.fetch = originalFetch;
     }
@@ -51,11 +55,12 @@ describe('ThoughtLog Folder Management & Telegram Categorization', () => {
       ok: true,
       json: async () => ({
         totalCount: 15,
+        unfiledCount: 4,
         telegramCount: 6,
         voiceCount: 2,
         folders: [
-          { name: 'General', count: 4 },
           { name: 'Ideas', count: 5 },
+          { name: 'Research', count: 4 },
           { name: 'Telegram', count: 4 },
           { name: 'Voice Notes', count: 2 },
         ],
@@ -67,6 +72,7 @@ describe('ThoughtLog Folder Management & Telegram Categorization', () => {
 
       expect(stats).toBeDefined();
       expect(stats.totalCount).toBe(15);
+      expect(stats.unfiledCount).toBe(4);
       expect(stats.telegramCount).toBe(6);
       expect(stats.folders.find((f) => f.name === 'Ideas')?.count).toBe(5);
     } finally {
@@ -205,4 +211,37 @@ describe('ThoughtLog Folder Management & Telegram Categorization', () => {
       global.fetch = originalFetch;
     }
   });
+
+  it('should support drag-and-drop moving a note to a new target folder', async () => {
+    const originalFetch = global.fetch;
+    let sentBody: any = null;
+
+    global.fetch = vi.fn().mockImplementation((url: string, options: any) => {
+      sentBody = JSON.parse(options.body);
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          id: 'log-drag-1',
+          title: 'Quantum Computing Overhang',
+          content: 'IBM & IONQ roadmap',
+          folder: sentBody.folder,
+          updatedAt: new Date().toISOString(),
+        }),
+      });
+    }) as any;
+
+    try {
+      // Simulate drag and drop from General -> Research
+      const updated = await updateThoughtLog('log-drag-1', {
+        folder: 'Research',
+      });
+
+      expect(sentBody.folder).toBe('Research');
+      expect(updated.folder).toBe('Research');
+      expect(updated.id).toBe('log-drag-1');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });
+

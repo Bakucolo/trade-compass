@@ -14,6 +14,7 @@ import { BrokersPage } from '@/components/BrokersPage';
 import { SettingsPage } from '@/components/SettingsPage';
 import { ManagementPage } from '@/components/ManagementPage';
 import { ScorecardsPage } from '@/components/ScorecardsPage';
+import { EarningsPage } from '@/components/EarningsPage';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 const Index = () => {
@@ -70,6 +71,14 @@ const Index = () => {
         );
       case 'graphs':
         return <GraphsPage onNavigateToResearch={handleNavigateToResearch} />;
+      case 'earnings':
+        return (
+          <EarningsPage
+            onNavigateToResearch={handleNavigateToResearch}
+            onNavigateToGraphs={handleNavigateToGraphs}
+            onNavigateToWatchlist={() => setActiveTab('watchlist')}
+          />
+        );
       case 'scanner':
         return (
           <ScannerPage
@@ -86,6 +95,7 @@ const Index = () => {
           <LogPage
             onNavigateToResearch={handleNavigateToResearch}
             onNavigateToIdeas={() => setActiveTab('ideas')}
+            onNavigateToTrades={() => setActiveTab('trades')}
           />
         );
       case 'alerts':

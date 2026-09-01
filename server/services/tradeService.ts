@@ -452,3 +452,217 @@ export async function deleteTradeRecord(prisma: PrismaClient, id: string) {
     where: { id }
   });
 }
+
+/**
+ * Parse IBKR TWS execution date string
+ */
+export function parseIBKRDate(timeStr?: string): Date {
+  if (!timeStr) return new Date();
+  const trimmed = String(timeStr).trim();
+  // Format: "YYYYMMDD  HH:mm:ss" or "YYYYMMDD-HH:mm:ss" or "YYYYMMDD HH:mm:ss"
+  const match = trimmed.match(/^(\d{4})(\d{2})(\d{2})[\s\-]+(\d{2}):(\d{2}):(\d{2})/);
+  if (match) {
+    const [, y, m, d, hh, mm, ss] = match;
+    return new Date(Date.UTC(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss)));
+  }
+  // Format: "YYYYMMDD"
+  const matchDay = trimmed.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (matchDay) {
+    const [, y, m, d] = matchDay;
+    return new Date(Date.UTC(Number(y), Number(m) - 1, Number(d), 12, 0, 0));
+  }
+  const parsed = new Date(trimmed);
+  if (!isNaN(parsed.getTime())) return parsed;
+  const num = Number(trimmed);
+  if (!isNaN(num) && num > 0) {
+    return new Date(num > 1e11 ? num : num * 1000);
+  }
+  return new Date();
+}
+
+/**
+ * Ingest or update a live IBKR trade execution (from TWS EventName.execDetails)
+ */
+export async function upsertIBKRExecution(
+  prisma: PrismaClient,
+  contract: any,
+  execution: any,
+  commissionReport?: any
+) {
+  if (!execution || !contract) return null;
+
+  const brokerTradeId = String(execution.execId || execution.permId || Math.random());
+  const rawSymbol = contract.localSymbol || contract.symbol || 'UNKNOWN';
+  const underlyingSymbol = contract.symbol || rawSymbol;
+  const isOption = contract.secType === 'OPT';
+  const optionType = isOption ? (contract.right === 'C' ? 'CALL' : (contract.right === 'P' ? 'PUT' : null)) : null;
+  const strikePrice = isOption && contract.strike ? Number(contract.strike) : null;
+  const expiryDate = isOption && contract.lastTradeDateOrContractMonth ? String(contract.lastTradeDateOrContractMonth) : null;
+
+  const side: 'BUY' | 'SELL' = execution.side === 'BOT' || execution.side === 'BUY' ? 'BUY' : 'SELL';
+  let action = side === 'BUY' ? 'BUY' : 'SELL';
+  if (isOption) {
+    action = side === 'BUY' ? 'BUY_TO_OPEN' : 'SELL_TO_CLOSE';
+  }
+  const positionEffect: 'LONG' | 'SHORT' = side === 'BUY' ? 'LONG' : 'SHORT';
+  const quantity = Math.abs(Number(execution.shares || execution.cumQty || 1));
+  const price = Math.abs(Number(execution.price || execution.avgPrice || 0));
+  const multiplier = isOption ? 100 : 1;
+  const totalValue = quantity * price * multiplier;
+  const valueEffect = side === 'BUY' ? 'DEBIT' : 'CREDIT';
+  const commission = commissionReport?.commission ? Math.abs(Number(commissionReport.commission)) : 0;
+  const executedAt = parseIBKRDate(execution.time);
+
+  const description = isOption
+    ? `${side === 'BUY' ? 'Bought' : 'Sold'} ${quantity} ${underlyingSymbol} ${expiryDate || ''} ${optionType || ''} ${strikePrice || ''} @ $${price.toFixed(2)}`
+    : `${side === 'BUY' ? 'Bought' : 'Sold'} ${quantity} ${underlyingSymbol} @ $${price.toFixed(2)}`;
+
+  return await prisma.tradeRecord.upsert({
+    where: {
+      broker_brokerTradeId: {
+        broker: 'Interactive Brokers',
+        brokerTradeId
+      }
+    },
+    update: {
+      symbol: rawSymbol,
+      underlyingSymbol,
+      assetType: isOption ? 'OPTION' : 'EQUITY',
+      optionType,
+      strikePrice,
+      expiryDate,
+      action,
+      side,
+      positionEffect,
+      quantity,
+      price,
+      totalValue,
+      valueEffect,
+      commission,
+      orderId: execution.orderId ? String(execution.orderId) : null,
+      description,
+      executedAt
+    },
+    create: {
+      broker: 'Interactive Brokers',
+      brokerTradeId,
+      symbol: rawSymbol,
+      underlyingSymbol,
+      assetType: isOption ? 'OPTION' : 'EQUITY',
+      optionType,
+      strikePrice,
+      expiryDate,
+      action,
+      side,
+      positionEffect,
+      quantity,
+      price,
+      totalValue,
+      valueEffect,
+      commission,
+      orderId: execution.orderId ? String(execution.orderId) : null,
+      description,
+      executedAt
+    }
+  });
+}
+
+/**
+ * Backfill trade records from existing IBKR portfolio holdings
+ */
+export async function syncIBKRFromHoldings(prisma: PrismaClient): Promise<number> {
+  const ibkrBroker = await prisma.broker.findUnique({
+    where: { name: 'Interactive Brokers' },
+    include: { holdings: true }
+  });
+
+  if (!ibkrBroker || !ibkrBroker.holdings || ibkrBroker.holdings.length === 0) {
+    return 0;
+  }
+
+  let count = 0;
+  for (const h of ibkrBroker.holdings) {
+    const tradeId = `ibkr-pos-${h.brokerSpecificId || h.id}`;
+    const isOption = h.assetType === 'OPTION';
+    const side: 'BUY' | 'SELL' = h.quantity >= 0 ? 'BUY' : 'SELL';
+    const action = isOption ? (side === 'BUY' ? 'BUY_TO_OPEN' : 'SELL_TO_OPEN') : side;
+    const positionEffect: 'LONG' | 'SHORT' = side === 'BUY' ? 'LONG' : 'SHORT';
+    const qty = Math.abs(h.quantity);
+    const price = Math.abs(h.averageCost || h.currentPrice || 0);
+    const totalVal = Math.abs(h.marketValue || (qty * price * (isOption ? 100 : 1)));
+    const executedAt = h.updatedAt || new Date();
+
+    const desc = `${side === 'BUY' ? 'Bought' : 'Sold'} ${qty} ${h.underlyingSymbol || h.symbol} @ $${price.toFixed(2)}`;
+
+    await prisma.tradeRecord.upsert({
+      where: {
+        broker_brokerTradeId: {
+          broker: 'Interactive Brokers',
+          brokerTradeId: tradeId
+        }
+      },
+      update: {
+        symbol: h.symbol,
+        underlyingSymbol: h.underlyingSymbol || h.symbol,
+        assetType: h.assetType,
+        optionType: h.optionType,
+        strikePrice: h.strikePrice,
+        expiryDate: h.expiryDate,
+        quantity: qty,
+        price,
+        totalValue: totalVal,
+        description: desc
+      },
+      create: {
+        broker: 'Interactive Brokers',
+        brokerTradeId: tradeId,
+        symbol: h.symbol,
+        underlyingSymbol: h.underlyingSymbol || h.symbol,
+        assetType: h.assetType,
+        optionType: h.optionType,
+        strikePrice: h.strikePrice,
+        expiryDate: h.expiryDate,
+        action,
+        side,
+        positionEffect,
+        quantity: qty,
+        price,
+        totalValue: totalVal,
+        valueEffect: side === 'BUY' ? 'DEBIT' : 'CREDIT',
+        commission: 0,
+        description: desc,
+        executedAt
+      }
+    });
+    count++;
+  }
+
+  return count;
+}
+
+/**
+ * Sync IBKR trade executions from live connection and database holdings
+ */
+export async function syncIBKRExecutions(
+  prisma: PrismaClient,
+  ibInstance?: any,
+  isConnected?: boolean
+): Promise<{ syncedCount: number }> {
+  let liveDispatched = false;
+
+  if (ibInstance && isConnected) {
+    try {
+      const reqId = Math.floor(Math.random() * 900000) + 100000;
+      ibInstance.reqExecutions(reqId, {});
+      liveDispatched = true;
+    } catch (err) {
+      console.warn('Failed to dispatch reqExecutions to IBKR:', err);
+    }
+  }
+
+  const holdingCount = await syncIBKRFromHoldings(prisma);
+
+  return {
+    syncedCount: holdingCount
+  };
+}

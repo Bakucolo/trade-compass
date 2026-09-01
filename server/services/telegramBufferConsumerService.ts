@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { extractSymbolsFromText } from './thoughtLogAgentService';
 import { agentActivityTracker } from './agentActivityService';
 import { transcribeTelegramVoice } from './voiceTranscriptionService';
+import { autoCreateAlertsFromText } from './thoughtLogAlertService';
 
 const logToFile = (msg: string) => console.log(msg);
 
@@ -175,6 +176,13 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
 
       if (!contentText || !contentText.trim()) continue;
 
+      // Automatically detect and create price alerts (e.g. "RBRK 120", "AAPL below 220")
+      const autoCreatedAlerts = await autoCreateAlertsFromText(
+        prisma,
+        contentText,
+        `📱 Telegram Note (${new Date(msg.timestamp).toLocaleString()}): "${contentText.trim()}"`
+      );
+
       const detectedSymbols = extractSymbolsFromText(contentText);
       const sentiment = detectSentimentFromText(contentText);
       const title = isVoice
@@ -182,9 +190,13 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         : createTitleFromText(contentText, msg.timestamp);
 
       const senderLabel = msg.sender?.username ? `@${msg.sender.username}` : (msg.sender?.firstName || 'Mobile');
-      const tags = isVoice
+      let tags = isVoice
         ? `Telegram, Mobile, Voice, ${senderLabel}`
         : `Telegram, Mobile, ${senderLabel}`;
+
+      if (autoCreatedAlerts.length > 0) {
+        tags += ', Alert';
+      }
 
       // Detect folder from hashtag (e.g. #ideas, #macro, #watchlist, #earnings, #trading, #research) or default
       let targetFolder = isVoice ? 'Voice Notes' : 'Telegram';
@@ -192,7 +204,16 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       if (hashMatch) {
         const rawFolder = hashMatch[1];
         targetFolder = rawFolder.charAt(0).toUpperCase() + rawFolder.slice(1);
+      } else if (autoCreatedAlerts.length > 0 && !isVoice) {
+        targetFolder = 'Alerts';
       }
+
+      const alertNotes = autoCreatedAlerts.length > 0
+        ? `🔔 **Auto Price Alert Armed**\n\n` +
+          autoCreatedAlerts
+            .map((a) => `• **${a.symbol}**: Target **$${a.targetPrice}** (${a.condition})${a.currentPrice ? ` — Spot: $${a.currentPrice.toFixed(2)}` : ''}`)
+            .join('\n')
+        : null;
 
       const savedLog = await (prisma as any).thoughtLog.create({
         data: {
@@ -203,8 +224,8 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
           symbols: detectedSymbols.length > 0 ? detectedSymbols.join(', ') : null,
           sentiment,
           isPinned: false,
-          agentOutput: null,
-          agentActionType: null,
+          agentOutput: alertNotes,
+          agentActionType: autoCreatedAlerts.length > 0 ? 'ADD_CONTEXT' : null,
           marketDataJson: null,
           createdAt: new Date(msg.timestamp),
         },

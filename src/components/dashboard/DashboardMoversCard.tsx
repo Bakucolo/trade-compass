@@ -77,20 +77,34 @@ export function DashboardMoversCard({
       let returnPct = 0;
       let returnDollar = 0;
 
-      if (timeframe === 'TODAY' || timeframe === 'YESTERDAY') {
-        // Strictly 1-day session return
+      if (timeframe === 'TODAY') {
+        // Strictly today's live intraday return
         returnPct = dayPct;
         returnDollar = dayDollar !== 0 ? dayDollar : (currentVal * (dayPct / 100));
+      } else if (timeframe === 'YESTERDAY') {
+        // Strictly prior trading session performance
+        returnPct = p.yesterdayPnLPercent !== undefined && p.yesterdayPnLPercent !== null
+          ? p.yesterdayPnLPercent
+          : (p.yesterdayPnL && currentVal > 0 ? (p.yesterdayPnL / currentVal) * 100 : 0);
+        returnDollar = p.yesterdayPnL !== undefined && p.yesterdayPnL !== null
+          ? p.yesterdayPnL
+          : (currentVal * (returnPct / 100));
       } else if (timeframe === '1W') {
-        returnPct = p.weekReturnPercent !== undefined
+        // 1-Week (5-day) session return
+        returnPct = p.weekReturnPercent !== undefined && p.weekReturnPercent !== null && p.weekReturnPercent !== 0
           ? p.weekReturnPercent
-          : Math.max(-40, Math.min(40, dayPct * 2.2));
-        returnDollar = currentVal * (returnPct / 100);
+          : (p.weekPnL ? (p.weekPnL / (currentVal || 1)) * 100 : (dayPct * 2.2));
+        returnDollar = p.weekPnL !== undefined && p.weekPnL !== null && p.weekPnL !== 0
+          ? p.weekPnL
+          : (currentVal * (returnPct / 100));
       } else if (timeframe === '1M') {
-        returnPct = p.monthReturnPercent !== undefined
+        // 1-Month (approx 20-day) session return
+        returnPct = p.monthReturnPercent !== undefined && p.monthReturnPercent !== null && p.monthReturnPercent !== 0
           ? p.monthReturnPercent
-          : Math.max(-60, Math.min(60, dayPct * 4.0));
-        returnDollar = currentVal * (returnPct / 100);
+          : (p.monthPnL ? (p.monthPnL / (currentVal || 1)) * 100 : (dayPct * 4.0));
+        returnDollar = p.monthPnL !== undefined && p.monthPnL !== null && p.monthPnL !== 0
+          ? p.monthPnL
+          : (currentVal * (returnPct / 100));
       } else if (timeframe === 'ALL-TIME') {
         // Explicit all-time lifetime position return
         returnPct = unPnLPct;
@@ -136,7 +150,11 @@ export function DashboardMoversCard({
   }, [processedPositions]);
 
   const fmtCurrency = (val: number, curr = 'USD') => {
-    const sym = curr === 'GBP' ? '£' : '$';
+    let sym = '$';
+    if (curr === 'GBP' || curr === 'GBX') sym = '£';
+    else if (curr === 'AUD') sym = 'A$';
+    else if (curr === 'CAD') sym = 'C$';
+    else if (curr === 'EUR') sym = '€';
     return `${val >= 0 ? '+' : '-'}${sym}${Math.abs(val).toLocaleString(undefined, {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,

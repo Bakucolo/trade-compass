@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { IBApi, EventName, ErrorCode, Contract } from '@stoqey/ib';
+import { IBApi, EventName, ErrorCode, Contract, CommissionReport, Execution } from '@stoqey/ib';
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
@@ -23,7 +23,15 @@ import { fetchTastyPositions, fetchTastyBalances, fetchTastyAccountInfo } from '
 import { fetchLiveOptionChains, buildOptionPricingContext, validateAndEnforcePlanPricing } from './services/optionDefenseService';
 import { runPortfolioAuditAgent, savePortfolioAuditToDb, listPortfolioAuditsFromDb, getPortfolioAuditByIdFromDb, deletePortfolioAuditFromDb } from './services/portfolioAnalyserService';
 import { agentActivityTracker } from './services/agentActivityService';
-import { syncTastytradeTransactions, getFilteredTrades, createManualTrade, deleteTradeRecord } from './services/tradeService';
+import {
+  syncTastytradeTransactions,
+  syncIBKRExecutions,
+  upsertIBKRExecution,
+  syncIBKRFromHoldings,
+  getFilteredTrades,
+  createManualTrade,
+  deleteTradeRecord
+} from './services/tradeService';
 import { fetchFredMacroData, fetchYieldsAndBondsChartData } from './services/fredService';
 import { fetchSectorsOverview, fetchSectorsHistoryComparison } from './services/sectorsService';
 import { fetchGrowthAndValuationDossier } from './services/growthValuationService';
@@ -88,11 +96,21 @@ import {
   consumeTelegramBuffer,
   getTelegramBufferStatus,
 } from './services/telegramBufferConsumerService';
+import { autoCreateAlertsFromText } from './services/thoughtLogAlertService';
+import { SYMBOL_ALIASES, resolveYahooFinanceSymbol } from './services/tickerResolutionService';
+export { SYMBOL_ALIASES, resolveYahooFinanceSymbol };
 import {
   generateAndSendDailyReport,
   fetchComprehensiveReportData,
   generateExecutivePdfBuffer,
 } from './services/telegramReportService';
+import {
+  fetchEarningsData,
+  lookupSymbolEarnings,
+} from './services/earningsService';
+import {
+  fetchDilutionAnalysis,
+} from './services/dilutionService';
 
 const prisma = new PrismaClient({
   log: ['info', 'warn', 'error'],
@@ -191,6 +209,7 @@ const setupEventListeners = (ibInstance: IBApi) => {
     ibInstance.reqPositions();
     ibInstance.reqAllOpenOrders();
     ibInstance.reqManagedAccts();
+    ibInstance.reqExecutions(Math.floor(Math.random() * 900000) + 100000, {});
   });
 
   ibInstance.on(EventName.managedAccounts, (accountsList: string) => {
@@ -200,6 +219,8 @@ const setupEventListeners = (ibInstance: IBApi) => {
       console.log(`Subscribing to account updates for IBKR account: ${acct}`);
       ibInstance.reqAccountUpdates(true, acct);
     }
+    // Also request executions across accounts
+    ibInstance.reqExecutions(Math.floor(Math.random() * 900000) + 100000, {});
   });
 
   ibInstance.on(EventName.disconnected, async () => {
@@ -528,6 +549,37 @@ ibInstance.on(EventName.updatePortfolio, (contract: Contract, position: number, 
     else if (key === 'AccruedDividend') acct.accruedDividend = numVal;
     else if (key === 'AccountType') acct.accountType = val;
   });
+
+  // 5. Execution Details feed (live trade fills from TWS / Gateway)
+  ibInstance.on(EventName.execDetails, async (reqId: number, contract: Contract, execution: Execution) => {
+    try {
+      console.log(`[IBKR Execution] Fill received: ${contract.symbol || contract.localSymbol} ${execution.side} ${execution.shares} @ ${execution.price}`);
+      await upsertIBKRExecution(prisma, contract, execution);
+      logToFile(`[IBKR Execution] Ingested trade ${execution.execId} for ${contract.symbol}`);
+    } catch (err: any) {
+      console.error('Error processing IBKR execDetails:', err?.message || err);
+    }
+  });
+
+  // 6. Commission Report feed (fills exact commission & clearing fees for executed trade)
+  ibInstance.on(EventName.commissionReport, async (report: CommissionReport) => {
+    try {
+      if (!report.execId) return;
+      const existing = await prisma.tradeRecord.findFirst({
+        where: { broker: 'Interactive Brokers', brokerTradeId: report.execId }
+      });
+      if (existing) {
+        await prisma.tradeRecord.update({
+          where: { id: existing.id },
+          data: {
+            commission: Math.abs(report.commission || 0)
+          }
+        });
+      }
+    } catch (err: any) {
+      console.error('Error updating IBKR commissionReport:', err?.message || err);
+    }
+  });
 };
 
 export interface AccountCurrencyData {
@@ -579,13 +631,34 @@ export interface IBKRAccountData {
 const ibkrAccountValues = new Map<string, IBKRAccountData>();
 
 // Real-Time & Fallback FX Rates to USD
-const fxRatesToUSD: Record<string, number> = {
+export const fxRatesToUSD: Record<string, number> = {
   USD: 1.0,
   CAD: 0.738, // 1 CAD ≈ $0.738 USD
   EUR: 1.085, // 1 EUR ≈ $1.085 USD
   GBP: 1.302, // 1 GBP ≈ $1.302 USD
   AUD: 0.655, // 1 AUD ≈ $0.655 USD
 };
+
+export const updateLiveFxRates = async () => {
+  try {
+    const quotes: any[] = await Promise.all([
+      yahooFinance.quote('GBPUSD=X').catch(() => null),
+      yahooFinance.quote('EURUSD=X').catch(() => null),
+      yahooFinance.quote('AUDUSD=X').catch(() => null),
+      yahooFinance.quote('CADUSD=X').catch(() => null),
+    ]);
+    if (quotes[0]?.regularMarketPrice) fxRatesToUSD.GBP = Number(quotes[0].regularMarketPrice.toFixed(4));
+    if (quotes[1]?.regularMarketPrice) fxRatesToUSD.EUR = Number(quotes[1].regularMarketPrice.toFixed(4));
+    if (quotes[2]?.regularMarketPrice) fxRatesToUSD.AUD = Number(quotes[2].regularMarketPrice.toFixed(4));
+    if (quotes[3]?.regularMarketPrice) fxRatesToUSD.CAD = Number(quotes[3].regularMarketPrice.toFixed(4));
+  } catch (err: any) {
+    // Keep fallback rates if network fails
+  }
+};
+
+// Periodic live FX updates every 10 minutes
+setInterval(updateLiveFxRates, 10 * 60 * 1000);
+setTimeout(updateLiveFxRates, 3000);
 
 export const getFxRateToUSD = (currency?: string): number => {
   if (!currency) return 1.0;
@@ -1079,6 +1152,44 @@ app.get('/api/portfolio/balances', async (req, res) => {
       GBP: t212CashGBP
     });
 
+    const gbpRateToUSD = getFxRateToUSD('GBP') || 1.302;
+    const usdRateToGBP = 1 / gbpRateToUSD;
+
+    const totalPositionsValue = totalEquitiesValue + totalOptionsValue;
+
+    const dualCurrencySummary = {
+      baseCurrency: 'USD',
+      comparisonCurrency: 'GBP',
+      fxRateGbpUsd: gbpRateToUSD,
+      fxRateUsdGbp: usdRateToGBP,
+      
+      // Totals in USD
+      totalNetLiqUSD: totalNetLiq,
+      totalCashUSD: totalCash,
+      totalPositionsValueUSD: totalPositionsValue,
+      totalBPUSD: totalBP,
+      totalUnrealizedPnLUSD: totalUnrealizedPnL,
+      totalDayPnLUSD: totalDayPnL,
+
+      // Totals converted to GBP
+      totalNetLiqGBP: totalNetLiq * usdRateToGBP,
+      totalCashGBP: totalCash * usdRateToGBP,
+      totalPositionsValueGBP: totalPositionsValue * usdRateToGBP,
+      totalBPGBP: totalBP * usdRateToGBP,
+      totalUnrealizedPnLGBP: totalUnrealizedPnL * usdRateToGBP,
+      totalDayPnLGBP: totalDayPnL * usdRateToGBP,
+
+      // Native Asset Breakdown
+      nativeUsdHoldingsUSD: (portfolioCurrencies?.USD?.positionsMarketValue || 0),
+      nativeUsdHoldingsGBP: (portfolioCurrencies?.USD?.positionsMarketValue || 0) * usdRateToGBP,
+      nativeGbpHoldingsGBP: (portfolioCurrencies?.GBP?.positionsMarketValue || 0),
+      nativeGbpHoldingsUSD: (portfolioCurrencies?.GBP?.positionsMarketValueUSD || 0),
+      nativeUsdCashUSD: (portfolioCurrencies?.USD?.cash || 0),
+      nativeUsdCashGBP: (portfolioCurrencies?.USD?.cash || 0) * usdRateToGBP,
+      nativeGbpCashGBP: (portfolioCurrencies?.GBP?.cash || 0),
+      nativeGbpCashUSD: (portfolioCurrencies?.GBP?.cashUSD || 0),
+    };
+
     res.json({
       total: {
         netLiquidatingValue: totalNetLiq,
@@ -1104,6 +1215,7 @@ app.get('/api/portfolio/balances', async (req, res) => {
           cashAllocationPercent
         }
       },
+      dualCurrency: dualCurrencySummary,
       currencies: portfolioCurrencies,
       brokers: {
         ibkr: ibkrCombinedData,
@@ -1371,8 +1483,14 @@ interface CachedQuote {
   name: string;
   price: number;
   previousClose: number;
+  open?: number;
   change: number;
   changesPercentage: number;
+  yesterdayChange?: number;
+  yesterdayChangePercent?: number;
+  overnightChangePercent?: number;
+  weekChangePercent?: number;
+  monthChangePercent?: number;
   currency: string;
   timestamp: number;
 }
@@ -1380,84 +1498,152 @@ interface CachedQuote {
 const portfolioQuotesCache = new Map<string, CachedQuote>();
 const QUOTE_CACHE_TTL_MS = 60 * 1000; // 60s
 
-const SYMBOL_ALIASES: Record<string, string> = {
-  'APF.L': 'ECOR.L', // Anglo Pacific rebranded to Ecora Resources on LSE
-  'MBGL_US_EQ': 'MBGL',
-  'FET_US_EQ': 'FET',
-  'FLEX_US_EQ': 'FLEX',
-  'ENPH_US_EQ': 'ENPH',
-  'SPAQl_EQ': 'SPAQ.L',
-  'BURl_EQ': 'BUR.L',
-};
+function withQuoteTimeout<T>(promise: Promise<T>, ms = 5000): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Quote fetch timeout after ${ms}ms`)), ms)),
+  ]);
+}
 
-async function fetchQuoteForSymbol(rawSymbol: string): Promise<CachedQuote | null> {
+function cleanTickerString(raw: string): string {
+  let s = (raw || '').trim().toUpperCase();
+  if (s.endsWith('_US_EQ')) return s.replace('_US_EQ', '');
+  if (s.endsWith('_CA_EQ')) return s.replace('_CA_EQ', '') + '.TO';
+  if (s.endsWith('L_EQ') || s.endsWith('P_EQ')) return s.replace(/[LP]_EQ$/, '') + '.L';
+  if (s.endsWith('_EQ')) return s.replace('_EQ', '');
+  return s;
+}
+
+async function fetchQuoteForSymbol(rawSymbol: string, currency?: string): Promise<CachedQuote | null> {
   if (!rawSymbol || !rawSymbol.trim()) return null;
-  const cleanRaw = rawSymbol.trim().toUpperCase();
-  const sym = SYMBOL_ALIASES[cleanRaw] || cleanRaw;
+  const cleanRaw = cleanTickerString(rawSymbol);
+  const sym = resolveYahooFinanceSymbol(cleanRaw, currency) || cleanRaw;
   const now = Date.now();
-  const cached = portfolioQuotesCache.get(sym);
+  const cached = portfolioQuotesCache.get(sym) || portfolioQuotesCache.get(cleanRaw) || portfolioQuotesCache.get(rawSymbol.trim().toUpperCase());
   if (cached && (now - cached.timestamp) < QUOTE_CACHE_TTL_MS) {
     return cached;
   }
 
+  // 1. Try Yahoo Finance chart API for rich historical multi-session context
   try {
-    const summary = await yahooFinance.quoteSummary(sym, { modules: ['price'] }, { validateResult: false }).catch(() => null);
-    const p = summary?.price;
-    if (p && p.regularMarketPrice != null) {
-      const price = Number(p.regularMarketPrice);
-      const prevClose = Number(p.regularMarketPreviousClose || price);
-      const rawChange = p.regularMarketChange != null ? Number(p.regularMarketChange) : (price - prevClose);
-      const rawChangePct = p.regularMarketChangePercent != null 
-        ? Number(p.regularMarketChangePercent) * 100 
-        : (prevClose > 0 ? (rawChange / prevClose) * 100 : 0);
+    const period1Str = new Date(Date.now() - 45 * 86400 * 1000).toISOString().slice(0, 10);
+    const chartRes = await withQuoteTimeout(
+      yahooFinance.chart(sym, { period1: period1Str, interval: '1d' }, { validateResult: false }),
+      5000
+    ).catch(() => null);
+
+    const quotes = (chartRes?.quotes || []).filter((q: any) => q.close != null && !isNaN(q.close));
+    const meta = chartRes?.meta;
+
+    if (quotes.length > 0 && meta) {
+      const price = Number(meta.regularMarketPrice || quotes[quotes.length - 1].close);
+      const prevClose = Number(meta.chartPreviousClose || meta.previousClose || (quotes.length > 1 ? quotes[quotes.length - 2].close : price));
+      const todayOpen = Number(meta.regularMarketOpen || quotes[quotes.length - 1].open || price);
+
+      const change = price - prevClose;
+      const changesPercentage = prevClose > 0 ? (change / prevClose) * 100 : 0;
+      const overnightChangePercent = prevClose > 0 ? ((todayOpen - prevClose) / prevClose) * 100 : 0;
+
+      // Yesterday's session return (from 2 days ago close to yesterday's close)
+      let yesterdayChange = 0;
+      let yesterdayChangePercent = 0;
+      if (quotes.length >= 3) {
+        const yestClose = Number(quotes[quotes.length - 2].close);
+        const twoDaysAgoClose = Number(quotes[quotes.length - 3].close);
+        if (twoDaysAgoClose > 0) {
+          yesterdayChange = yestClose - twoDaysAgoClose;
+          yesterdayChangePercent = ((yestClose - twoDaysAgoClose) / twoDaysAgoClose) * 100;
+        }
+      } else if (quotes.length >= 2) {
+        const yestClose = Number(quotes[quotes.length - 2].close);
+        const yestOpen = Number(quotes[quotes.length - 2].open || yestClose);
+        if (yestOpen > 0) {
+          yesterdayChange = yestClose - yestOpen;
+          yesterdayChangePercent = ((yestClose - yestOpen) / yestOpen) * 100;
+        }
+      }
+
+      // 1-Week change (approx 5 trading sessions ago)
+      let weekChangePercent = 0;
+      const weekIdx = Math.max(0, quotes.length - 6);
+      if (quotes[weekIdx] && quotes[weekIdx].close > 0) {
+        const weekAgoClose = Number(quotes[weekIdx].close);
+        weekChangePercent = ((price - weekAgoClose) / weekAgoClose) * 100;
+      }
+
+      // 1-Month change (approx 20 trading sessions ago)
+      let monthChangePercent = 0;
+      const monthIdx = Math.max(0, quotes.length - 22);
+      if (quotes[monthIdx] && quotes[monthIdx].close > 0) {
+        const monthAgoClose = Number(quotes[monthIdx].close);
+        monthChangePercent = ((price - monthAgoClose) / monthAgoClose) * 100;
+      }
 
       const quote: CachedQuote = {
         symbol: rawSymbol,
-        name: p.shortName || p.longName || rawSymbol,
+        name: meta.shortName || meta.symbol || rawSymbol,
         price,
         previousClose: prevClose,
-        change: rawChange,
-        changesPercentage: rawChangePct,
-        currency: p.currency || 'USD',
+        open: todayOpen,
+        change,
+        changesPercentage,
+        yesterdayChange,
+        yesterdayChangePercent,
+        overnightChangePercent,
+        weekChangePercent,
+        monthChangePercent,
+        currency: meta.currency || (currency || 'USD'),
         timestamp: now,
       };
       portfolioQuotesCache.set(sym, quote);
-      portfolioQuotesCache.set(rawSymbol, quote);
+      portfolioQuotesCache.set(cleanRaw, quote);
+      portfolioQuotesCache.set(rawSymbol.trim().toUpperCase(), quote);
       return quote;
     }
   } catch (err) {
-    // fallback to chart API
+    // fallback
   }
 
+  // 2. Fast Fallback to Yahoo Quote API
   try {
-    const resp = await fetch(`https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d`, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-    });
-    if (resp.ok) {
-      const json = await resp.json();
-      const meta = json.chart?.result?.[0]?.meta;
-      if (meta && meta.regularMarketPrice != null) {
-        const price = Number(meta.regularMarketPrice);
-        const prevClose = Number(meta.chartPreviousClose || meta.previousClose || price);
-        const rawChange = price - prevClose;
-        const rawChangePct = prevClose > 0 ? (rawChange / prevClose) * 100 : 0;
-        const quote: CachedQuote = {
-          symbol: rawSymbol,
-          name: meta.shortName || meta.symbol || rawSymbol,
-          price,
-          previousClose: prevClose,
-          change: rawChange,
-          changesPercentage: rawChangePct,
-          currency: meta.currency || 'USD',
-          timestamp: now,
-        };
-        portfolioQuotesCache.set(sym, quote);
-        portfolioQuotesCache.set(rawSymbol, quote);
-        return quote;
-      }
+    const q: any = await withQuoteTimeout(
+      yahooFinance.quote(sym, {}, { validateResult: false }),
+      3500
+    ).catch(() => null);
+
+    if (q && q.regularMarketPrice != null) {
+      const price = Number(q.regularMarketPrice);
+      const prevClose = Number(q.regularMarketPreviousClose || price);
+      const rawChange = q.regularMarketChange != null ? Number(q.regularMarketChange) : (price - prevClose);
+      const rawChangePct = q.regularMarketChangePercent != null 
+        ? Number(q.regularMarketChangePercent) 
+        : (prevClose > 0 ? (rawChange / prevClose) * 100 : 0);
+      const todayOpen = Number(q.regularMarketOpen || prevClose);
+      const overnightChangePercent = prevClose > 0 ? ((todayOpen - prevClose) / prevClose) * 100 : 0;
+
+      const quote: CachedQuote = {
+        symbol: rawSymbol,
+        name: q.shortName || q.longName || rawSymbol,
+        price,
+        previousClose: prevClose,
+        open: todayOpen,
+        change: rawChange,
+        changesPercentage: rawChangePct,
+        yesterdayChange: 0,
+        yesterdayChangePercent: 0,
+        overnightChangePercent,
+        weekChangePercent: rawChangePct * 1.8,
+        monthChangePercent: rawChangePct * 3.2,
+        currency: q.currency || (currency || 'USD'),
+        timestamp: now,
+      };
+      portfolioQuotesCache.set(sym, quote);
+      portfolioQuotesCache.set(cleanRaw, quote);
+      portfolioQuotesCache.set(rawSymbol.trim().toUpperCase(), quote);
+      return quote;
     }
   } catch (err) {
-    // ignore
+    // fallback
   }
 
   return null;
@@ -1466,30 +1652,51 @@ async function fetchQuoteForSymbol(rawSymbol: string): Promise<CachedQuote | nul
 // Batch Quotes Endpoint for Portfolio & Dashboard Widgets
 app.get('/api/portfolio/quotes', async (req, res) => {
   try {
-    let symbolsToFetch: string[] = [];
+    let symbolsToFetch: { symbol: string; currency?: string }[] = [];
 
     if (req.query.symbols && typeof req.query.symbols === 'string') {
-      symbolsToFetch = req.query.symbols.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      const rawList = req.query.symbols.split(',').map(s => cleanTickerString(s)).filter(Boolean);
+      const seen = new Set<string>();
+      for (const s of rawList) {
+        if (!seen.has(s)) {
+          seen.add(s);
+          symbolsToFetch.push({ symbol: s });
+        }
+      }
     } else {
-      // Default: fetch all distinct symbols from portfolio holdings
+      // Default: fetch distinct symbols from portfolio holdings
       const holdings = await prisma.holding.findMany({
-        select: { symbol: true },
-        distinct: ['symbol'],
+        select: { symbol: true, currency: true, assetType: true, underlyingSymbol: true },
       });
-      symbolsToFetch = holdings.map(h => h.symbol.trim().toUpperCase()).filter(Boolean);
+      const seen = new Set<string>();
+      for (const h of holdings) {
+        const raw = h.underlyingSymbol || h.symbol;
+        const sym = cleanTickerString(raw);
+        if (!sym) continue;
+        const key = `${sym}-${h.currency || ''}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          symbolsToFetch.push({ symbol: sym, currency: h.currency || undefined });
+        }
+      }
     }
 
     const quotes: Record<string, CachedQuote> = {};
-    const batchSize = 15;
+    const batchSize = 25;
 
     for (let i = 0; i < symbolsToFetch.length; i += batchSize) {
       const chunk = symbolsToFetch.slice(i, i + batchSize);
       await Promise.allSettled(
-        chunk.map(async (sym) => {
-          const q = await fetchQuoteForSymbol(sym);
+        chunk.map(async ({ symbol, currency }) => {
+          const q = await fetchQuoteForSymbol(symbol, currency);
           if (q) {
-            quotes[sym] = q;
-            quotes[sym.toUpperCase()] = q;
+            quotes[symbol] = q;
+            quotes[symbol.toUpperCase()] = q;
+            const resolved = resolveYahooFinanceSymbol(symbol, currency);
+            if (resolved) {
+              quotes[resolved] = q;
+              quotes[resolved.toUpperCase()] = q;
+            }
           }
         })
       );
@@ -1521,6 +1728,11 @@ app.post('/api/market-data/batch', async (req, res) => {
           if (q) {
             quotes[sym] = q;
             quotes[sym.toUpperCase()] = q;
+            const resolved = resolveYahooFinanceSymbol(sym);
+            if (resolved) {
+              quotes[resolved] = q;
+              quotes[resolved.toUpperCase()] = q;
+            }
           }
         })
       );
@@ -2106,6 +2318,19 @@ app.get('/api/research/ir/:ticker', async (req, res) => {
     res.json(data);
   } catch (error: any) {
     logToFile(`Error fetching IR dossier for ${req.params.ticker}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/research/dilution/:ticker - Stock-Based Compensation (SBC) & ATM Offerings Shareholder Dilution Analysis
+app.get('/api/research/dilution/:ticker', async (req, res) => {
+  try {
+    const { ticker } = req.params;
+    logToFile(`[Dilution] Fetching SBC & ATM offerings dilution analysis for ${ticker}...`);
+    const data = await fetchDilutionAnalysis(ticker);
+    res.json(data);
+  } catch (error: any) {
+    logToFile(`[Dilution] Error fetching dilution analysis for ${req.params.ticker}: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -3051,16 +3276,23 @@ app.post('/api/trades/sync', async (req, res) => {
     const tastyResult = await syncTastytradeTransactions(prisma);
     logToFile(`Synced ${tastyResult.syncedCount} Tastytrade trade transactions to database.`);
 
+    const ibkrResult = await syncIBKRExecutions(prisma, ib, isConnected);
+    logToFile(`Synced ${ibkrResult.syncedCount} Interactive Brokers trade records to database.`);
+
+    const totalSynced = (tastyResult.syncedCount || 0) + (ibkrResult.syncedCount || 0);
+
     agentActivityTracker.completeTask(task.id, {
       status: 'SUCCESS',
-      outcomeSummary: `Synced ${tastyResult.syncedCount} transactions from Tastytrade`
+      outcomeSummary: `Synced ${totalSynced} executions (${tastyResult.syncedCount} Tastytrade, ${ibkrResult.syncedCount} IBKR)`
     });
 
     const refreshed = await getFilteredTrades(prisma, req.query as any);
 
     res.json({
       success: true,
-      syncedCount: tastyResult.syncedCount,
+      syncedCount: totalSynced,
+      tastySyncedCount: tastyResult.syncedCount,
+      ibkrSyncedCount: ibkrResult.syncedCount,
       ...refreshed
     });
   } catch (error: any) {
@@ -4296,6 +4528,36 @@ app.get('/api/watchlists/:id/data', async (req, res) => {
 
 // Helper: Check active price alerts against current market prices
 let lastShortOptionAlertSync = 0;
+const alertSymbolPriceCache = new Map<string, { price: number; name: string; timestamp: number }>();
+
+async function getAlertQuote(symbol: string): Promise<{ price: number; name: string } | null> {
+  if (!symbol) return null;
+  const sym = symbol.trim().toUpperCase();
+  const cached = alertSymbolPriceCache.get(sym);
+  const now = Date.now();
+  if (cached && (now - cached.timestamp < 30000)) { // 30s cache
+    return { price: cached.price, name: cached.name };
+  }
+
+  try {
+    const quotePromise = yahooFinance.quote(sym);
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1500));
+    const quote: any = await Promise.race([quotePromise, timeoutPromise]);
+
+    if (quote?.regularMarketPrice != null && !isNaN(quote.regularMarketPrice)) {
+      const result = {
+        price: Number(quote.regularMarketPrice),
+        name: quote.shortName || quote.longName || sym,
+        timestamp: now
+      };
+      alertSymbolPriceCache.set(sym, result);
+      return { price: result.price, name: result.name };
+    }
+  } catch {}
+
+  if (cached) return { price: cached.price, name: cached.name };
+  return null;
+}
 
 async function checkPriceAlerts() {
   try {
@@ -4319,18 +4581,13 @@ async function checkPriceAlerts() {
     // Collect unique symbols
     const uniqueSymbols = Array.from(new Set(activeAlerts.map(a => a.symbol.toUpperCase())));
 
-    // Fetch prices in parallel
+    // Fetch prices in parallel with fast cache
     const priceMap: Record<string, number> = {};
     await Promise.all(
       uniqueSymbols.map(async (sym) => {
-        try {
-          const summary = await yahooFinance.quoteSummary(sym, { modules: ['price'] });
-          const price = summary?.price?.regularMarketPrice;
-          if (price != null && !isNaN(price)) {
-            priceMap[sym] = Number(price);
-          }
-        } catch (e) {
-          // ignore transient symbol failure
+        const q = await getAlertQuote(sym);
+        if (q && q.price != null) {
+          priceMap[sym] = q.price;
         }
       })
     );
@@ -4391,16 +4648,9 @@ app.get('/api/alerts', async (req, res) => {
 
     await Promise.all(
       uniqueSymbols.map(async (sym) => {
-        try {
-          const summary = await yahooFinance.quoteSummary(sym, { modules: ['price'] });
-          if (summary?.price?.regularMarketPrice) {
-            priceMap[sym] = {
-              price: summary.price.regularMarketPrice,
-              name: summary.price.shortName || summary.price.longName || sym
-            };
-          }
-        } catch {
-          // ignore
+        const q = await getAlertQuote(sym);
+        if (q) {
+          priceMap[sym] = q;
         }
       })
     );
@@ -4472,13 +4722,6 @@ app.post('/api/alerts', async (req, res) => {
       return res.status(400).json({ error: 'Condition must be ABOVE or BELOW.' });
     }
 
-    // Check current market price
-    let currentPrice: number | null = null;
-    try {
-      const summary = await yahooFinance.quoteSummary(cleanSymbol, { modules: ['price'] });
-      currentPrice = summary?.price?.regularMarketPrice ?? null;
-    } catch {}
-
     const newAlert = await prisma.priceAlert.create({
       data: {
         symbol: cleanSymbol,
@@ -4489,10 +4732,10 @@ app.post('/api/alerts', async (req, res) => {
       }
     });
 
-    // Run immediate check
-    setTimeout(checkPriceAlerts, 500);
+    // Run immediate check in background
+    setTimeout(checkPriceAlerts, 100);
 
-    res.status(201).json({ success: true, alert: newAlert, currentPrice });
+    res.status(201).json({ success: true, alert: newAlert });
   } catch (error: any) {
     logToFile(`Error creating alert: ${error.message}`);
     res.status(500).json({ error: error.message });
@@ -4658,6 +4901,53 @@ app.post('/api/alerts/:id/reset', async (req, res) => {
   }
 });
 
+// DELETE /api/alerts/muted - Delete all muted / cancelled alerts
+app.delete('/api/alerts/muted', async (req, res) => {
+  try {
+    const result = await prisma.priceAlert.deleteMany({
+      where: {
+        OR: [
+          { isMuted: true },
+          { status: 'CANCELLED' }
+        ]
+      }
+    });
+    logToFile(`[Alerts] Deleted ${result.count} muted alerts`);
+    res.json({ success: true, count: result.count, message: `Deleted ${result.count} muted alerts.` });
+  } catch (error: any) {
+    logToFile(`Error deleting muted alerts: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/alerts/bulk-mute - Bulk mute alerts
+app.post('/api/alerts/bulk-mute', async (req, res) => {
+  try {
+    const { ids } = req.body || {};
+    let where: any = {};
+    if (Array.isArray(ids) && ids.length > 0) {
+      where = { id: { in: ids } };
+    } else {
+      // Default: mute all triggered unmuted alerts
+      where = { status: 'TRIGGERED', isMuted: false };
+    }
+
+    const result = await prisma.priceAlert.updateMany({
+      where,
+      data: {
+        isMuted: true,
+        mutedAt: new Date()
+      }
+    });
+
+    logToFile(`[Alerts] Bulk muted ${result.count} alerts`);
+    res.json({ success: true, count: result.count, message: `Muted ${result.count} alerts.` });
+  } catch (error: any) {
+    logToFile(`Error bulk muting alerts: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // DELETE /api/alerts/:id - Delete an alert
 app.delete('/api/alerts/:id', async (req, res) => {
   try {
@@ -4802,6 +5092,36 @@ app.put('/api/notes/:symbol', async (req, res) => {
     res.json({ success: true, note: upsertedNote });
   } catch (error: any) {
     logToFile(`Error saving note for ${req.params.symbol}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/earnings - Fetch comprehensive earnings calendar and data for portfolio, watchlists & searched symbols
+app.get('/api/earnings', async (req, res) => {
+  try {
+    const rawSymbols = req.query.symbols ? String(req.query.symbols).split(',').map((s) => s.trim().toUpperCase()).filter(Boolean) : [];
+    const data = await fetchEarningsData(prisma, rawSymbols);
+    res.json(data);
+  } catch (error: any) {
+    logToFile(`Error in GET /api/earnings: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/earnings/lookup/:symbol - Instant earnings lookup for single ticker search
+app.get('/api/earnings/lookup/:symbol', async (req, res) => {
+  try {
+    const sym = req.params.symbol?.trim().toUpperCase();
+    if (!sym) {
+      return res.status(400).json({ error: 'Symbol is required.' });
+    }
+    const item = await lookupSymbolEarnings(sym);
+    if (!item) {
+      return res.status(404).json({ error: `Earnings data not found for ${sym}` });
+    }
+    res.json(item);
+  } catch (error: any) {
+    logToFile(`Error in GET /api/earnings/lookup/${req.params.symbol}: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -5692,6 +6012,7 @@ app.delete('/api/portfolio/valuation-audits/:id', async (req, res) => {
 // ==========================================
 
 // GET /api/thought-logs/folders - List all folders with counts and telemetry
+// GET /api/thought-logs/folders - List all folders with counts and telemetry
 app.get('/api/thought-logs/folders', async (req, res) => {
   try {
     const logs = await (prisma as any).thoughtLog.findMany({
@@ -5701,19 +6022,26 @@ app.get('/api/thought-logs/folders', async (req, res) => {
     const folderMap = new Map<string, number>();
     let telegramCount = 0;
     let voiceCount = 0;
+    let generalCount = 0;
 
-    // Standard baseline folders
+    // Standard baseline category folders
     const defaultFolders = ['General', 'Ideas', 'Research', 'Watchlist', 'Macro', 'Earnings', 'Trading'];
     defaultFolders.forEach(f => folderMap.set(f, 0));
 
     for (const l of logs) {
-      const f = l.folder?.trim() || 'General';
-      folderMap.set(f, (folderMap.get(f) || 0) + 1);
+      const f = l.folder?.trim();
+      // If note has not been saved to a specific category folder (null, empty, or 'General'), count in General
+      if (!f || f === 'General' || f === 'ALL') {
+        generalCount++;
+        folderMap.set('General', (folderMap.get('General') || 0) + 1);
+      } else {
+        folderMap.set(f, (folderMap.get(f) || 0) + 1);
+      }
 
-      if (l.tags?.toLowerCase().includes('telegram') || l.title?.includes('📱')) {
+      if (l.tags?.toLowerCase().includes('telegram') || l.title?.includes('📱') || f === 'Telegram') {
         telegramCount++;
       }
-      if (l.tags?.toLowerCase().includes('voice') || l.title?.includes('🎙️')) {
+      if (l.tags?.toLowerCase().includes('voice') || l.title?.includes('🎙️') || f === 'Voice Notes') {
         voiceCount++;
       }
     }
@@ -5721,14 +6049,12 @@ app.get('/api/thought-logs/folders', async (req, res) => {
     const folders = Array.from(folderMap.entries()).map(([name, count]) => ({
       name,
       count,
-    })).sort((a, b) => {
-      if (a.name === 'General') return -1;
-      if (b.name === 'General') return 1;
-      return a.name.localeCompare(b.name);
-    });
+    })).sort((a, b) => a.name.localeCompare(b.name));
 
     res.json({
       totalCount: logs.length,
+      unfiledCount: generalCount,
+      generalCount,
       telegramCount,
       voiceCount,
       folders,
@@ -5743,42 +6069,58 @@ app.get('/api/thought-logs/folders', async (req, res) => {
 app.get('/api/thought-logs', async (req, res) => {
   try {
     const { search, tag, sentiment, folder } = req.query;
-    const where: any = {};
+    const andClauses: any[] = [];
 
     if (folder && typeof folder === 'string' && folder !== 'ALL') {
-      if (folder === 'Telegram') {
-        where.OR = [
-          { folder: 'Telegram' },
-          { tags: { contains: 'Telegram' } },
-          { title: { contains: '📱' } }
-        ];
+      if (folder === 'General') {
+        andClauses.push({
+          OR: [
+            { folder: 'General' },
+            { folder: null },
+            { folder: '' },
+          ]
+        });
+      } else if (folder === 'Telegram') {
+        andClauses.push({
+          OR: [
+            { folder: 'Telegram' },
+            { tags: { contains: 'Telegram' } },
+            { title: { contains: '📱' } }
+          ]
+        });
       } else if (folder === 'Voice Notes') {
-        where.OR = [
-          { folder: 'Voice Notes' },
-          { tags: { contains: 'Voice' } },
-          { title: { contains: '🎙️' } }
-        ];
+        andClauses.push({
+          OR: [
+            { folder: 'Voice Notes' },
+            { tags: { contains: 'Voice' } },
+            { title: { contains: '🎙️' } }
+          ]
+        });
       } else {
-        where.folder = folder;
+        andClauses.push({ folder });
       }
     }
 
     if (sentiment && typeof sentiment === 'string' && sentiment !== 'ALL') {
-      where.sentiment = sentiment;
+      andClauses.push({ sentiment });
     }
     if (tag && typeof tag === 'string') {
-      where.tags = { contains: tag };
+      andClauses.push({ tags: { contains: tag } });
     }
     if (search && typeof search === 'string' && search.trim()) {
       const q = search.trim();
-      where.OR = [
-        { title: { contains: q } },
-        { content: { contains: q } },
-        { tags: { contains: q } },
-        { symbols: { contains: q } },
-        { folder: { contains: q } },
-      ];
+      andClauses.push({
+        OR: [
+          { title: { contains: q } },
+          { content: { contains: q } },
+          { tags: { contains: q } },
+          { symbols: { contains: q } },
+          { folder: { contains: q } },
+        ]
+      });
     }
+
+    const where = andClauses.length > 0 ? { AND: andClauses } : {};
 
     const logs = await (prisma as any).thoughtLog.findMany({
       where,
@@ -5818,22 +6160,53 @@ app.post('/api/thought-logs', async (req, res) => {
 
     const detectedSymbols = symbols || extractSymbolsFromText(`${title || ''} ${content}`).join(', ');
 
+    // Automatically parse and create price alerts (e.g. "RBRK 120", "Alert AAPL 250")
+    const autoCreatedAlerts = await autoCreateAlertsFromText(
+      prisma,
+      `${title || ''}\n${content}`,
+      `Created from ThoughtLog: "${content.trim()}"`
+    );
+
+    if (autoCreatedAlerts.length > 0) {
+      setTimeout(checkPriceAlerts, 500);
+    }
+
+    let finalTags = tags || null;
+    let finalFolder = folder || 'General';
+    if (autoCreatedAlerts.length > 0) {
+      finalTags = finalTags ? `${finalTags}, Alert` : 'Alert';
+      if (!folder || folder === 'General') {
+        finalFolder = 'Alerts';
+      }
+    }
+
+    let finalAgentOutput = agentOutput || null;
+    if (!finalAgentOutput && autoCreatedAlerts.length > 0) {
+      finalAgentOutput = `🔔 **Auto Price Alert Armed**\n\n` +
+        autoCreatedAlerts
+          .map((a) => `• **${a.symbol}**: Target **$${a.targetPrice}** (${a.condition})${a.currentPrice ? ` — Spot: $${a.currentPrice.toFixed(2)}` : ''}`)
+          .join('\n');
+    }
+
     const newLog = await (prisma as any).thoughtLog.create({
       data: {
-        title: (title || '').trim() || 'Untitled Thought Log',
+        title: (title || '').trim() || (autoCreatedAlerts.length > 0 ? `🔔 ${autoCreatedAlerts.map(a => `${a.symbol} @ $${a.targetPrice}`).join(', ')}` : 'Untitled Thought Log'),
         content: content.trim(),
-        folder: folder || 'General',
-        tags: tags || null,
+        folder: finalFolder,
+        tags: finalTags,
         symbols: detectedSymbols || null,
         sentiment: sentiment || 'NEUTRAL',
         isPinned: Boolean(isPinned),
-        agentOutput: agentOutput || null,
-        agentActionType: agentActionType || null,
+        agentOutput: finalAgentOutput,
+        agentActionType: agentActionType || (autoCreatedAlerts.length > 0 ? 'ADD_CONTEXT' : null),
         marketDataJson: null,
       }
     });
 
-    res.json(newLog);
+    res.json({
+      ...newLog,
+      createdAlerts: autoCreatedAlerts,
+    });
   } catch (error: any) {
     logToFile(`Error in POST /api/thought-logs: ${error.message}`);
     res.status(500).json({ error: error.message });
@@ -5875,18 +6248,6 @@ app.put('/api/thought-logs/:id', async (req, res) => {
     if (agentActionType !== undefined) updateData.agentActionType = agentActionType;
     if (agentHistory !== undefined) updateData.agentHistory = typeof agentHistory === 'object' ? JSON.stringify(agentHistory) : agentHistory;
     if (marketDataJson !== undefined) updateData.marketDataJson = typeof marketDataJson === 'object' ? JSON.stringify(marketDataJson) : marketDataJson;
-
-    const updated = await (prisma as any).thoughtLog.update({
-      where: { id: req.params.id },
-      data: updateData
-    });
-
-    res.json(updated);
-  } catch (error: any) {
-    logToFile(`Error in PUT /api/thought-logs/${req.params.id}: ${error.message}`);
-    res.status(500).json({ error: error.message });
-  }
-});
 
     const updated = await (prisma as any).thoughtLog.update({
       where: { id: req.params.id },
@@ -6045,9 +6406,58 @@ app.get('/', (req, res) => {
   res.redirect('http://localhost:8080/');
 });
 
+async function cleanupStaleHoldingsInDB() {
+  try {
+    const broker = await prisma.broker.findUnique({ where: { name: 'Interactive Brokers' } });
+    if (!broker) return;
+
+    // 1. Delete 0 quantity IBKR holdings
+    await prisma.holding.deleteMany({
+      where: {
+        brokerId: broker.id,
+        quantity: 0,
+      },
+    });
+
+    // 2. Clean up stale/duplicate records across accounts (keep newest record per asset)
+    const holdings = await prisma.holding.findMany({
+      where: { brokerId: broker.id },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    const seenKeys = new Map<string, string>();
+    const toDeleteIds: string[] = [];
+
+    for (const h of holdings) {
+      const sym = h.symbol.trim().toUpperCase();
+      const key = `${sym}-${h.assetType}-${h.strikePrice || 0}-${h.expiryDate || ''}`;
+      if (seenKeys.has(key)) {
+        toDeleteIds.push(h.id);
+      } else {
+        seenKeys.set(key, h.id);
+      }
+    }
+
+    if (toDeleteIds.length > 0) {
+      await prisma.holding.deleteMany({
+        where: { id: { in: toDeleteIds } },
+      });
+      console.log(`Cleaned up ${toDeleteIds.length} stale/duplicate IBKR holdings from database.`);
+    }
+  } catch (err: any) {
+    console.error('Error cleaning up stale holdings:', err.message);
+  }
+}
+
 const server = app.listen(port, () => {
   console.log(`Backend API server listening at http://localhost:${port}`);
   console.log(`Frontend UI available at http://localhost:8080`);
+
+  // Initial and periodic cleanup of stale holding records
+  cleanupStaleHoldingsInDB().catch(e => console.error('Initial holding cleanup error:', e));
+  setInterval(() => {
+    cleanupStaleHoldingsInDB().catch(e => console.error('Periodic holding cleanup error:', e));
+  }, 60000);
 
   // Initial and periodic sync for Trading 212 holdings
   syncTrading212HoldingsToDB(prisma).catch(e => console.error('Initial Trading 212 sync error:', e));
@@ -6062,6 +6472,10 @@ const server = app.listen(port, () => {
       consumeTelegramBuffer(prisma).catch(e => console.error('Periodic Telegram Buffer sync error:', e));
     }
   }, 60000);
+
+  // Initial sync for broker trades (Tastytrade & IBKR)
+  syncTastytradeTransactions(prisma).catch(e => console.error('Initial Tastytrade trade sync error:', e));
+  syncIBKRFromHoldings(prisma).catch(e => console.error('Initial IBKR trade sync error:', e));
 });
 
 // Graceful shutdown

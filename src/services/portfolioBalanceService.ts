@@ -95,6 +95,39 @@ export interface PortfolioAllocation {
   cashAllocationPercent: number;
 }
 
+export interface DualCurrencySummary {
+  baseCurrency: string;
+  comparisonCurrency: string;
+  fxRateGbpUsd: number;
+  fxRateUsdGbp: number;
+  
+  // USD Totals
+  totalNetLiqUSD: number;
+  totalCashUSD: number;
+  totalPositionsValueUSD: number;
+  totalBPUSD: number;
+  totalUnrealizedPnLUSD: number;
+  totalDayPnLUSD: number;
+
+  // GBP Totals
+  totalNetLiqGBP: number;
+  totalCashGBP: number;
+  totalPositionsValueGBP: number;
+  totalBPGBP: number;
+  totalUnrealizedPnLGBP: number;
+  totalDayPnLGBP: number;
+
+  // Native Holdings Breakdown
+  nativeUsdHoldingsUSD: number;
+  nativeUsdHoldingsGBP: number;
+  nativeGbpHoldingsGBP: number;
+  nativeGbpHoldingsUSD: number;
+  nativeUsdCashUSD: number;
+  nativeUsdCashGBP: number;
+  nativeGbpCashGBP: number;
+  nativeGbpCashUSD: number;
+}
+
 export interface PortfolioBalancesData {
   total: {
     netLiquidatingValue: number;
@@ -113,6 +146,7 @@ export interface PortfolioBalancesData {
     marginCushion?: number;
     allocation?: PortfolioAllocation;
   };
+  dualCurrency?: DualCurrencySummary;
   currencies?: Record<string, CurrencyBalance>;
   brokers: {
     ibkr: IBKRCombinedBalance;
@@ -120,6 +154,8 @@ export interface PortfolioBalancesData {
     trading212?: BrokerAccountBalance;
   };
 }
+
+export type PortfolioBalancesResponse = PortfolioBalancesData;
 
 export const fetchPortfolioBalances = async (): Promise<PortfolioBalancesData> => {
   const response = await fetch('/api/portfolio/balances');

@@ -137,6 +137,30 @@ export async function deleteAlert(id: string): Promise<{ success: boolean }> {
   return res.json();
 }
 
+export async function deleteMutedAlerts(): Promise<{ success: boolean; count: number; message: string }> {
+  const res = await fetch(`${API_BASE}/muted`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to delete muted alerts');
+  }
+  return res.json();
+}
+
+export async function bulkMuteAlerts(ids?: string[]): Promise<{ success: boolean; count: number; message: string }> {
+  const res = await fetch(`${API_BASE}/bulk-mute`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to bulk mute alerts');
+  }
+  return res.json();
+}
+
 // React Query Hooks
 export function useAlerts(params?: {
   status?: string;
@@ -205,6 +229,26 @@ export function useDeleteAlert() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: deleteAlert,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+    },
+  });
+}
+
+export function useDeleteMutedAlerts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: deleteMutedAlerts,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+    },
+  });
+}
+
+export function useBulkMuteAlerts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: bulkMuteAlerts,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['alerts'] });
     },
