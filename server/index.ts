@@ -43,6 +43,7 @@ import { shortCandidateService } from './services/shortCandidateService';
 import { optionsLiquidityService } from './services/optionsLiquidityService';
 import { optionsChainService } from './services/optionsChainService';
 import { volatilityMacroService } from './services/volatilityMacroService';
+import { trendFinderService } from './services/trendFinderService';
 import {
   scanHoldingsAndWatchlistsForDips,
   diagnoseStockDip,
@@ -103,6 +104,8 @@ import {
   generateAndSendDailyReport,
   fetchComprehensiveReportData,
   generateExecutivePdfBuffer,
+  sendTelegramAlert,
+  sendTelegramMessage,
 } from './services/telegramReportService';
 import {
   fetchEarningsData,
@@ -111,9 +114,18 @@ import {
 import {
   fetchDilutionAnalysis,
 } from './services/dilutionService';
+import {
+  getPlannedTrades,
+  createPlannedTrade,
+  updatePlannedTrade,
+  deletePlannedTrade,
+  reorderPlannedTrades,
+  generateExecutionPlanPdfBuffer,
+  sendExecutionPlanPdfToTelegram,
+} from './services/plannedTradeService';
 
 const prisma = new PrismaClient({
-  log: ['info', 'warn', 'error'],
+  log: ['error'],
 });
 
 // Configure SQLite for high concurrency / WAL mode
@@ -1355,6 +1367,8 @@ app.get('/api/tastytrade/positions/:accountNumber', async (req, res) => {
           currentPrice: p.currentPrice,
           marketValue: p.marketValue,
           dayPnL: p.dayPnL,
+          unrealizedPnL: p.unrealizedPnL || 0,
+          unrealizedPnLPercent: p.unrealizedPnLPercent || 0,
           updatedAt: new Date(),
           optionType: p.optionType,
           strikePrice: p.strikePrice
@@ -1371,8 +1385,8 @@ app.get('/api/tastytrade/positions/:accountNumber', async (req, res) => {
           marketValue: p.marketValue,
           dayPnL: p.dayPnL,
           dayPnLPercent: 0,
-          unrealizedPnL: 0,
-          unrealizedPnLPercent: 0,
+          unrealizedPnL: p.unrealizedPnL || 0,
+          unrealizedPnLPercent: p.unrealizedPnLPercent || 0,
           strikePrice: p.strikePrice,
           expiryDate: p.expiryDate,
           optionType: p.optionType,
@@ -1496,7 +1510,7 @@ interface CachedQuote {
 }
 
 const portfolioQuotesCache = new Map<string, CachedQuote>();
-const QUOTE_CACHE_TTL_MS = 60 * 1000; // 60s
+const QUOTE_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache TTL
 
 function withQuoteTimeout<T>(promise: Promise<T>, ms = 5000): Promise<T> {
   return Promise.race([
@@ -1529,37 +1543,79 @@ async function fetchQuoteForSymbol(rawSymbol: string, currency?: string): Promis
     const period1Str = new Date(Date.now() - 45 * 86400 * 1000).toISOString().slice(0, 10);
     const chartRes = await withQuoteTimeout(
       yahooFinance.chart(sym, { period1: period1Str, interval: '1d' }, { validateResult: false }),
-      5000
+      10000
     ).catch(() => null);
 
     const quotes = (chartRes?.quotes || []).filter((q: any) => q.close != null && !isNaN(q.close));
     const meta = chartRes?.meta;
 
     if (quotes.length > 0 && meta) {
-      const price = Number(meta.regularMarketPrice || quotes[quotes.length - 1].close);
-      const prevClose = Number(meta.chartPreviousClose || meta.previousClose || (quotes.length > 1 ? quotes[quotes.length - 2].close : price));
-      const todayOpen = Number(meta.regularMarketOpen || quotes[quotes.length - 1].open || price);
+      // Determine if the last bar corresponds to today's date or yesterday
+      const lastQuote = quotes[quotes.length - 1];
+      const lastQuoteDate = new Date(lastQuote.date);
+      const todayDate = new Date();
+      const isLastBarToday = (
+        lastQuoteDate.getUTCFullYear() === todayDate.getUTCFullYear() &&
+        lastQuoteDate.getUTCMonth() === todayDate.getUTCMonth() &&
+        lastQuoteDate.getUTCDate() === todayDate.getUTCDate()
+      );
 
-      const change = price - prevClose;
-      const changesPercentage = prevClose > 0 ? (change / prevClose) * 100 : 0;
-      const overnightChangePercent = prevClose > 0 ? ((todayOpen - prevClose) / prevClose) * 100 : 0;
-
-      // Yesterday's session return (from 2 days ago close to yesterday's close)
+      let price = 0;
+      let prevClose = 0;
+      let todayOpen = 0;
+      let change = 0;
+      let changesPercentage = 0;
+      let overnightChangePercent = 0;
       let yesterdayChange = 0;
       let yesterdayChangePercent = 0;
-      if (quotes.length >= 3) {
-        const yestClose = Number(quotes[quotes.length - 2].close);
-        const twoDaysAgoClose = Number(quotes[quotes.length - 3].close);
-        if (twoDaysAgoClose > 0) {
-          yesterdayChange = yestClose - twoDaysAgoClose;
-          yesterdayChangePercent = ((yestClose - twoDaysAgoClose) / twoDaysAgoClose) * 100;
-        }
-      } else if (quotes.length >= 2) {
-        const yestClose = Number(quotes[quotes.length - 2].close);
-        const yestOpen = Number(quotes[quotes.length - 2].open || yestClose);
-        if (yestOpen > 0) {
-          yesterdayChange = yestClose - yestOpen;
-          yesterdayChangePercent = ((yestClose - yestOpen) / yestOpen) * 100;
+
+      if (isLastBarToday) {
+        // Last bar is today's in-progress or completed session.
+        // Today's close/price is lastQuote.close or meta.regularMarketPrice.
+        // Yesterday's close is quotes[quotes.length - 2].close (NOT meta.chartPreviousClose which is 45 days ago).
+        price = Number(meta.regularMarketPrice || lastQuote.close);
+        prevClose = Number(quotes.length > 1 ? quotes[quotes.length - 2].close : (meta.regularMarketPreviousClose || price));
+        todayOpen = Number(lastQuote.open || meta.regularMarketOpen || prevClose);
+
+        change = price - prevClose;
+        changesPercentage = prevClose > 0 ? (change / prevClose) * 100 : 0;
+        overnightChangePercent = prevClose > 0 ? ((todayOpen - prevClose) / prevClose) * 100 : 0;
+
+        // Yesterday's session is quotes[quotes.length - 2], and 2 days ago is quotes[quotes.length - 3]
+        const yestClose = prevClose;
+        const twoDaysAgoClose = Number(quotes.length > 2 ? quotes[quotes.length - 3].close : (quotes.length > 1 ? quotes[quotes.length - 2].open : yestClose));
+        yesterdayChange = yestClose - twoDaysAgoClose;
+        yesterdayChangePercent = twoDaysAgoClose > 0 ? ((yestClose - twoDaysAgoClose) / twoDaysAgoClose) * 100 : 0;
+      } else {
+        // Last bar is yesterday's session (e.g. pre-market, morning before US open, weekend, holiday).
+        // Yesterday's close is lastQuote.close, and 2 days ago is quotes[quotes.length - 2].close.
+        const yestClose = Number(lastQuote.close);
+        const twoDaysAgoClose = Number(quotes.length > 1 ? quotes[quotes.length - 2].close : yestClose);
+        yesterdayChange = yestClose - twoDaysAgoClose;
+        yesterdayChangePercent = twoDaysAgoClose > 0 ? ((yestClose - twoDaysAgoClose) / twoDaysAgoClose) * 100 : 0;
+
+        // Today's prior close is yesterday's close
+        prevClose = yestClose;
+
+        // If pre-market or extended hours trading is live:
+        if (meta.fulldayPrice != null && Number(meta.fulldayPrice) > 0 && Math.abs(Number(meta.fulldayPrice) - yestClose) > 0.0001) {
+          price = Number(meta.fulldayPrice);
+          change = meta.fulldayChange != null ? Number(meta.fulldayChange) : (price - prevClose);
+          changesPercentage = meta.fulldayChangePercent != null ? Number(meta.fulldayChangePercent) : (prevClose > 0 ? (change / prevClose) * 100 : 0);
+          todayOpen = Number(meta.regularMarketOpen || price);
+          overnightChangePercent = prevClose > 0 ? ((todayOpen - prevClose) / prevClose) * 100 : 0;
+        } else if (meta.regularMarketPrice != null && Math.abs(Number(meta.regularMarketPrice) - yestClose) > 0.0001) {
+          price = Number(meta.regularMarketPrice);
+          change = price - prevClose;
+          changesPercentage = prevClose > 0 ? (change / prevClose) * 100 : 0;
+          todayOpen = Number(meta.regularMarketOpen || price);
+          overnightChangePercent = prevClose > 0 ? ((todayOpen - prevClose) / prevClose) * 100 : 0;
+        } else {
+          price = yestClose;
+          todayOpen = yestClose;
+          change = 0;
+          changesPercentage = 0;
+          overnightChangePercent = 0;
         }
       }
 
@@ -1600,7 +1656,7 @@ async function fetchQuoteForSymbol(rawSymbol: string, currency?: string): Promis
       portfolioQuotesCache.set(rawSymbol.trim().toUpperCase(), quote);
       return quote;
     }
-  } catch (err) {
+  } catch (err: any) {
     // fallback
   }
 
@@ -1608,7 +1664,7 @@ async function fetchQuoteForSymbol(rawSymbol: string, currency?: string): Promis
   try {
     const q: any = await withQuoteTimeout(
       yahooFinance.quote(sym, {}, { validateResult: false }),
-      3500
+      8000
     ).catch(() => null);
 
     if (q && q.regularMarketPrice != null) {
@@ -1621,6 +1677,11 @@ async function fetchQuoteForSymbol(rawSymbol: string, currency?: string): Promis
       const todayOpen = Number(q.regularMarketOpen || prevClose);
       const overnightChangePercent = prevClose > 0 ? ((todayOpen - prevClose) / prevClose) * 100 : 0;
 
+      // In fallback: regularMarketChange / regularMarketChangePercent reflects yesterday's move
+      // when US markets haven't opened yet today.
+      const fallbackYestChange = rawChange;
+      const fallbackYestPct = rawChangePct;
+
       const quote: CachedQuote = {
         symbol: rawSymbol,
         name: q.shortName || q.longName || rawSymbol,
@@ -1629,8 +1690,8 @@ async function fetchQuoteForSymbol(rawSymbol: string, currency?: string): Promis
         open: todayOpen,
         change: rawChange,
         changesPercentage: rawChangePct,
-        yesterdayChange: 0,
-        yesterdayChangePercent: 0,
+        yesterdayChange: fallbackYestChange,
+        yesterdayChangePercent: fallbackYestPct,
         overnightChangePercent,
         weekChangePercent: rawChangePct * 1.8,
         monthChangePercent: rawChangePct * 3.2,
@@ -1642,22 +1703,55 @@ async function fetchQuoteForSymbol(rawSymbol: string, currency?: string): Promis
       portfolioQuotesCache.set(rawSymbol.trim().toUpperCase(), quote);
       return quote;
     }
-  } catch (err) {
+  } catch (err: any) {
     // fallback
   }
 
   return null;
 }
 
+// Background pre-warming for portfolio quotes
+async function warmPortfolioQuotesCache() {
+  try {
+    const holdings = await prisma.holding.findMany({
+      select: { symbol: true, currency: true, underlyingSymbol: true },
+    });
+    const seen = new Set<string>();
+    const toFetch: { symbol: string; currency?: string }[] = [];
+    for (const h of holdings) {
+      const raw = h.underlyingSymbol || h.symbol;
+      const sym = cleanTickerString(raw);
+      if (!sym || /\d{6}[CP]\d{8}/.test(sym) || sym.length > 12) continue;
+      const key = `${sym}-${h.currency || ''}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        toFetch.push({ symbol: sym, currency: h.currency || undefined });
+      }
+    }
+
+    const batchSize = 25;
+    for (let i = 0; i < toFetch.length; i += batchSize) {
+      const chunk = toFetch.slice(i, i + batchSize);
+      await Promise.allSettled(chunk.map(({ symbol, currency }) => fetchQuoteForSymbol(symbol, currency)));
+    }
+  } catch (err: any) {
+    console.error('Error pre-warming portfolio quotes cache:', err.message);
+  }
+}
+
 // Batch Quotes Endpoint for Portfolio & Dashboard Widgets
 app.get('/api/portfolio/quotes', async (req, res) => {
   try {
+    if (req.query.refresh === 'true') {
+      portfolioQuotesCache.clear();
+    }
     let symbolsToFetch: { symbol: string; currency?: string }[] = [];
 
     if (req.query.symbols && typeof req.query.symbols === 'string') {
       const rawList = req.query.symbols.split(',').map(s => cleanTickerString(s)).filter(Boolean);
       const seen = new Set<string>();
       for (const s of rawList) {
+        if (/\d{6}[CP]\d{8}/.test(s) || s.length > 12) continue;
         if (!seen.has(s)) {
           seen.add(s);
           symbolsToFetch.push({ symbol: s });
@@ -1672,7 +1766,7 @@ app.get('/api/portfolio/quotes', async (req, res) => {
       for (const h of holdings) {
         const raw = h.underlyingSymbol || h.symbol;
         const sym = cleanTickerString(raw);
-        if (!sym) continue;
+        if (!sym || /\d{6}[CP]\d{8}/.test(sym) || sym.length > 12) continue;
         const key = `${sym}-${h.currency || ''}`;
         if (!seen.has(key)) {
           seen.add(key);
@@ -1682,8 +1776,46 @@ app.get('/api/portfolio/quotes', async (req, res) => {
     }
 
     const quotes: Record<string, CachedQuote> = {};
-    const batchSize = 25;
+    const missing: { symbol: string; currency?: string }[] = [];
 
+    // Instant cache lookup (Stale-While-Revalidate)
+    for (const item of symbolsToFetch) {
+      const clean = cleanTickerString(item.symbol);
+      const sym = resolveYahooFinanceSymbol(clean, item.currency) || clean;
+      const cached = portfolioQuotesCache.get(sym) || portfolioQuotesCache.get(clean) || portfolioQuotesCache.get(item.symbol.toUpperCase());
+      if (cached) {
+        quotes[item.symbol] = cached;
+        quotes[item.symbol.toUpperCase()] = cached;
+        if (sym) quotes[sym] = cached;
+        if (Date.now() - cached.timestamp > QUOTE_CACHE_TTL_MS) {
+          missing.push(item);
+        }
+      } else {
+        missing.push(item);
+      }
+    }
+
+    // If we have at least 70% or all cached, respond immediately and refresh remainder in background!
+    if (symbolsToFetch.length > 0 && Object.keys(quotes).length >= Math.min(symbolsToFetch.length, Math.floor(symbolsToFetch.length * 0.7))) {
+      if (missing.length > 0) {
+        (async () => {
+          const batchSize = 25;
+          for (let i = 0; i < missing.length; i += batchSize) {
+            const chunk = missing.slice(i, i + batchSize);
+            await Promise.allSettled(chunk.map(({ symbol, currency }) => fetchQuoteForSymbol(symbol, currency)));
+          }
+        })().catch(() => null);
+      }
+
+      return res.json({
+        quotes,
+        count: Object.keys(quotes).length,
+        timestamp: Date.now(),
+      });
+    }
+
+    // Otherwise fetch missing symbols in parallel batches
+    const batchSize = 25;
     for (let i = 0; i < symbolsToFetch.length; i += batchSize) {
       const chunk = symbolsToFetch.slice(i, i + batchSize);
       await Promise.allSettled(
@@ -2179,62 +2311,195 @@ app.get('/api/tastytrade/instruments/:symbol', async (req, res) => {
   }
 });
 // ==========================================
-// RESEARCH DOSSIER ENDPOINT (yfinance)
+// RESEARCH DOSSIER ENDPOINT (Multi-tier resilient)
 // ==========================================
+const dossierMemoryCache = new Map<string, { data: any; timestamp: number }>();
+
 app.get('/api/research/dossier/:ticker', async (req, res) => {
   try {
-    const { ticker } = req.params;
+    const rawTicker = req.params.ticker || '';
+    const ticker = rawTicker.trim().toUpperCase();
     logToFile(`Fetching comprehensive research dossier for ${ticker}...`);
 
-    let quoteSummary: any = null;
-    let searchData: any = null;
+    // 1. Check in-memory cache (< 10 minutes old)
+    const cached = dossierMemoryCache.get(ticker);
+    if (cached && (Date.now() - cached.timestamp < 10 * 60 * 1000)) {
+      logToFile(`Returning cached research dossier for ${ticker}`);
+      return res.json(cached.data);
+    }
 
+    let quoteSummary: any = null;
+    let fallbackQuote: any = null;
+    let searchData: any = null;
+    let fallbackProfile: any = null;
+
+    // 2. Try primary Yahoo Finance quoteSummary with timeout
     try {
-      // Fetch combined summary data from Yahoo Finance
-      quoteSummary = await yahooFinance.quoteSummary(ticker, {
-        modules: ['summaryProfile', 'defaultKeyStatistics', 'financialData', 'price', 'summaryDetail']
-      });
+      quoteSummary = await Promise.race([
+        yahooFinance.quoteSummary(ticker, {
+          modules: ['summaryProfile', 'defaultKeyStatistics', 'financialData', 'price', 'summaryDetail']
+        }, { validateResult: false }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Yahoo quoteSummary timeout')), 5000))
+      ]);
     } catch (e: any) {
       logToFile(`Warning: quoteSummary failed for ${ticker} - ${e.message}`);
     }
 
+    // 3. If quoteSummary failed or lacked price, try Yahoo Finance quote (much less prone to Edge 429)
+    if (!quoteSummary?.price?.regularMarketPrice) {
+      try {
+        fallbackQuote = await Promise.race([
+          yahooFinance.quote(ticker, {}, { validateResult: false }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Yahoo quote timeout')), 3000))
+        ]);
+        if (fallbackQuote) {
+          logToFile(`Successfully retrieved fallback Yahoo quote for ${ticker} ($${fallbackQuote.regularMarketPrice})`);
+        }
+      } catch (e: any) {
+        logToFile(`Warning: fallback Yahoo quote failed for ${ticker} - ${e.message}`);
+      }
+    }
+
+    // 4. Try news search
     try {
-      // Fetch news specific to this ticker
-      searchData = await yahooFinance.search(ticker, { newsCount: 5 });
+      searchData = await Promise.race([
+        yahooFinance.search(ticker, { newsCount: 5 }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Yahoo search timeout')), 3000))
+      ]);
     } catch (e: any) {
       logToFile(`Warning: news search failed for ${ticker} - ${e.message}`);
     }
 
-    if (!quoteSummary && !searchData) {
-      return res.status(404).json({ error: 'Ticker not found or data unavailable.' });
+    // 5. If Yahoo Finance is completely rate-limited / blocked, use FMP
+    const fmpKey = process.env.VITE_FMP_API_KEY || process.env.FMP_API_KEY;
+    if (!quoteSummary?.price?.regularMarketPrice && !fallbackQuote?.regularMarketPrice && fmpKey) {
+      try {
+        logToFile(`Attempting FMP fallback quote for ${ticker}...`);
+        const fmpRes = await fetch(`https://financialmodelingprep.com/stable/quote?symbol=${ticker}&apikey=${fmpKey}`);
+        if (fmpRes.ok) {
+          const fmpList: any = await fmpRes.json();
+          if (Array.isArray(fmpList) && fmpList[0] && fmpList[0].price > 0) {
+            const fq = fmpList[0];
+            fallbackQuote = {
+              symbol: fq.symbol || ticker,
+              shortName: fq.name || ticker,
+              regularMarketPrice: fq.price,
+              regularMarketChange: fq.change,
+              regularMarketChangePercent: fq.changePercentage,
+              fiftyTwoWeekHigh: fq.yearHigh,
+              fiftyTwoWeekLow: fq.yearLow,
+              fiftyDayAverage: fq.priceAvg50,
+              twoHundredDayAverage: fq.priceAvg200,
+              marketCap: fq.marketCap,
+              regularMarketVolume: fq.volume,
+              regularMarketDayLow: fq.dayLow,
+              regularMarketDayHigh: fq.dayHigh,
+            };
+            logToFile(`FMP fallback quote succeeded for ${ticker}: $${fq.price}`);
+          }
+        }
+      } catch (e: any) {
+        logToFile(`Warning: FMP fallback failed for ${ticker} - ${e.message}`);
+      }
     }
 
-    const price = quoteSummary?.price;
-    const profile = quoteSummary?.summaryProfile;
+    // 6. If still no quote, try Finnhub
+    const finnhubKey = process.env.VITE_FINNHUB_API_KEY || process.env.FINNHUB_API_KEY;
+    if (!quoteSummary?.price?.regularMarketPrice && !fallbackQuote?.regularMarketPrice && finnhubKey) {
+      try {
+        logToFile(`Attempting Finnhub fallback quote for ${ticker}...`);
+        const fhRes = await fetch(`https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${finnhubKey}`);
+        if (fhRes.ok) {
+          const fhData: any = await fhRes.json();
+          if (fhData && fhData.c > 0) {
+            fallbackQuote = {
+              symbol: ticker,
+              shortName: ticker,
+              regularMarketPrice: fhData.c,
+              regularMarketChange: fhData.d,
+              regularMarketChangePercent: fhData.dp,
+              regularMarketDayHigh: fhData.h,
+              regularMarketDayLow: fhData.l,
+            };
+            logToFile(`Finnhub fallback quote succeeded for ${ticker}: $${fhData.c}`);
+          }
+        }
+        // Also fetch profile from Finnhub for industry/name
+        const profRes = await fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${finnhubKey}`);
+        if (profRes.ok) {
+          fallbackProfile = await profRes.json();
+        }
+      } catch (e: any) {
+        logToFile(`Warning: Finnhub fallback failed for ${ticker} - ${e.message}`);
+      }
+    }
+
+    // 7. If still nothing, check stale cache
+    if (!quoteSummary?.price?.regularMarketPrice && !fallbackQuote?.regularMarketPrice && cached) {
+      logToFile(`Returning stale cached dossier for ${ticker} due to external provider unavailability`);
+      return res.json(cached.data);
+    }
+
+    // 8. If still nothing, check if it exists in user's holdings
+    if (!quoteSummary?.price?.regularMarketPrice && !fallbackQuote?.regularMarketPrice) {
+      try {
+        const localHolding = await prisma.holding.findFirst({
+          where: { symbol: ticker }
+        });
+        if (localHolding && localHolding.currentPrice > 0) {
+          fallbackQuote = {
+            symbol: ticker,
+            shortName: localHolding.description || ticker,
+            regularMarketPrice: localHolding.currentPrice,
+            regularMarketChange: localHolding.dayPnL || 0,
+            regularMarketChangePercent: 0,
+            marketCap: localHolding.marketValue || 0,
+          };
+          logToFile(`Using local holding fallback quote for ${ticker}: $${localHolding.currentPrice}`);
+        }
+      } catch (_) {}
+    }
+
+    // If genuinely no data anywhere
+    if (!quoteSummary && !fallbackQuote && !searchData) {
+      return res.status(404).json({ error: `Market data temporarily unavailable for ${ticker}. Please try again shortly.` });
+    }
+
+    const price = quoteSummary?.price || fallbackQuote;
+    const profile = quoteSummary?.summaryProfile || (fallbackProfile ? {
+      sector: fallbackProfile.finnhubIndustry || 'N/A',
+      industry: fallbackProfile.finnhubIndustry || 'N/A',
+      website: fallbackProfile.weburl,
+      longBusinessSummary: `${fallbackProfile.name || ticker} operates in the ${fallbackProfile.finnhubIndustry || 'commercial'} sector.`
+    } : null);
     const stats = quoteSummary?.defaultKeyStatistics;
     const financials = quoteSummary?.financialData;
     const summary = quoteSummary?.summaryDetail;
 
-    // Map to required structure with safe fallbacks
+    const finalPrice = price?.regularMarketPrice ?? fallbackQuote?.regularMarketPrice ?? null;
+    const finalChange = price?.regularMarketChange ?? fallbackQuote?.regularMarketChange ?? 0;
+    const finalChangePercent = price?.regularMarketChangePercent ?? fallbackQuote?.regularMarketChangePercent ?? 0;
+    const finalShortName = price?.shortName || price?.longName || fallbackProfile?.name || ticker;
+
     const dossier = {
       header: {
-        shortName: price?.shortName || price?.longName || ticker,
+        shortName: finalShortName,
         symbol: price?.symbol || ticker,
-        regularMarketPrice: price?.regularMarketPrice ?? null,
-        regularMarketChange: price?.regularMarketChange ?? null,
-        regularMarketChangePercent: price?.regularMarketChangePercent ?? null,
+        regularMarketPrice: finalPrice,
+        regularMarketChange: finalChange,
+        regularMarketChangePercent: finalChangePercent,
         sector: profile?.sector || 'N/A',
         industry: profile?.industry || 'N/A'
       },
       profile: {
-        longBusinessSummary: profile?.longBusinessSummary || 'No recent business summary available for this equity.'
+        longBusinessSummary: profile?.longBusinessSummary || `${finalShortName} (${ticker}) equity profile.`
       },
       fundamentals: {
-        marketCap: price?.marketCap ?? summary?.marketCap ?? null,
-        trailingPE: summary?.trailingPE ?? null,
-        forwardPE: summary?.forwardPE ?? null,
-        trailingEps: stats?.trailingEps ?? null,
-        forwardEps: stats?.forwardEps ?? null,
+        marketCap: price?.marketCap ?? summary?.marketCap ?? fallbackQuote?.marketCap ?? null,
+        trailingPE: summary?.trailingPE ?? fallbackQuote?.trailingPE ?? null,
+        forwardPE: summary?.forwardPE ?? fallbackQuote?.forwardPE ?? null,
+        trailingEps: stats?.trailingEps ?? fallbackQuote?.epsTrailingTwelveMonths ?? null,
+        forwardEps: stats?.forwardEps ?? fallbackQuote?.epsForward ?? null,
         profitMargins: financials?.profitMargins ?? null,
         operatingMargins: financials?.operatingMargins ?? null,
         revenueGrowth: financials?.revenueGrowth ?? null,
@@ -2244,15 +2509,15 @@ app.get('/api/research/dossier/:ticker', async (req, res) => {
         priceToSales: summary?.priceToSalesTrailing12Months ?? null
       },
       technicals: {
-        fiftyTwoWeekHigh: summary?.fiftyTwoWeekHigh ?? null,
-        fiftyTwoWeekLow: summary?.fiftyTwoWeekLow ?? null,
-        fiftyDayAverage: summary?.fiftyDayAverage ?? null,
-        twoHundredDayAverage: summary?.twoHundredDayAverage ?? null,
+        fiftyTwoWeekHigh: summary?.fiftyTwoWeekHigh ?? fallbackQuote?.fiftyTwoWeekHigh ?? null,
+        fiftyTwoWeekLow: summary?.fiftyTwoWeekLow ?? fallbackQuote?.fiftyTwoWeekLow ?? null,
+        fiftyDayAverage: summary?.fiftyDayAverage ?? fallbackQuote?.fiftyDayAverage ?? null,
+        twoHundredDayAverage: summary?.twoHundredDayAverage ?? fallbackQuote?.twoHundredDayAverage ?? null,
         beta: stats?.beta ?? summary?.beta ?? null,
-        volume: summary?.volume ?? price?.regularMarketVolume ?? null,
-        averageVolume: summary?.averageVolume ?? null,
-        dayLow: price?.regularMarketDayLow ?? null,
-        dayHigh: price?.regularMarketDayHigh ?? null
+        volume: summary?.volume ?? price?.regularMarketVolume ?? fallbackQuote?.regularMarketVolume ?? null,
+        averageVolume: summary?.averageVolume ?? fallbackQuote?.averageDailyVolume3Month ?? null,
+        dayLow: price?.regularMarketDayLow ?? fallbackQuote?.regularMarketDayLow ?? null,
+        dayHigh: price?.regularMarketDayHigh ?? fallbackQuote?.regularMarketDayHigh ?? null
       },
       news: searchData?.news?.map((n: any) => ({
         title: n.title,
@@ -2261,6 +2526,10 @@ app.get('/api/research/dossier/:ticker', async (req, res) => {
         providerPublishTime: n.providerPublishTime
       })) || []
     };
+
+    if (finalPrice !== null) {
+      dossierMemoryCache.set(ticker, { data: dossier, timestamp: Date.now() });
+    }
 
     res.json(dossier);
   } catch (error: any) {
@@ -4614,6 +4883,22 @@ async function checkPriceAlerts() {
             triggeredPrice: currentPrice
           }
         });
+
+        // Dispatch alert to Telegram Alerts topic (chat_id: -1003872409872, message_thread_id: 2)
+        try {
+          const alertMsg =
+            `🚨 *PRICE ALERT TRIGGERED*\n\n` +
+            `• *Symbol:* ${alert.symbol}\n` +
+            `• *Current Price:* $${currentPrice.toFixed(2)}\n` +
+            `• *Target Condition:* ${alert.condition} $${alert.targetPrice.toFixed(2)}\n` +
+            (alert.notes ? `• *Notes:* _${alert.notes}_\n` : '') +
+            `• *Timestamp:* ${new Date().toLocaleTimeString()} UTC`;
+
+          await sendTelegramAlert(alertMsg);
+          logToFile(`[Telegram Alert Sent] Dispatched alert for ${alert.symbol} to Telegram topic 2`);
+        } catch (tgErr: any) {
+          logToFile(`[Telegram Alert Error] Failed to dispatch alert: ${tgErr?.message || tgErr}`);
+        }
       }
     }
   } catch (err: any) {
@@ -6023,12 +6308,16 @@ app.get('/api/thought-logs/folders', async (req, res) => {
     let telegramCount = 0;
     let voiceCount = 0;
     let generalCount = 0;
+    let unreadCount = 0;
 
     // Standard baseline category folders
     const defaultFolders = ['General', 'Ideas', 'Research', 'Watchlist', 'Macro', 'Earnings', 'Trading'];
     defaultFolders.forEach(f => folderMap.set(f, 0));
 
     for (const l of logs) {
+      if (!l.isRead) {
+        unreadCount++;
+      }
       const f = l.folder?.trim();
       // If note has not been saved to a specific category folder (null, empty, or 'General'), count in General
       if (!f || f === 'General' || f === 'ALL') {
@@ -6053,6 +6342,7 @@ app.get('/api/thought-logs/folders', async (req, res) => {
 
     res.json({
       totalCount: logs.length,
+      unreadCount,
       unfiledCount: generalCount,
       generalCount,
       telegramCount,
@@ -6068,11 +6358,17 @@ app.get('/api/thought-logs/folders', async (req, res) => {
 // GET /api/thought-logs - List all thought logs
 app.get('/api/thought-logs', async (req, res) => {
   try {
-    const { search, tag, sentiment, folder } = req.query;
+    const { search, tag, sentiment, folder, isRead } = req.query;
     const andClauses: any[] = [];
 
+    if (isRead !== undefined) {
+      andClauses.push({ isRead: isRead === 'true' || isRead === true });
+    }
+
     if (folder && typeof folder === 'string' && folder !== 'ALL') {
-      if (folder === 'General') {
+      if (folder === 'UNREAD') {
+        andClauses.push({ isRead: false });
+      } else if (folder === 'General') {
         andClauses.push({
           OR: [
             { folder: 'General' },
@@ -6234,7 +6530,7 @@ app.put('/api/thought-logs/bulk-move', async (req, res) => {
 // PUT /api/thought-logs/:id - Update thought log
 app.put('/api/thought-logs/:id', async (req, res) => {
   try {
-    const { title, content, folder, tags, symbols, sentiment, isPinned, agentOutput, agentActionType, agentHistory, marketDataJson } = req.body;
+    const { title, content, folder, tags, symbols, sentiment, isPinned, isRead, agentOutput, agentActionType, agentHistory, marketDataJson } = req.body;
     
     const updateData: any = {};
     if (title !== undefined) updateData.title = title;
@@ -6244,6 +6540,10 @@ app.put('/api/thought-logs/:id', async (req, res) => {
     if (symbols !== undefined) updateData.symbols = symbols;
     if (sentiment !== undefined) updateData.sentiment = sentiment;
     if (isPinned !== undefined) updateData.isPinned = Boolean(isPinned);
+    if (isRead !== undefined) {
+      updateData.isRead = Boolean(isRead);
+      updateData.readAt = Boolean(isRead) ? new Date() : null;
+    }
     if (agentOutput !== undefined) updateData.agentOutput = agentOutput;
     if (agentActionType !== undefined) updateData.agentActionType = agentActionType;
     if (agentHistory !== undefined) updateData.agentHistory = typeof agentHistory === 'object' ? JSON.stringify(agentHistory) : agentHistory;
@@ -6257,6 +6557,38 @@ app.put('/api/thought-logs/:id', async (req, res) => {
     res.json(updated);
   } catch (error: any) {
     logToFile(`Error in PUT /api/thought-logs/${req.params.id}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PATCH /api/thought-logs/:id/read - Mark thought log as read/unread
+app.patch('/api/thought-logs/:id/read', async (req, res) => {
+  try {
+    const { isRead = true } = req.body || {};
+    const updated = await (prisma as any).thoughtLog.update({
+      where: { id: req.params.id },
+      data: {
+        isRead: Boolean(isRead),
+        readAt: Boolean(isRead) ? new Date() : null,
+      },
+    });
+    res.json(updated);
+  } catch (error: any) {
+    logToFile(`Error in PATCH /api/thought-logs/${req.params.id}/read: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/thought-logs/mark-all-read - Mark all unread thought logs as read
+app.post('/api/thought-logs/mark-all-read', async (req, res) => {
+  try {
+    const result = await (prisma as any).thoughtLog.updateMany({
+      where: { isRead: false },
+      data: { isRead: true, readAt: new Date() },
+    });
+    res.json({ success: true, count: result.count });
+  } catch (error: any) {
+    logToFile(`Error in POST /api/thought-logs/mark-all-read: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -6351,6 +6683,37 @@ app.get('/api/scanner/meta', (req, res) => {
 });
 
 // ==========================================
+// MACRO TREND FINDER API
+// ==========================================
+
+// GET /api/macro/trend-finder - Get macro trend lifecycle scan across all asset classes, sectors & industries
+app.get('/api/macro/trend-finder', async (req, res) => {
+  try {
+    const data = await trendFinderService.getTrendFinderOverview();
+    res.json(data);
+  } catch (error: any) {
+    logToFile(`Error in GET /api/macro/trend-finder: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/macro/trend-finder/:symbol - Get trend analysis for specific instrument
+app.get('/api/macro/trend-finder/:symbol', async (req, res) => {
+  try {
+    const sym = req.params.symbol?.trim().toUpperCase();
+    const data = await trendFinderService.getTrendFinderOverview();
+    const item = data.items.find((x) => x.symbol.toUpperCase() === sym);
+    if (!item) {
+      return res.status(404).json({ error: `Trend telemetry for ${sym} not found.` });
+    }
+    res.json(item);
+  } catch (error: any) {
+    logToFile(`Error in GET /api/macro/trend-finder/${req.params.symbol}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==========================================
 // TELEGRAM BUFFER WEBHOOK CONSUMER API
 // ==========================================
 
@@ -6397,6 +6760,100 @@ app.get('/api/telegram/preview-report-pdf', async (req, res) => {
     res.end(buffer);
   } catch (error: any) {
     console.error('Error generating preview PDF:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==========================================
+// MANAGEMENT PLANNED TRADES & EXECUTION QUEUE API
+// ==========================================
+
+// GET /api/management/planned-trades - List planned trades (optional filter: timeframe, status)
+app.get('/api/management/planned-trades', async (req, res) => {
+  try {
+    const { timeframe, status } = req.query;
+    const trades = await getPlannedTrades({
+      timeframe: typeof timeframe === 'string' ? timeframe : undefined,
+      status: typeof status === 'string' ? status : undefined,
+    });
+    res.json(trades);
+  } catch (error: any) {
+    console.error('Error fetching planned trades:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/management/planned-trades - Create a new planned trade
+app.post('/api/management/planned-trades', async (req, res) => {
+  try {
+    const trade = await createPlannedTrade(req.body);
+    res.status(201).json(trade);
+  } catch (error: any) {
+    console.error('Error creating planned trade:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// PUT /api/management/planned-trades/:id - Update planned trade
+app.put('/api/management/planned-trades/:id', async (req, res) => {
+  try {
+    const updated = await updatePlannedTrade(req.params.id, req.body);
+    res.json(updated);
+  } catch (error: any) {
+    console.error('Error updating planned trade:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// DELETE /api/management/planned-trades/:id - Delete planned trade
+app.delete('/api/management/planned-trades/:id', async (req, res) => {
+  try {
+    const result = await deletePlannedTrade(req.params.id);
+    res.json(result);
+  } catch (error: any) {
+    console.error('Error deleting planned trade:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PATCH /api/management/planned-trades/reorder - Reorder planned trades ranks
+app.patch('/api/management/planned-trades/reorder', async (req, res) => {
+  try {
+    const { orderedIds } = req.body;
+    if (!Array.isArray(orderedIds)) {
+      return res.status(400).json({ error: 'orderedIds must be an array of IDs' });
+    }
+    const reordered = await reorderPlannedTrades(orderedIds);
+    res.json(reordered);
+  } catch (error: any) {
+    console.error('Error reordering planned trades:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/management/planned-trades/send-telegram - Send execution plan PDF to Telegram
+app.post('/api/management/planned-trades/send-telegram', async (req, res) => {
+  try {
+    const result = await sendExecutionPlanPdfToTelegram();
+    res.json(result);
+  } catch (error: any) {
+    console.error('Error sending execution plan PDF to Telegram:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/management/planned-trades/preview-pdf - Preview execution plan PDF
+app.get('/api/management/planned-trades/preview-pdf', async (req, res) => {
+  try {
+    const trades = await getPlannedTrades();
+    const buffer = await generateExecutionPlanPdfBuffer(trades);
+    const dateSlug = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="TradeFlow_Execution_Plan_${dateSlug}.pdf"`);
+    res.setHeader('Content-Length', buffer.length);
+    res.end(buffer);
+  } catch (error: any) {
+    console.error('Error generating preview execution plan PDF:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -6476,6 +6933,12 @@ const server = app.listen(port, () => {
   // Initial sync for broker trades (Tastytrade & IBKR)
   syncTastytradeTransactions(prisma).catch(e => console.error('Initial Tastytrade trade sync error:', e));
   syncIBKRFromHoldings(prisma).catch(e => console.error('Initial IBKR trade sync error:', e));
+
+  // Initial and periodic pre-warming of portfolio quotes cache
+  warmPortfolioQuotesCache().catch(e => console.error('Initial quote warm error:', e));
+  setInterval(() => {
+    warmPortfolioQuotesCache().catch(e => console.error('Periodic quote warm error:', e));
+  }, 5 * 60 * 1000);
 });
 
 // Graceful shutdown

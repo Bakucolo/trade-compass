@@ -7,7 +7,17 @@ import { ThemeProvider } from "@/services/themeService";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60 * 1000, // 1 minute fresh data cache
+      gcTime: 10 * 60 * 1000, // 10 minutes cache retention
+      refetchOnWindowFocus: false, // Prevent aggressive refetch storms on window switch
+      refetchOnMount: false, // Use cached data if not stale on component mount
+      retry: 1, // Single retry on transient network errors
+    },
+  },
+});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>

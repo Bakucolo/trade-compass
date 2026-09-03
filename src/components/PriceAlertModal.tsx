@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import {
   Dialog,
@@ -29,8 +29,9 @@ import {
   Layers,
   ArrowRight
 } from 'lucide-react';
-import { useCreateAlert, useUpdateAlert, PriceAlert } from '@/services/alertService';
+import { useCreateAlert, useUpdateAlert, useDeleteAlert, useAlerts, PriceAlert } from '@/services/alertService';
 import { marketDataService } from '@/services/marketData';
+import { toast } from 'sonner';
 
 interface PriceAlertModalProps {
   open: boolean;
@@ -86,6 +87,39 @@ export function PriceAlertModal({
 
   const createAlertMutation = useCreateAlert();
   const updateAlertMutation = useUpdateAlert();
+  const deleteAlertMutation = useDeleteAlert();
+
+  const cleanSymbol = symbol.trim().toUpperCase();
+  const { data: allAlertsData = [], isLoading: isLoadingExistingAlerts } = useAlerts(
+    cleanSymbol ? { symbol: cleanSymbol, status: 'ALL' } : undefined
+  );
+
+  const existingAlertsForStock = useMemo(() => {
+    if (!cleanSymbol) return [];
+    return (allAlertsData || []).filter(
+      (a) => a.symbol.toUpperCase() === cleanSymbol
+    );
+  }, [allAlertsData, cleanSymbol]);
+
+  const handleDeleteExistingAlert = async (e: React.MouseEvent, alertId: string, alertTarget: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      await deleteAlertMutation.mutateAsync(alertId);
+      toast.success(`Removed alert @ $${alertTarget.toFixed(2)} for ${cleanSymbol}`);
+    } catch (err: any) {
+      toast.error(`Failed to delete alert: ${err.message}`);
+    }
+  };
+
+  const handleLoadExistingAlert = (alertItem: PriceAlert) => {
+    setTargetPrice(alertItem.targetPrice.toString());
+    setCondition(alertItem.condition);
+    if (alertItem.notes) {
+      setNotes(alertItem.notes);
+    }
+    toast.info(`Loaded target price $${alertItem.targetPrice.toFixed(2)} (${alertItem.condition === 'ABOVE' ? '≥ Higher' : '≤ Lower'})`);
+  };
 
   // Reset state when opening modal
   useEffect(() => {
@@ -294,7 +328,7 @@ export function PriceAlertModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg bg-background/95 backdrop-blur-2xl border border-primary/20 shadow-2xl p-6">
+      <DialogContent className="sm:max-w-lg bg-background/95 backdrop-blur-2xl border border-primary/20 shadow-2xl p-6 max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
@@ -466,6 +500,152 @@ export function PriceAlertModal({
                   </Badge>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* Alerts Already Set for this Stock */}
+          {cleanSymbol && (
+            <div className="rounded-2xl border border-border/70 bg-card/60 p-3.5 space-y-2.5 animate-in fade-in duration-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-5 h-5 rounded-md bg-primary/10 border border-primary/25 flex items-center justify-center text-primary">
+                    <Bell className="w-3 h-3" />
+                  </div>
+                  <span className="text-xs font-bold text-foreground">
+                    Alerts Already Set for {cleanSymbol}
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] font-mono font-bold bg-primary/10 text-primary border-primary/30 px-1.5 py-0"
+                  >
+                    {existingAlertsForStock.length}
+                  </Badge>
+                </div>
+                {isLoadingExistingAlerts && (
+                  <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                    <Loader2 className="w-3 h-3 animate-spin text-primary" />
+                    <span>Checking alerts...</span>
+                  </div>
+                )}
+              </div>
+
+              {isLoadingExistingAlerts && existingAlertsForStock.length === 0 ? (
+                <div className="py-2.5 flex items-center justify-center text-xs text-muted-foreground gap-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                  <span>Loading alerts for {cleanSymbol}...</span>
+                </div>
+              ) : existingAlertsForStock.length === 0 ? (
+                <div className="py-2.5 px-3 rounded-xl bg-muted/20 border border-border/40 text-[11px] text-muted-foreground flex items-center gap-2">
+                  <Activity className="w-3.5 h-3.5 text-muted-foreground/60 shrink-0" />
+                  <span>No alerts currently set for <strong className="text-foreground">{cleanSymbol}</strong>. Create your first trigger below!</span>
+                </div>
+              ) : (
+                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                  {existingAlertsForStock.map((a) => {
+                    const isBeingEdited = editAlert?.id === a.id;
+                    const diffPct =
+                      currentPrice > 0
+                        ? (((a.targetPrice - currentPrice) / currentPrice) * 100).toFixed(1)
+                        : null;
+
+                    return (
+                      <div
+                        key={a.id}
+                        className={cn(
+                          "flex items-center justify-between p-2 sm:p-2.5 rounded-xl border text-xs transition-all",
+                          isBeingEdited
+                            ? "bg-primary/10 border-primary/40 shadow-sm"
+                            : "bg-card/90 border-border/60 hover:border-border hover:bg-card"
+                        )}
+                      >
+                        <div className="flex items-center gap-2 flex-wrap min-w-0">
+                          {/* Condition & Target */}
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "font-mono font-bold text-[11px] px-2 py-0.5",
+                              a.condition === 'ABOVE'
+                                ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                                : "bg-rose-500/15 text-rose-400 border-rose-500/30"
+                            )}
+                          >
+                            {a.condition === 'ABOVE' ? (
+                              <TrendingUp className="w-3 h-3 mr-1 inline text-emerald-400" />
+                            ) : (
+                              <TrendingDown className="w-3 h-3 mr-1 inline text-rose-400" />
+                            )}
+                            {a.condition === 'ABOVE' ? '≥' : '≤'} ${a.targetPrice.toFixed(2)}
+                          </Badge>
+
+                          {/* Distance */}
+                          {diffPct !== null && (
+                            <span
+                              className={cn(
+                                "font-mono font-semibold text-[10px]",
+                                parseFloat(diffPct) >= 0 ? "text-emerald-400/90" : "text-rose-400/90"
+                              )}
+                            >
+                              ({parseFloat(diffPct) >= 0 ? '+' : ''}{diffPct}%)
+                            </span>
+                          )}
+
+                          {/* Status Badge */}
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-[9px] uppercase px-1.5 py-0 font-bold",
+                              a.status === 'ACTIVE'
+                                ? "bg-cyan-500/10 text-cyan-300 border-cyan-500/30"
+                                : a.status === 'TRIGGERED'
+                                ? "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                                : "bg-muted text-muted-foreground border-border/40"
+                            )}
+                          >
+                            {a.status}
+                          </Badge>
+
+                          {/* Note if any */}
+                          {a.notes && (
+                            <span className="text-[10px] text-muted-foreground truncate max-w-[120px] sm:max-w-[150px] italic">
+                              "{a.notes}"
+                            </span>
+                          )}
+
+                          {isBeingEdited && (
+                            <Badge className="bg-primary/20 text-primary border-primary/40 text-[9px] font-semibold px-1 py-0">
+                              Editing Now
+                            </Badge>
+                          )}
+                        </div>
+
+                        {/* Action buttons */}
+                        <div className="flex items-center gap-1 shrink-0 ml-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleLoadExistingAlert(a)}
+                            title="Load this target price into input"
+                            className="h-6 px-1.5 text-[10px] gap-1 text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                          >
+                            <span>Use</span>
+                            <ArrowRight className="w-2.5 h-2.5" />
+                          </Button>
+
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteExistingAlert(e, a.id, a.targetPrice)}
+                            title="Delete this alert"
+                            className="p-1 rounded-lg text-muted-foreground/70 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

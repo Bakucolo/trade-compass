@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useDebounce } from '@/hooks/useDebounce';
 import { cn } from '@/lib/utils';
 import {
   Bell,
@@ -62,6 +63,7 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
   const { toast } = useToast();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearchQuery = useDebounce(searchQuery, 250);
   const [sortOption, setSortOption] = useState<SortOption>('triggered_desc');
 
   // Modal State
@@ -106,8 +108,8 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
     }
 
     // Search Filter
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
+    if (debouncedSearchQuery.trim()) {
+      const q = debouncedSearchQuery.toLowerCase().trim();
       list = list.filter(
         (a) =>
           a.symbol.toLowerCase().includes(q) ||

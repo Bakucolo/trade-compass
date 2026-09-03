@@ -40,8 +40,8 @@ export function usePortfolioQuotes(symbols?: string[]) {
       const data: PortfolioQuotesResponse = await res.json();
       return data.quotes || {};
     },
-    staleTime: 30 * 1000, // 30 seconds
-    refetchInterval: 30 * 1000,
+    staleTime: 60 * 1000, // 60 seconds
+    refetchInterval: 60 * 1000,
     retry: 2,
   });
 }

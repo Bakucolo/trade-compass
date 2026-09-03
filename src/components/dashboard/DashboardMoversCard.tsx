@@ -80,7 +80,18 @@ export function DashboardMoversCard({
       if (timeframe === 'TODAY') {
         // Strictly today's live intraday return
         returnPct = dayPct;
-        returnDollar = dayDollar !== 0 ? dayDollar : (currentVal * (dayPct / 100));
+        returnDollar = (p.dayPnL !== undefined && p.dayPnL !== null && p.dayPnL !== 0)
+          ? p.dayPnL
+          : (p.dayChange !== undefined && p.dayChange !== null && p.dayChange !== 0
+            ? p.dayChange
+            : (currentVal * (dayPct / 100)));
+        if (returnPct === 0 && returnDollar !== 0 && currentVal > 0) {
+          returnPct = (returnDollar / currentVal) * 100;
+        }
+        if (isOption && currentVal < 1) {
+          returnPct = 0;
+          returnDollar = p.dayPnL || 0;
+        }
       } else if (timeframe === 'YESTERDAY') {
         // Strictly prior trading session performance
         returnPct = p.yesterdayPnLPercent !== undefined && p.yesterdayPnLPercent !== null

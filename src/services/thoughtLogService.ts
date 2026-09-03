@@ -22,6 +22,8 @@ export interface ThoughtLogRecord {
   symbols: string | null;
   sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | 'MACRO' | 'CAUTION' | string;
   isPinned: boolean;
+  isRead?: boolean;
+  readAt?: string | null;
   agentOutput: string | null;
   agentActionType: string | null;
   agentHistory: string | null;
@@ -37,6 +39,7 @@ export interface FolderItemStats {
 
 export interface ThoughtLogFoldersResponse {
   totalCount: number;
+  unreadCount?: number;
   unfiledCount: number;
   telegramCount: number;
   voiceCount: number;
@@ -269,6 +272,30 @@ export async function deleteThoughtLog(id: string): Promise<{ success: boolean; 
   return res.json();
 }
 
+export async function markThoughtLogAsRead(id: string, isRead = true): Promise<ThoughtLogRecord> {
+  const res = await fetch(`${API_BASE}/${id}/read`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ isRead }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to mark thought log as read');
+  }
+  return res.json();
+}
+
+export async function markAllThoughtLogsAsRead(): Promise<{ success: boolean; count: number }> {
+  const res = await fetch(`${API_BASE}/mark-all-read`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to mark all thought logs as read');
+  }
+  return res.json();
+}
+
 export async function runThoughtAgent(payload: RunAgentPayload): Promise<RunAgentResponse> {
   const res = await fetch(`${API_BASE}/agent/run`, {
     method: 'POST',
@@ -347,6 +374,29 @@ export function useDeleteThoughtLog() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => deleteThoughtLog(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['thoughtLogs'] });
+      queryClient.invalidateQueries({ queryKey: ['thoughtLogFolders'] });
+    },
+  });
+}
+
+export function useMarkThoughtLogAsRead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, isRead = true }: { id: string; isRead?: boolean }) =>
+      markThoughtLogAsRead(id, isRead),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['thoughtLogs'] });
+      queryClient.invalidateQueries({ queryKey: ['thoughtLogFolders'] });
+    },
+  });
+}
+
+export function useMarkAllThoughtLogsAsRead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => markAllThoughtLogsAsRead(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['thoughtLogs'] });
       queryClient.invalidateQueries({ queryKey: ['thoughtLogFolders'] });

@@ -47,7 +47,8 @@ import { cn } from '@/lib/utils';
 
 import { usePortfolioQuotes } from '@/services/usePortfolioQuotes';
 import { useSendTelegramReport } from '@/services/telegramReportClientService';
-import { parseTrading212Ticker } from '../../server/services/trading212Service';
+import { parseTrading212Ticker } from '@/utils/tickerUtils';
+import { calculatePortfolioTheta } from '@/utils/greeksUtils';
 
 interface DashboardProps {
   onNavigateTab?: (tab: string) => void;
@@ -205,39 +206,65 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
         quoteSym = 'AYA.TO';
       }
 
+      // Map underlying symbol and underlying stock price
+      const baseTicker = (p.underlyingSymbol || (isOption ? (cleanSym.match(/^[A-Z]+/)?.[0] || cleanSym) : cleanSym)).trim().toUpperCase();
+
       // Look up live session quote
-      const quote = portfolioQuotes[quoteSym] || portfolioQuotes[cleanSym] || portfolioQuotes[rawSym];
+      const quote = portfolioQuotes[quoteSym] || portfolioQuotes[cleanSym] || portfolioQuotes[rawSym] || portfolioQuotes[baseTicker];
+
+      const isUKPence = quote?.currency === 'GBp' || (p.currency === 'GBP' && cleanSym.endsWith('.L'));
+      const liveStockPrice = quote?.price ? (isUKPence ? quote.price / 100 : quote.price) : 0;
+      if (!isOption && curPrice === 0 && liveStockPrice > 0) {
+        curPrice = liveStockPrice;
+      }
+      if (mktVal === 0 && curPrice > 0 && qty !== 0) {
+        mktVal = Math.abs(qty * curPrice * multiplier);
+      }
 
       // Unrealized Total Return
-      let unPnL = p.unrealizedPnL ?? p.unrealizedPL ?? p.ppl ?? (mktVal - (qty * avgCost * multiplier));
-      const costBasis = Math.abs(mktVal - unPnL) || (qty * avgCost * multiplier) || 1;
+      let unPnL = p.unrealizedPnL ?? p.unrealizedPL ?? p.ppl;
+      if (unPnL === undefined || unPnL === null || isNaN(unPnL)) {
+        if (isOption && qty < 0 && avgCost > 0 && curPrice > 0) {
+          unPnL = (avgCost - curPrice) * Math.abs(qty) * multiplier;
+        } else if (qty !== 0 && avgCost > 0 && curPrice > 0) {
+          unPnL = (curPrice - avgCost) * qty * multiplier;
+        } else {
+          unPnL = mktVal - (qty * avgCost * multiplier);
+        }
+      }
+      const costBasis = Math.abs(qty * avgCost * multiplier) || Math.abs(mktVal - unPnL) || 1;
       let unPnLPct = p.unrealizedPnLPercent ?? p.unrealizedPLPercent ?? (costBasis > 0 ? (unPnL / costBasis) * 100 : 0);
 
       // Day Performance (strictly 1-day session)
-      let dPnL = p.dayPnL ?? p.dayChange ?? p.dailyPnL ?? 0;
-      let dPnLPct = p.dayPnLPercent ?? p.dayChangePercent ?? p.dailyChangePercent ?? 0;
+      let dPnL = 0;
+      let dPnLPct = 0;
 
-      // If day figures were 0 in DB (e.g. Trading 212 or off-hours) and we have a live quote:
-      if (quote && (dPnL === 0 || dPnLPct === 0)) {
-        const isUKPence = quote.currency === 'GBp' || (p.currency === 'GBP' && cleanSym.endsWith('.L'));
-        const nativeChange = isUKPence ? (quote.change / 100) : quote.change;
-        if (dPnL === 0 && nativeChange !== 0 && qty !== 0) {
-          dPnL = nativeChange * qty * multiplier;
-        }
-        if (dPnLPct === 0 && quote.changesPercentage !== undefined && !isNaN(quote.changesPercentage)) {
+      if (!isOption) {
+        // For Equities: live quote changesPercentage and change are the definitive source for today's market move
+        const nativeChange = quote ? (isUKPence ? quote.change / 100 : quote.change) : 0;
+        if (quote && quote.changesPercentage !== undefined && !isNaN(quote.changesPercentage)) {
           dPnLPct = quote.changesPercentage;
+          dPnL = nativeChange !== 0 && qty !== 0 ? nativeChange * qty : mktVal * (dPnLPct / 100);
+        } else {
+          dPnL = p.dayPnL ?? p.dayChange ?? p.dailyPnL ?? 0;
+          dPnLPct = p.dayPnLPercent ?? p.dayChangePercent ?? p.dailyChangePercent ?? 0;
+          if (dPnL === 0 && dPnLPct !== 0 && mktVal > 0) {
+            dPnL = mktVal * (dPnLPct / 100);
+          } else if (dPnLPct === 0 && dPnL !== 0 && mktVal > 0) {
+            dPnLPct = (dPnL / mktVal) * 100;
+          }
+        }
+      } else {
+        // For Options: DO NOT apply underlying equity's raw price move to option contract
+        dPnL = p.dayPnL ?? p.dayChange ?? p.dailyPnL ?? 0;
+        dPnLPct = p.dayPnLPercent ?? p.dayChangePercent ?? p.dailyChangePercent ?? 0;
+        if (mktVal >= 1 && dPnL !== 0 && dPnLPct === 0) {
+          dPnLPct = (dPnL / mktVal) * 100;
+        } else if (mktVal < 1) {
+          dPnLPct = 0;
         }
       }
 
-      // If one of dPnL or dPnLPct is non-zero, cross-fill
-      if (dPnL === 0 && dPnLPct !== 0 && mktVal > 0) {
-        dPnL = mktVal * (dPnLPct / 100);
-      } else if (dPnLPct === 0 && dPnL !== 0 && mktVal > 0) {
-        dPnLPct = (dPnL / mktVal) * 100;
-      }
-
-      // Map underlying symbol and underlying stock price
-      const baseTicker = (p.underlyingSymbol || (isOption ? (cleanSym.match(/^[A-Z]+/)?.[0] || cleanSym) : cleanSym)).trim().toUpperCase();
       let underlyingPrice: number | undefined = undefined;
       if (p.underlyingPrice && p.underlyingPrice > 0) {
         underlyingPrice = p.underlyingPrice;
@@ -253,7 +280,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
         : (p.yesterdayPnLPercent !== undefined && p.yesterdayPnLPercent !== null ? p.yesterdayPnLPercent : 0);
 
       let yestPnL = 0;
-      if (quote?.yesterdayChange !== undefined && quote.yesterdayChange !== 0 && qty !== 0) {
+      if (!isOption && quote?.yesterdayChange !== undefined && quote.yesterdayChange !== 0 && qty !== 0) {
         const isUKPence = quote.currency === 'GBp' || (p.currency === 'GBP' && cleanSym.endsWith('.L'));
         const nativeYestChange = isUKPence ? (quote.yesterdayChange / 100) : quote.yesterdayChange;
         yestPnL = nativeYestChange * qty * multiplier;
@@ -328,6 +355,11 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
 
   const netLiq = balancesData?.total?.netLiquidatingValue || 248800;
   const dayPnL = balancesData?.total?.dayPnL || 0;
+
+  // Aggregate Portfolio Theta & Daily Time Decay
+  const portfolioTheta = useMemo(() => {
+    return calculatePortfolioTheta(allPositions, netLiq);
+  }, [allPositions, netLiq]);
 
   // Critical Defense Count
   const criticalCount = useMemo(() => {
@@ -562,6 +594,11 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
                 • Net Liq: ${netLiq.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
               </span>
             )}
+            {portfolioTheta.totalOptionsCount > 0 && !isPrivacyMode && (
+              <span className={cn("font-mono font-bold hidden sm:inline", portfolioTheta.totalDailyTheta >= 0 ? "text-emerald-400" : "text-amber-400")}>
+                • Theta: {portfolioTheta.totalDailyTheta >= 0 ? '+' : ''}${portfolioTheta.totalDailyTheta.toFixed(0)}/d
+              </span>
+            )}
           </div>
           <Button
             variant="ghost"
@@ -582,7 +619,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
           positions={allPositions}
           yesterdayPnL={yesterdayPnL}
           totalPortfolioValue={netLiq}
-          isLoading={isQuotesLoading && allPositions.length === 0}
+          isLoading={(isQuotesLoading && Object.keys(portfolioQuotes).length === 0) || allPositions.length === 0}
           isPrivacyMode={isPrivacyMode}
           onNavigateToPortfolio={() => goToTab('portfolio')}
           onNavigateToResearch={onNavigateToResearch}

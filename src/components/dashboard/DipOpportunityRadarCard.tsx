@@ -32,14 +32,17 @@ import {
   Bookmark,
   FolderPlus,
   ListPlus,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useDipRadar, useSavedDipReports, DipCandidateItem, BuyScoreBreakdown } from '@/services/dipRadarService';
 import { DipDiagnosticModal } from './DipDiagnosticModal';
 import { AddToWatchlistModal } from '@/components/AddToWatchlistModal';
 import { BulkSaveDipsToWatchlistModal } from './BulkSaveDipsToWatchlistModal';
 
-type FilterTab = 'ALL' | 'SAVED' | 'HOLDINGS' | 'WATCHLIST' | 'HIGH_SCORE';
+type FilterTab = 'ALL' | 'SAVED' | 'HOLDINGS' | 'WATCHLIST' | 'HIGH_SCORE' | 'HIDDEN';
 type SensitivityFilter = 'ALL' | 'DAY_DROP' | 'DEEP_PULLBACK';
 type SortOption = 'BUY_SCORE' | 'DAY_DROP' | 'DRAWDOWN';
 
@@ -114,6 +117,64 @@ export function DipOpportunityRadarCard({
   const [watchlistTargetStock, setWatchlistTargetStock] = useState<{ symbol: string; name?: string } | null>(null);
   const [isBulkSaveModalOpen, setIsBulkSaveModalOpen] = useState(false);
 
+  // Hidden Stocks Persistence (LocalStorage)
+  const [hiddenSymbols, setHiddenSymbols] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('dipRadar_hidden_symbols');
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          return new Set(arr);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to parse hidden symbols from localStorage', e);
+    }
+    return new Set<string>();
+  });
+
+  // Mark a stock to not be shown anymore
+  const handleHideStock = (symbol: string) => {
+    setHiddenSymbols((prev) => {
+      const next = new Set(prev);
+      next.add(symbol);
+      try {
+        localStorage.setItem('dipRadar_hidden_symbols', JSON.stringify(Array.from(next)));
+      } catch (e) {}
+      return next;
+    });
+
+    toast.info(`${symbol} marked to not be shown anymore`, {
+      action: {
+        label: 'Undo',
+        onClick: () => handleUnhideStock(symbol),
+      },
+      duration: 5000,
+    });
+  };
+
+  // Restore a hidden stock
+  const handleUnhideStock = (symbol: string) => {
+    setHiddenSymbols((prev) => {
+      const next = new Set(prev);
+      next.delete(symbol);
+      try {
+        localStorage.setItem('dipRadar_hidden_symbols', JSON.stringify(Array.from(next)));
+      } catch (e) {}
+      return next;
+    });
+    toast.success(`${symbol} restored to Dip Radar`);
+  };
+
+  // Restore all hidden stocks
+  const handleUnhideAll = () => {
+    setHiddenSymbols(new Set());
+    try {
+      localStorage.removeItem('dipRadar_hidden_symbols');
+    } catch (e) {}
+    toast.success('All hidden stocks restored to Dip Radar');
+  };
+
   // Fetch Radar scan data
   const { data: radarData, isLoading, isFetching, refetch } = useDipRadar();
   // Fetch Saved Reports data
@@ -125,6 +186,16 @@ export function DipOpportunityRadarCard({
   // Filter & sort dips
   const filteredDips = useMemo(() => {
     const list = dips.filter((item) => {
+      const isHidden = hiddenSymbols.has(item.symbol);
+
+      // In HIDDEN tab, show exclusively hidden stocks
+      if (activeTab === 'HIDDEN') {
+        if (!isHidden) return false;
+      } else {
+        // In all other tabs, suppress hidden stocks
+        if (isHidden) return false;
+      }
+
       const oppScore = item.savedReportInfo?.opportunityScore ?? item.heuristicSignal.preliminaryOpportunityScore;
 
       // Tab filter
@@ -164,17 +235,19 @@ export function DipOpportunityRadarCard({
       }
       return 0;
     });
-  }, [dips, activeTab, sensitivity, sortBy, searchQuery]);
+  }, [dips, activeTab, sensitivity, sortBy, searchQuery, hiddenSymbols]);
 
-  const savedDipsCount = useMemo(() => dips.filter(d => Boolean(d.savedReportInfo)).length, [dips]);
-  const holdingsDipCount = useMemo(() => dips.filter(d => d.source === 'HOLDING').length, [dips]);
-  const watchlistDipCount = useMemo(() => dips.filter(d => d.source === 'WATCHLIST').length, [dips]);
+  const activeDips = useMemo(() => dips.filter((d) => !hiddenSymbols.has(d.symbol)), [dips, hiddenSymbols]);
+  const hiddenDipsCount = useMemo(() => dips.filter((d) => hiddenSymbols.has(d.symbol)).length, [dips, hiddenSymbols]);
+  const savedDipsCount = useMemo(() => activeDips.filter((d) => Boolean(d.savedReportInfo)).length, [activeDips]);
+  const holdingsDipCount = useMemo(() => activeDips.filter((d) => d.source === 'HOLDING').length, [activeDips]);
+  const watchlistDipCount = useMemo(() => activeDips.filter((d) => d.source === 'WATCHLIST').length, [activeDips]);
   const highScoreCount = useMemo(() => {
-    return dips.filter(d => {
+    return activeDips.filter((d) => {
       const score = d.savedReportInfo?.opportunityScore ?? d.heuristicSignal.preliminaryOpportunityScore;
       return score >= 70;
     }).length;
-  }, [dips]);
+  }, [activeDips]);
 
   const handleRescan = () => {
     refetch();
@@ -273,7 +346,7 @@ export function DipOpportunityRadarCard({
               onClick={() => setActiveTab('ALL')}
               className={cn('h-7 text-xs px-2.5 font-semibold', activeTab === 'ALL' ? 'bg-primary text-primary-foreground' : 'border-border/70 text-muted-foreground')}
             >
-              All Dips ({dips.length})
+              All Dips ({activeDips.length})
             </Button>
 
             <Button
@@ -318,6 +391,23 @@ export function DipOpportunityRadarCard({
             >
               Watchlist ({watchlistDipCount})
             </Button>
+
+            {hiddenSymbols.size > 0 && (
+              <Button
+                variant={activeTab === 'HIDDEN' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setActiveTab('HIDDEN')}
+                className={cn(
+                  'h-7 text-xs px-2.5 font-semibold gap-1 transition-all',
+                  activeTab === 'HIDDEN'
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'border-rose-500/30 text-rose-300 bg-rose-950/20 hover:bg-rose-950/40'
+                )}
+              >
+                <EyeOff className="w-3 h-3 text-rose-400" />
+                Hidden ({hiddenDipsCount})
+              </Button>
+            )}
           </div>
 
           {/* Sort & Sensitivity Filters */}
@@ -360,88 +450,145 @@ export function DipOpportunityRadarCard({
           <div className="py-12 text-center space-y-2">
             <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto opacity-70" />
             <p className="text-sm font-semibold text-foreground">
-              {activeTab === 'SAVED' ? 'No Saved Reports Yet' : 'No Pullbacks Match Current Criteria'}
+              {activeTab === 'SAVED'
+                ? 'No Saved Reports Yet'
+                : activeTab === 'HIDDEN'
+                ? 'No Hidden Stocks'
+                : 'No Pullbacks Match Current Criteria'}
             </p>
             <p className="text-xs text-muted-foreground max-w-sm mx-auto">
               {activeTab === 'SAVED'
                 ? 'Run an AI diagnosis on any dip candidate to save its full institutional report to the database.'
+                : activeTab === 'HIDDEN'
+                ? 'You have not marked any stocks to be hidden from the Dip Radar.'
                 : 'Try adjusting the sensitivity or tab filters to see all dipping assets.'}
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 max-h-[520px] overflow-y-auto pr-1">
-            {filteredDips.slice(0, 16).map((item) => {
-              const isVolatility = item.heuristicSignal.potentialDriver === 'LIKELY_VOLATILITY' || item.heuristicSignal.potentialDriver === 'MARKET_WIDE_CORRECTION';
-              const oppScore = item.savedReportInfo?.opportunityScore ?? item.heuristicSignal.preliminaryOpportunityScore;
-              const hasSavedReport = Boolean(item.savedReportInfo);
-              const scoreTier = getBuyScoreDetails(oppScore);
-              const breakdown = item.scoreBreakdown;
-              const isExpanded = expandedSymbol === item.symbol;
-
-              return (
-                <div
-                  key={item.symbol}
-                  className={cn(
-                    'group rounded-xl border transition-all p-3.5 flex flex-col justify-between gap-3 relative shadow-sm',
-                    hasSavedReport
-                      ? 'bg-emerald-950/10 border-emerald-500/40 hover:border-emerald-500/60'
-                      : 'bg-card/40 border-border/60 hover:bg-card/75',
-                    scoreTier.borderGlow
-                  )}
+          <div>
+            {/* Hidden Stocks Management Banner */}
+            {activeTab === 'HIDDEN' && (
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-rose-950/20 border border-rose-500/30 mb-3 text-xs">
+                <div className="flex items-center gap-2 text-rose-300">
+                  <EyeOff className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>
+                    Showing {filteredDips.length} stock{filteredDips.length === 1 ? '' : 's'} marked to not be shown in Dip Radar. Click <strong>Show Again</strong> to restore.
+                  </span>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleUnhideAll}
+                  className="h-6 px-2 text-[10px] font-bold border-rose-500/40 text-rose-200 hover:bg-rose-900/40 gap-1"
                 >
-                  {/* Top Bar: Symbol, Name, Badges & Price */}
-                  <div className="flex justify-between items-start gap-2">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-primary/10 to-indigo-500/10 border border-primary/20 flex items-center justify-center text-foreground font-black text-xs font-mono shadow-inner">
-                        {item.symbol.slice(0, 4)}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-bold text-sm text-foreground group-hover:text-primary transition-colors">
-                            {item.symbol}
-                          </span>
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              'text-[9px] px-1.5 py-0 font-semibold',
-                              item.source === 'HOLDING' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30' :
-                              'bg-cyan-500/10 text-cyan-400 border-cyan-500/30'
-                            )}
-                          >
-                            {item.source === 'HOLDING' ? 'Holding' : 'Watchlist'}
-                          </Badge>
+                  <Eye className="w-3 h-3" />
+                  Unhide All
+                </Button>
+              </div>
+            )}
 
-                          {hasSavedReport && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 max-h-[520px] overflow-y-auto pr-1">
+              {filteredDips.slice(0, 16).map((item) => {
+                const isVolatility = item.heuristicSignal.potentialDriver === 'LIKELY_VOLATILITY' || item.heuristicSignal.potentialDriver === 'MARKET_WIDE_CORRECTION';
+                const oppScore = item.savedReportInfo?.opportunityScore ?? item.heuristicSignal.preliminaryOpportunityScore;
+                const hasSavedReport = Boolean(item.savedReportInfo);
+                const scoreTier = getBuyScoreDetails(oppScore);
+                const breakdown = item.scoreBreakdown;
+                const isExpanded = expandedSymbol === item.symbol;
+                const isHidden = hiddenSymbols.has(item.symbol);
+
+                return (
+                  <div
+                    key={item.symbol}
+                    className={cn(
+                      'group rounded-xl border transition-all p-3.5 flex flex-col justify-between gap-3 relative shadow-sm',
+                      hasSavedReport
+                        ? 'bg-emerald-950/10 border-emerald-500/40 hover:border-emerald-500/60'
+                        : 'bg-card/40 border-border/60 hover:bg-card/75',
+                      scoreTier.borderGlow
+                    )}
+                  >
+                    {/* Top Bar: Symbol, Name, Badges & Price + Hide Button */}
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-primary/10 to-indigo-500/10 border border-primary/20 flex items-center justify-center text-foreground font-black text-xs font-mono shadow-inner">
+                          {item.symbol.slice(0, 4)}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-sm text-foreground group-hover:text-primary transition-colors">
+                              {item.symbol}
+                            </span>
                             <Badge
                               variant="outline"
-                              className="text-[9px] px-1.5 py-0 font-semibold bg-emerald-500/15 text-emerald-300 border-emerald-500/40 flex items-center gap-1"
-                              title={`Saved report from ${new Date(item.savedReportInfo!.analyzedAt).toLocaleDateString()}`}
+                              className={cn(
+                                'text-[9px] px-1.5 py-0 font-semibold',
+                                item.source === 'HOLDING' ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30' :
+                                'bg-cyan-500/10 text-cyan-400 border-cyan-500/30'
+                              )}
                             >
-                              <Database className="w-2.5 h-2.5 text-emerald-400" />
-                              <span>Saved</span>
+                              {item.source === 'HOLDING' ? 'Holding' : 'Watchlist'}
                             </Badge>
-                          )}
-                        </div>
-                        <div className="text-[11px] text-muted-foreground truncate max-w-[160px]" title={item.name}>
-                          {item.name}
-                        </div>
-                      </div>
-                    </div>
 
-                    {/* Price & Day Change */}
-                    <div className="text-right">
-                      <div className="text-sm font-bold font-mono text-foreground">
-                        ${item.currentPrice.toFixed(2)}
+                            {hasSavedReport && (
+                              <Badge
+                                variant="outline"
+                                className="text-[9px] px-1.5 py-0 font-semibold bg-emerald-500/15 text-emerald-300 border-emerald-500/40 flex items-center gap-1"
+                                title={`Saved report from ${new Date(item.savedReportInfo!.analyzedAt).toLocaleDateString()}`}
+                              >
+                                <Database className="w-2.5 h-2.5 text-emerald-400" />
+                                <span>Saved</span>
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground truncate max-w-[160px]" title={item.name}>
+                            {item.name}
+                          </div>
+                        </div>
                       </div>
-                      <div className={cn(
-                        'flex items-center justify-end gap-0.5 text-[11px] font-mono font-medium',
-                        item.dayChangePercent < 0 ? 'text-rose-400' : 'text-emerald-400'
-                      )}>
-                        {item.dayChangePercent < 0 ? <ArrowDownRight className="w-3 h-3" /> : <TrendingUp className="w-3 h-3" />}
-                        <span>{item.dayChangePercent >= 0 ? '+' : ''}{item.dayChangePercent.toFixed(1)}%</span>
+
+                      {/* Price, Day Change & Quick Hide Action */}
+                      <div className="flex items-start gap-1.5">
+                        <div className="text-right">
+                          <div className="text-sm font-bold font-mono text-foreground">
+                            ${item.currentPrice.toFixed(2)}
+                          </div>
+                          <div className={cn(
+                            'flex items-center justify-end gap-0.5 text-[11px] font-mono font-medium',
+                            item.dayChangePercent < 0 ? 'text-rose-400' : 'text-emerald-400'
+                          )}>
+                            {item.dayChangePercent < 0 ? <ArrowDownRight className="w-3 h-3" /> : <TrendingUp className="w-3 h-3" />}
+                            <span>{item.dayChangePercent >= 0 ? '+' : ''}{item.dayChangePercent.toFixed(1)}%</span>
+                          </div>
+                        </div>
+
+                        {/* Top quick toggle: hide / show again */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (isHidden) {
+                              handleUnhideStock(item.symbol);
+                            } else {
+                              handleHideStock(item.symbol);
+                            }
+                          }}
+                          className={cn(
+                            'p-1.5 rounded-lg border transition-all text-muted-foreground',
+                            isHidden
+                              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
+                              : 'border-transparent hover:border-rose-500/30 hover:bg-rose-500/10 hover:text-rose-400'
+                          )}
+                          title={isHidden ? `Show ${item.symbol} again in Dip Radar` : `Mark ${item.symbol} to not be shown anymore`}
+                        >
+                          {isHidden ? (
+                            <Eye className="w-3.5 h-3.5" />
+                          ) : (
+                            <EyeOff className="w-3.5 h-3.5" />
+                          )}
+                        </button>
                       </div>
                     </div>
-                  </div>
 
                   {/* Mid Bar: Dynamic Buy Score & Telemetry Pills */}
                   <div className="flex items-center justify-between gap-2 pt-1 border-t border-border/40 text-xs flex-wrap">
@@ -582,6 +729,37 @@ export function DipOpportunityRadarCard({
                     )}
 
                     <div className="flex items-center gap-1.5">
+                      {/* Hide / Unhide Stock Button */}
+                      {isHidden ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleUnhideStock(item.symbol);
+                          }}
+                          className="h-7 px-2 text-[10px] font-bold text-emerald-300 border-emerald-500/40 hover:bg-emerald-950/30 gap-1"
+                          title={`Restore ${item.symbol} to Dip Radar`}
+                        >
+                          <Eye className="w-3 h-3 text-emerald-400" />
+                          <span>Show Again</span>
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleHideStock(item.symbol);
+                          }}
+                          className="h-7 px-2 text-[10px] text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 gap-1 transition-colors"
+                          title={`Mark ${item.symbol} to not be shown anymore`}
+                        >
+                          <EyeOff className="w-3 h-3" />
+                          <span className="hidden sm:inline">Don't Show</span>
+                        </Button>
+                      )}
+
                       {/* Save to Watchlist Button */}
                       <Button
                         variant="ghost"
@@ -636,13 +814,14 @@ export function DipOpportunityRadarCard({
               );
             })}
           </div>
-        )}
+        </div>
+      )}
 
         {/* Footer Summary / Quick Action */}
         {dips.length > 0 && (
           <div className="mt-3 pt-2 border-t border-border/50 flex flex-col sm:flex-row justify-between items-center text-xs text-muted-foreground gap-2">
             <span>
-              Showing {filteredDips.length} of {dips.length} pullbacks • Sorted by {sortBy === 'BUY_SCORE' ? 'Highest Buy Score' : sortBy === 'DAY_DROP' ? 'Day Drop' : '52W Drawdown'}.
+              Showing {filteredDips.length} of {activeDips.length} pullbacks • Sorted by {sortBy === 'BUY_SCORE' ? 'Highest Buy Score' : sortBy === 'DAY_DROP' ? 'Day Drop' : '52W Drawdown'}.
             </span>
             <div className="flex items-center gap-2">
               {onNavigateToPortfolio && (

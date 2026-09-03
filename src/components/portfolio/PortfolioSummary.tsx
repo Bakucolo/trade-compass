@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import {
   ArrowUpRight,
@@ -32,6 +32,7 @@ import { CurrencyAssetsModal } from "./CurrencyAssetsModal";
 import { BuyingPowerAnalyserModal } from "./BuyingPowerAnalyserModal";
 import { DualCurrencyComparisonCard } from "./DualCurrencyComparisonCard";
 import { UnifiedPosition } from "./types";
+import { calculatePortfolioTheta } from "@/utils/greeksUtils";
 
 interface PortfolioSummaryProps {
   netLiquidValue: number;
@@ -161,6 +162,11 @@ export function PortfolioSummary({
   const totalCalculatedBP = (ibkrCombined?.buyingPower || ibkrBP) + tastyDerivBP + t212CashUSD;
   const totalNet = netLiquidValue > 0 ? netLiquidValue : (ibkrTotalNetCombined + tastyNet + t212NetUSD);
 
+  // Overall Portfolio Theta Time Decay / Yield
+  const portfolioTheta = useMemo(() => {
+    return calculatePortfolioTheta(positions, totalNet);
+  }, [positions, totalNet]);
+
   const ibkrPct = totalNet > 0 ? (ibkrTotalNetCombined / totalNet) * 100 : 33.3;
   const tastyPct = totalNet > 0 ? (tastyNet / totalNet) * 100 : 33.3;
   const t212Pct = totalNet > 0 ? (t212NetUSD / totalNet) * 100 : 33.3;
@@ -237,7 +243,7 @@ export function PortfolioSummary({
       />
 
       {/* Top Primary KPI Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
         {/* 1. Net Liquidating Value */}
         <Card className="glass-card border-l-4 border-l-cyan-500 p-5 relative overflow-hidden group hover:border-cyan-500/80 transition-all">
           <div className="flex items-center justify-between mb-1 relative z-10">
@@ -348,7 +354,78 @@ export function PortfolioSummary({
           </div>
         </Card>
 
-        {/* 4. Total Unrealized Return */}
+        {/* 4. Overall Portfolio Theta & Time Decay */}
+        <Card
+          className={cn(
+            "glass-card p-5 relative overflow-hidden border-l-4 transition-all",
+            portfolioTheta.totalDailyTheta > 0
+              ? "border-l-purple-500 hover:border-purple-500/80 shadow-purple-500/10"
+              : portfolioTheta.totalDailyTheta < 0
+              ? "border-l-amber-500 hover:border-amber-500/80"
+              : "border-l-slate-600 hover:border-slate-500"
+          )}
+        >
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              <Zap className="w-3.5 h-3.5 text-purple-400" /> Portfolio Theta (Θ)
+            </span>
+            <Badge
+              className={cn(
+                "text-[9px] font-mono font-bold px-1.5 py-0",
+                portfolioTheta.totalDailyTheta > 0
+                  ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-emerald-500/10"
+                  : portfolioTheta.totalDailyTheta < 0
+                  ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                  : "bg-slate-800 text-slate-300 border-slate-700"
+              )}
+            >
+              {portfolioTheta.totalDailyTheta > 0
+                ? `+${portfolioTheta.annualizedThetaYieldPercent.toFixed(1)}% Yield`
+                : portfolioTheta.totalDailyTheta < 0
+                ? `${portfolioTheta.annualizedThetaYieldPercent.toFixed(1)}% Drag`
+                : 'Neutral Θ'}
+            </Badge>
+          </div>
+
+          <div className={cn("space-y-0.5 font-mono", isPrivacyMode && "blur-md select-none opacity-60")}>
+            <div
+              className={cn(
+                "text-2xl font-bold flex items-baseline gap-1",
+                portfolioTheta.totalDailyTheta > 0
+                  ? "text-emerald-400"
+                  : portfolioTheta.totalDailyTheta < 0
+                  ? "text-amber-400"
+                  : "text-foreground"
+              )}
+            >
+              <span>{portfolioTheta.totalDailyTheta >= 0 ? '+' : ''}{formatDynamicCurr(portfolioTheta.totalDailyTheta)}</span>
+              <span className="text-xs font-sans font-medium text-muted-foreground">/ day</span>
+            </div>
+            {currencyMode === 'DUAL' ? (
+              <div className="text-xs font-bold font-mono text-purple-300/90">
+                {portfolioTheta.totalDailyTheta >= 0 ? '+' : ''}£{(portfolioTheta.totalDailyTheta * fxRateUsdGbp).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} GBP/day
+              </div>
+            ) : (
+              <div className="text-xs font-mono text-muted-foreground">
+                Run-rate:{' '}
+                <strong className={portfolioTheta.totalMonthlyTheta >= 0 ? "text-emerald-400" : "text-amber-400"}>
+                  {portfolioTheta.totalMonthlyTheta >= 0 ? '+' : ''}{formatDynamicCurr(portfolioTheta.totalMonthlyTheta)}/mo
+                </strong>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-2.5 flex items-center justify-between text-xs text-muted-foreground pt-2 border-t border-white/5 font-mono">
+            <span className="text-emerald-400/90" title="Short options time premium harvested per day">
+              Short: +${portfolioTheta.shortOptionsTheta.toFixed(0)}/d
+            </span>
+            <span className="text-purple-300/80" title="Total active option contracts in portfolio">
+              {portfolioTheta.totalOptionsCount} contracts ({portfolioTheta.shortOptionsCount}S/{portfolioTheta.longOptionsCount}L)
+            </span>
+          </div>
+        </Card>
+
+        {/* 5. Total Unrealized Return */}
         <Card
           className={cn(
             "glass-card p-5 relative overflow-hidden border-l-4 transition-all",

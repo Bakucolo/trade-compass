@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useDebounce } from '@/hooks/useDebounce';
 import {
   Filter,
   Search,
@@ -175,8 +176,10 @@ export function ScannerPage({
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
   const [isFilterDeckOpen, setIsFilterDeckOpen] = useState(true);
 
+  const debouncedCriteria = useDebounce(criteria, 300);
+
   // Queries
-  const { data: scannerData, isLoading, isRefetching, refetch } = useScanner(criteria);
+  const { data: scannerData, isLoading, isRefetching, refetch } = useScanner(debouncedCriteria);
   const { data: metaData } = useScannerMeta();
   const { data: watchlists = [] } = useWatchlists();
   const bulkCreateWatchlistMutation = useBulkCreateWatchlist();

@@ -12,5 +12,10 @@ id = "af8c77d07b1249738bca2e880d41bba6"
 [vars]
 # Fallback consume secret (Recommended: set via `wrangler secret put CONSUME_SECRET` in production)
 CONSUME_SECRET = "tradecompass_secret_consume_token_2026"
+# Standard Telegram chat ID (for regular reports)
+TELEGRAM_CHAT_ID = "8959044574"
+# Alerts Topic Configuration (chat_id: -1003872409872, message_thread_id: 2)
+TELEGRAM_ALERTS_CHAT_ID = "-1003872409872"
+TELEGRAM_ALERTS_THREAD_ID = "2"
 # Optional secret token to verify Telegram webhook requests
 # TELEGRAM_WEBHOOK_SECRET = "my_telegram_webhook_secret_123"

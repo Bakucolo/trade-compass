@@ -13,11 +13,13 @@ import {
   History,
   ArrowRight,
   ShieldAlert,
-  Bot
+  Bot,
+  Target
 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { ExecutionQueueManager } from './management/ExecutionQueueManager';
 import { CoveredCallsAnalyser } from './management/CoveredCallsAnalyser';
 import { OptionsRadarCard } from './dashboard/OptionsRadarCard';
 import { DipOpportunityRadarCard } from './dashboard/DipOpportunityRadarCard';
@@ -28,6 +30,7 @@ import { PortfolioValuationModal } from './portfolio/PortfolioValuationModal';
 import { useIBKRPortfolio } from '@/services/ibkr';
 import { useTastytradePositions } from '@/services/tastytrade';
 import { useTrading212Positions } from '@/services/trading212';
+import { usePlannedTrades } from '@/services/plannedTradeService';
 import { cn } from '@/lib/utils';
 
 interface ManagementPageProps {
@@ -41,7 +44,7 @@ export function ManagementPage({
   onNavigateToPortfolio,
   onNavigateToGraphs,
 }: ManagementPageProps) {
-  const [activeTab, setActiveTab] = useState('covered-calls');
+  const [activeTab, setActiveTab] = useState('execution-queue');
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [isValuationModalOpen, setIsValuationModalOpen] = useState(false);
   const [isDefenseModalOpen, setIsDefenseModalOpen] = useState(false);
@@ -52,12 +55,43 @@ export function ManagementPage({
   const { data: ibkrPositions = [] } = useIBKRPortfolio();
   const { data: tastyPositions = [] } = useTastytradePositions();
   const { data: t212Positions = [] } = useTrading212Positions();
+  const { data: plannedTrades = [] } = usePlannedTrades();
 
-  const allPositions = [
-    ...(Array.isArray(ibkrPositions) ? ibkrPositions : []),
-    ...(Array.isArray(tastyPositions) ? tastyPositions : []),
-    ...(Array.isArray(t212Positions) ? t212Positions : []),
-  ];
+  const pendingTradesCount = plannedTrades.filter((t) => t.status === 'PENDING').length;
+
+  const allPositions = useMemo(() => {
+    const raw = [
+      ...(Array.isArray(ibkrPositions) ? ibkrPositions : []),
+      ...(Array.isArray(tastyPositions) ? tastyPositions : []),
+      ...(Array.isArray(t212Positions) ? t212Positions : []),
+    ];
+    return raw.map((p: any) => {
+      const isOption = p.assetType === 'Option' || p.assetType === 'OPTION';
+      const qty = Number(p.quantity) || 0;
+      const avgCost = Number(p.averageCost) || 0;
+      const curPrice = Number(p.currentPrice) || 0;
+      const multiplier = isOption ? 100 : 1;
+      let unPnL = p.unrealizedPL ?? p.unrealizedPnL ?? p.ppl;
+      if (unPnL === undefined || unPnL === null || isNaN(unPnL)) {
+        if (isOption && qty < 0 && avgCost > 0 && curPrice > 0) {
+          unPnL = (avgCost - curPrice) * Math.abs(qty) * multiplier;
+        } else if (qty !== 0 && avgCost > 0 && curPrice > 0) {
+          unPnL = (curPrice - avgCost) * qty * multiplier;
+        } else {
+          unPnL = (p.marketValue || 0) - (qty * avgCost * multiplier);
+        }
+      }
+      const costBasis = Math.abs(qty * avgCost * multiplier) || 1;
+      const unPnLPct = p.unrealizedPLPercent ?? p.unrealizedPnLPercent ?? (costBasis > 0 ? (unPnL / costBasis) * 100 : 0);
+
+      return {
+        ...p,
+        assetType: isOption ? 'Option' : 'Stock',
+        unrealizedPL: Number(unPnL) || 0,
+        unrealizedPLPercent: Number(unPnLPct) || 0,
+      };
+    });
+  }, [ibkrPositions, tastyPositions, t212Positions]);
 
   return (
     <div className="space-y-6 pb-20 animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -119,6 +153,20 @@ export function ManagementPage({
       {/* ================= MANAGEMENT TOOLS TABS ================= */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <TabsList className="bg-card/80 border border-border/60 p-1 rounded-2xl flex flex-wrap gap-1 w-full sm:w-auto h-auto">
+          {/* Daily & Weekly Execution Queue Tab */}
+          <TabsTrigger
+            value="execution-queue"
+            className="gap-2 text-xs font-semibold px-3.5 py-2 rounded-xl data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
+          >
+            <Target className="w-3.5 h-3.5 text-primary" />
+            <span>Execution Queue</span>
+            {pendingTradesCount > 0 && (
+              <Badge variant="secondary" className="ml-1 text-[10px] px-1.5 py-0 bg-primary/20 text-primary font-mono font-bold">
+                {pendingTradesCount}
+              </Badge>
+            )}
+          </TabsTrigger>
+
           {/* Covered Calls Tab */}
           <TabsTrigger
             value="covered-calls"
@@ -155,6 +203,14 @@ export function ManagementPage({
             <span>Tactical Position Sizing</span>
           </TabsTrigger>
         </TabsList>
+
+        {/* ================= 0. DAILY & WEEKLY EXECUTION QUEUE ================= */}
+        <TabsContent value="execution-queue" className="space-y-6 animate-in fade-in duration-200">
+          <ExecutionQueueManager
+            onNavigateToResearch={onNavigateToResearch}
+            onNavigateToPortfolio={onNavigateToPortfolio}
+          />
+        </TabsContent>
 
         {/* ================= 1. COVERED CALLS ANALYSER ================= */}
         <TabsContent value="covered-calls" className="space-y-6 animate-in fade-in duration-200">

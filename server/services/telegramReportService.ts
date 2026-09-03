@@ -393,13 +393,53 @@ export async function fetchComprehensiveReportData(): Promise<ExecutiveReportDat
 }
 
 /**
+ * Formats options expiry dates into human-readable format (e.g. "20260918" -> "Sep 18, 2026")
+ */
+export function formatOptionExpiryDate(rawExpiry?: string | null): string {
+  if (!rawExpiry) return 'N/A';
+  const clean = String(rawExpiry).trim();
+
+  // 1. If 8 digits: YYYYMMDD (e.g. "20260918")
+  if (/^\d{8}$/.test(clean)) {
+    const y = parseInt(clean.slice(0, 4), 10);
+    const m = parseInt(clean.slice(4, 6), 10) - 1;
+    const d = parseInt(clean.slice(6, 8), 10);
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    if (m >= 0 && m < 12) return `${monthNames[m]} ${d}, ${y}`;
+  }
+
+  // 2. If 6 digits: YYMMDD from OCC symbol (e.g. "260918")
+  if (/^\d{6}$/.test(clean)) {
+    const y = 2000 + parseInt(clean.slice(0, 2), 10);
+    const m = parseInt(clean.slice(2, 4), 10) - 1;
+    const d = parseInt(clean.slice(4, 6), 10);
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    if (m >= 0 && m < 12) return `${monthNames[m]} ${d}, ${y}`;
+  }
+
+  // 3. If ISO or date string like "2026-09-18" or "2026-09-18T00:00:00.000Z"
+  if (clean.includes('-') || clean.includes('/')) {
+    const parts = clean.split(/[-/T ]/);
+    if (parts.length >= 3) {
+      const y = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10) - 1;
+      const d = parseInt(parts[2], 10);
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      if (!isNaN(y) && m >= 0 && m < 12 && !isNaN(d)) return `${monthNames[m]} ${d}, ${y}`;
+    }
+  }
+
+  return clean;
+}
+
+/**
  * Generates an institutional-grade PDF document Buffer using PDFKit
  */
 export async function generateExecutivePdfBuffer(data: ExecutiveReportData): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
     const doc = new PDFDocument({
       size: 'LETTER',
-      margins: { top: 40, bottom: 40, left: 40, right: 40 },
+      margins: { top: 36, bottom: 25, left: 40, right: 40 },
       bufferPages: true,
       info: {
         Title: data.reportTitle,
@@ -448,16 +488,20 @@ export async function generateExecutivePdfBuffer(data: ExecutiveReportData): Pro
     doc.rect(40, 40, 532, 60).fill(colors.primaryNavy);
     doc.rect(40, 98, 532, 2).fill(colors.accentIndigo);
 
-    doc.fillColor('#ffffff').fontSize(16).font('Helvetica-Bold')
-      .text('TRADEFLOW | EXECUTIVE INTELLIGENCE BRIEFING', 54, 52);
+    // Left Title Block (Constrained width to avoid any overlap)
+    doc.fillColor('#ffffff').fontSize(13).font('Helvetica-Bold')
+      .text('TRADEFLOW | EXECUTIVE INTELLIGENCE BRIEFING', 52, 50, { width: 340 });
 
-    doc.fillColor('#94a3b8').fontSize(9).font('Helvetica')
-      .text(`Generated: ${dateFormatted} at ${timeFormatted} • Daily Dispatch`, 54, 74);
+    doc.fillColor('#94a3b8').fontSize(8.5).font('Helvetica')
+      .text(`Generated: ${dateFormatted} at ${timeFormatted} • Daily Dispatch`, 52, 72, { width: 340 });
 
-    doc.fillColor('#38bdf8').fontSize(9).font('Helvetica-Bold')
-      .text('CONFIDENTIAL / INSTITUTIONAL', 400, 54, { align: 'right', width: 160 });
+    // Right Institutional Status Badge (Dedicated styled pill container, zero overlap)
+    doc.roundedRect(406, 49, 154, 20, 3).fillAndStroke('#1e293b', '#0369a1');
+    doc.fillColor('#38bdf8').fontSize(7.5).font('Helvetica-Bold')
+      .text('CONFIDENTIAL / INSTITUTIONAL', 406, 55, { align: 'center', width: 154 });
 
-    doc.moveDown(2.5);
+    doc.fillColor('#64748b').fontSize(6.5).font('Helvetica')
+      .text('AUTOMATED DISPATCH', 406, 73, { align: 'center', width: 154 });
 
     // Section 1: Positions Requiring Defense & Management
     const section1Top = 115;
@@ -498,15 +542,19 @@ export async function generateExecutivePdfBuffer(data: ExecutiveReportData): Pro
         doc.fillColor(colors.slateMuted).fontSize(7).font('Helvetica')
           .text(`${p.quantity > 0 ? '+' : ''}${p.quantity} contract (${p.optionType})`, 110, defY + 16);
 
-        // Strike & Expiry
-        doc.fillColor(colors.slateDark).fontSize(7.5).font('Helvetica-Bold')
-          .text(`$${p.strikePrice.toFixed(2)} ${p.optionType}`, 250, defY + 6);
-        doc.fillColor(colors.slateMuted).fontSize(7).font('Helvetica')
-          .text(`Exp: ${p.expiryDate || 'N/A'}`, 250, defY + 16);
+        // Strike & Expiry (Nicely formatted and styled date)
+        doc.fillColor(colors.slateDark).fontSize(8).font('Helvetica-Bold')
+          .text(`$${p.strikePrice.toFixed(2)} ${p.optionType}`, 246, defY + 6);
+        doc.fillColor(colors.slateMuted).fontSize(6.5).font('Helvetica')
+          .text('Exp: ', 246, defY + 16);
+        doc.fillColor(colors.accentIndigo).fontSize(7).font('Helvetica-Bold')
+          .text(formatOptionExpiryDate(p.expiryDate), 265, defY + 16);
 
-        // DTE
-        doc.fillColor(p.daysToExpiry <= 7 ? colors.roseRed : colors.slateDark).fontSize(8).font('Helvetica-Bold')
-          .text(`${p.daysToExpiry}d`, 350, defY + 10);
+        // DTE (Styled in a clean pill badge)
+        const dteColor = p.daysToExpiry <= 7 ? colors.roseRed : p.daysToExpiry <= 21 ? colors.amberGold : colors.emeraldGreen;
+        doc.roundedRect(344, defY + 7, 34, 14, 2).fill(dteColor);
+        doc.fillColor('#ffffff').fontSize(7.5).font('Helvetica-Bold')
+          .text(`${p.daysToExpiry}d`, 344, defY + 10, { width: 34, align: 'center' });
 
         // Open P&L
         const pColor = p.unrealizedPL >= 0 ? colors.emeraldGreen : colors.roseRed;
@@ -646,7 +694,7 @@ export async function generateExecutivePdfBuffer(data: ExecutiveReportData): Pro
     doc.rect(40, pillarTop + 14, 532, 1).fill(colors.cardBorder);
 
     let pilY = pillarTop + 24;
-    data.macro.keyTakeaways.forEach((takeaway, idx) => {
+    data.macro.keyTakeaways.slice(0, 3).forEach((takeaway, idx) => {
       doc.roundedRect(40, pilY, 532, 32, 4).fillAndStroke('#ffffff', '#e2e8f0');
       doc.fillColor(colors.accentIndigo).fontSize(9).font('Helvetica-Bold').text(`0${idx + 1}`, 52, pilY + 10);
       doc.fillColor(colors.slateDark).fontSize(8).font('Helvetica')
@@ -655,19 +703,31 @@ export async function generateExecutivePdfBuffer(data: ExecutiveReportData): Pro
     });
 
     // Bottom Compliance & Verification Box
-    const footerBoxY = 620;
+    const footerBoxY = 612;
     doc.roundedRect(40, footerBoxY, 532, 60, 4).fillAndStroke('#f1f5f9', '#cbd5e1');
     doc.fillColor(colors.slateMuted).fontSize(7).font('Helvetica-Bold')
       .text('SYSTEM DISPATCH METADATA & INTEGRITY NOTICE', 50, footerBoxY + 10);
     doc.fillColor(colors.slateDark).fontSize(7).font('Helvetica')
       .text(`This document was synthesized automatically by the TradeFlow Autonomous Intelligence Engine. It incorporates live broker holding telemetries from Interactive Brokers, Tastytrade, and Trading212, alongside CBOE options market volatility matrices and FRED economic datasets.\nDocument Checksum ID: ${Math.random().toString(36).substring(2, 12).toUpperCase()} • Delivered via Encrypted Telegram Bot Webhook.`, 50, footerBoxY + 22, { width: 512, lineBreak: true });
 
-    // Global Footer Page Numbers
+    // Global Footer Page Numbers (Safely drawn without triggering automatic PDFKit blank pages)
     const range = doc.bufferedPageRange();
     for (let i = range.start; i < range.start + range.count; i++) {
       doc.switchToPage(i);
+      const originalMarginBottom = doc.page.margins.bottom;
+      doc.page.margins.bottom = 0; // Temporarily disable bottom margin to prevent auto-addPage
+
+      // Thin aesthetic rule above footer
+      doc.rect(40, 746, 532, 0.5).fill('#e2e8f0');
+
       doc.fillColor(colors.slateMuted).fontSize(7.5).font('Helvetica')
-        .text(`TradeFlow Executive Briefing • Page ${i + 1} of ${range.count}`, 40, 750, { align: 'center', width: 532 });
+        .text(`TradeFlow Executive Briefing • Page ${i + 1} of ${range.count}`, 40, 752, {
+          align: 'center',
+          width: 532,
+          lineBreak: false,
+        });
+
+      doc.page.margins.bottom = originalMarginBottom;
     }
 
     doc.end();
@@ -680,30 +740,43 @@ export async function generateExecutivePdfBuffer(data: ExecutiveReportData): Pro
 export async function sendPdfReportToTelegram(
   pdfBuffer: Buffer,
   filename = `TradeFlow_Executive_Briefing_${new Date().toISOString().slice(0, 10)}.pdf`,
-  captionSummary?: string
+  captionSummary?: string,
+  options?: {
+    isAlert?: boolean;
+    chatId?: string | number;
+    messageThreadId?: number;
+  }
 ): Promise<{ success: boolean; messageId?: number; responseData?: any }> {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
+  const originalChatId = process.env.TELEGRAM_CHAT_ID;
 
-  if (!botToken || !chatId) {
+  if (!botToken || !originalChatId) {
     throw new Error(
       'Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID in environment variables. Please check .env.local.'
     );
   }
+
+  const isAlert = Boolean(options?.isAlert);
+  // Routing: alerts go to -1003872409872 with thread 2; standard reports go to original chat without thread parameter
+  const targetChatId = String(options?.chatId ?? (isAlert ? (process.env.TELEGRAM_ALERTS_CHAT_ID || '-1003872409872') : originalChatId));
+  const targetThreadId = options?.messageThreadId ?? (isAlert ? Number(process.env.TELEGRAM_ALERTS_THREAD_ID || 2) : undefined);
 
   const defaultCaption = captionSummary || `📊 *TradeFlow Daily Executive Briefing*\n\nAttached is your synthesized institutional PDF report covering portfolio valuation, defense alerts, top 5 high-conviction dip opportunities, and macro volatility dossier.`;
 
   const task = agentActivityTracker.startTask({
     agentName: 'Telegram PDF Executive Dispatcher',
     agentType: 'PORTFOLIO_AUDIT',
-    taskDescription: `Uploading PDF executive report (${(pdfBuffer.length / 1024).toFixed(1)} KB) to Telegram chat ${chatId}`,
-    metadata: { filename, chat: chatId, sizeBytes: pdfBuffer.length }
+    taskDescription: `Uploading PDF executive report (${(pdfBuffer.length / 1024).toFixed(1)} KB) to Telegram chat ${targetChatId}${targetThreadId ? ` (topic ${targetThreadId})` : ''}`,
+    metadata: { filename, chat: targetChatId, threadId: targetThreadId, sizeBytes: pdfBuffer.length }
   });
 
   try {
     // Construct standard multipart/form-data body
     const formData = new FormData();
-    formData.append('chat_id', chatId);
+    formData.append('chat_id', targetChatId);
+    if (targetThreadId !== undefined) {
+      formData.append('message_thread_id', String(targetThreadId));
+    }
     formData.append('caption', defaultCaption);
     formData.append('parse_mode', 'Markdown');
 
@@ -743,6 +816,91 @@ export async function sendPdfReportToTelegram(
     });
     throw error;
   }
+}
+
+export interface SendTelegramMessageOptions {
+  text: string;
+  isAlert?: boolean; // When true: routes to the "Alerts" topic (chat_id: -1003872409872, message_thread_id: 2)
+  chatId?: string | number; // Custom chat_id override
+  messageThreadId?: number; // Custom message_thread_id override
+  parseMode?: 'Markdown' | 'HTML' | 'MarkdownV2';
+  disableNotification?: boolean;
+}
+
+/**
+ * Dispatches a text message to Telegram Bot API with dynamic topic routing:
+ * - When an alert is triggered (isAlert === true):
+ *   Uses chat_id: -1003872409872 and includes message_thread_id: 2 in the JSON payload.
+ * - For standard reports (isAlert === false):
+ *   Uses original chat_id without any message_thread_id parameter.
+ */
+export async function sendTelegramMessage(
+  options: SendTelegramMessageOptions
+): Promise<{ success: boolean; messageId?: number; responseData?: any }> {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const originalChatId = process.env.TELEGRAM_CHAT_ID;
+
+  if (!botToken || !originalChatId) {
+    throw new Error(
+      'Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID in environment variables. Please check .env.local.'
+    );
+  }
+
+  const isAlert = Boolean(options.isAlert);
+  const targetChatId = options.chatId ?? (isAlert ? (process.env.TELEGRAM_ALERTS_CHAT_ID || '-1003872409872') : originalChatId);
+  const targetThreadId = options.messageThreadId ?? (isAlert ? Number(process.env.TELEGRAM_ALERTS_THREAD_ID || 2) : undefined);
+
+  const payload: Record<string, any> = {
+    chat_id: targetChatId,
+    text: options.text,
+    parse_mode: options.parseMode || 'Markdown',
+  };
+
+  // Only include message_thread_id when routing to a specific topic (e.g. Alerts topic 2)
+  if (targetThreadId !== undefined) {
+    payload.message_thread_id = targetThreadId;
+  }
+
+  if (options.disableNotification !== undefined) {
+    payload.disable_notification = options.disableNotification;
+  }
+
+  const telegramEndpoint = `https://api.telegram.org/bot${botToken}/sendMessage`;
+
+  const res = await fetch(telegramEndpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  const responseJson = (await res.json()) as any;
+
+  if (!res.ok || !responseJson.ok) {
+    const errMsg = responseJson.description || `HTTP ${res.status} error from Telegram API`;
+    throw new Error(errMsg);
+  }
+
+  return {
+    success: true,
+    messageId: responseJson.result?.message_id,
+    responseData: responseJson.result,
+  };
+}
+
+/**
+ * Convenient helper to dispatch specific alerts to the Alerts topic
+ */
+export async function sendTelegramAlert(
+  text: string,
+  extra?: { chatId?: string | number; messageThreadId?: number; parseMode?: 'Markdown' | 'HTML' }
+) {
+  return sendTelegramMessage({
+    text,
+    isAlert: true,
+    chatId: extra?.chatId,
+    messageThreadId: extra?.messageThreadId,
+    parseMode: extra?.parseMode,
+  });
 }
 
 /**

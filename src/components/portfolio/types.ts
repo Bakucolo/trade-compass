@@ -32,6 +32,8 @@ export interface UnifiedPosition {
     underlyingSymbol?: string;
     underlyingPrice?: number;
     delta?: number;
+    theta?: number;
+    dailyDollarTheta?: number;
     currency?: string;
     // Thematic & Style
     investmentStyle?: 'Growth' | 'Value' | 'Dividend' | 'Defensive' | 'Speculative' | 'Blend';

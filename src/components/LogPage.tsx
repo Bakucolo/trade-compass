@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useDebounce } from '@/hooks/useDebounce';
 import {
   NotebookPen,
   Sparkles,
@@ -54,6 +55,8 @@ import {
   useRunThoughtAgent,
   useTelegramBufferSync,
   useThoughtLogFolders,
+  useMarkThoughtLogAsRead,
+  useMarkAllThoughtLogsAsRead,
   extractSymbolsFromText,
   extractPriceAlertCandidates,
 } from '@/services/thoughtLogService';
@@ -70,6 +73,10 @@ import {
   X,
   Eye,
   BarChart2,
+  Inbox,
+  Mail,
+  MailOpen,
+  CheckCheck,
 } from 'lucide-react';
 import { AddToWatchlistModal } from './AddToWatchlistModal';
 import { MoveToFolderModal } from './MoveToFolderModal';
@@ -147,14 +154,15 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState('');
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
   const [sentimentFilter, setSentimentFilter] = useState('ALL');
   const [selectedTagFilter, setSelectedTagFilter] = useState<string | null>(null);
-  const [selectedFolderFilter, setSelectedFolderFilter] = useState<string>('ALL');
+  const [selectedFolderFilter, setSelectedFolderFilter] = useState<string>('UNREAD');
 
   // Queries & Mutations
   const isTelegramFilter = sentimentFilter === 'TELEGRAM';
   const { data: logs = [], isLoading: isLogsLoading } = useThoughtLogs({
-    search: searchQuery,
+    search: debouncedSearchQuery,
     sentiment: isTelegramFilter ? 'ALL' : sentimentFilter,
     tag: isTelegramFilter ? 'Telegram' : (selectedTagFilter || undefined),
     folder: selectedFolderFilter,
@@ -166,10 +174,13 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
   const totalTelegramCount = allLogs.filter(
     (l) => l.tags?.toLowerCase().includes('telegram') || l.title.includes('📱')
   ).length;
+  const totalUnreadCount = foldersData?.unreadCount ?? allLogs.filter((l) => !l.isRead).length;
 
   const createLogMutation = useCreateThoughtLog();
   const updateLogMutation = useUpdateThoughtLog();
   const deleteLogMutation = useDeleteThoughtLog();
+  const markReadMutation = useMarkThoughtLogAsRead();
+  const markAllReadMutation = useMarkAllThoughtLogsAsRead();
   const runAgentMutation = useRunThoughtAgent();
   const telegramSyncMutation = useTelegramBufferSync();
   const sendReportMutation = useSendTelegramReport();
@@ -177,6 +188,14 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
 
   // Active Selected Log
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
+
+  // Filter visible logs: if in UNREAD view, only show unread logs or the currently selected log being viewed
+  const displayLogs = useMemo(() => {
+    if (selectedFolderFilter === 'UNREAD') {
+      return logs.filter((l) => !l.isRead || l.id === selectedLogId);
+    }
+    return logs;
+  }, [logs, selectedFolderFilter, selectedLogId]);
 
   // Workspace Edit States
   const [editTitle, setEditTitle] = useState('');
@@ -302,7 +321,8 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
   // Auto-select first log or populate default
   useEffect(() => {
     if (logs.length > 0) {
-      if (!selectedLogId || !logs.some((l) => l.id === selectedLogId)) {
+      const isCurrentValidInList = logs.some((l) => l.id === selectedLogId);
+      if (!selectedLogId || (!isCurrentValidInList && selectedFolderFilter !== 'UNREAD')) {
         const first = logs[0];
         setSelectedLogId(first.id);
         setEditTitle(first.title);
@@ -321,8 +341,12 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
         } else {
           setCurrentMarketData([]);
         }
+
+        if (selectedFolderFilter === 'UNREAD' && !first.isRead) {
+          markReadMutation.mutate({ id: first.id, isRead: true });
+        }
       }
-    } else if (selectedLogId === null) {
+    } else if (selectedLogId === null && selectedFolderFilter !== 'UNREAD') {
       // Empty template state
       setEditTitle('AI Semiconductor Demand vs Power Grid Constraints');
       setEditContent(
@@ -332,7 +356,7 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
       setEditSentiment('BULLISH');
       setEditTags('AI, Energy, Nuclear, Datacenters');
     }
-  }, [logs]);
+  }, [logs, selectedFolderFilter]);
 
   // When selecting a log from the list
   const handleSelectLog = (log: ThoughtLogRecord) => {
@@ -354,6 +378,19 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
       setCurrentMarketData([]);
     }
     setActiveActionTab(log.agentOutput ? 'agent_output' : 'editor');
+
+    if (!log.isRead) {
+      markReadMutation.mutate({ id: log.id, isRead: true });
+    }
+  };
+
+  const handleMarkAllAsRead = async () => {
+    try {
+      await markAllReadMutation.mutateAsync();
+      toast.success('All unread notes marked as read');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to mark all as read');
+    }
   };
 
   // Create fresh thought draft
@@ -670,6 +707,17 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                   Folders & Collections
                 </span>
                 <div className="flex items-center gap-1.5">
+                  {selectedFolderFilter === 'UNREAD' && totalUnreadCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleMarkAllAsRead}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 text-[10px] font-bold border border-emerald-500/30 transition-all shadow-sm"
+                      title="Mark all unread notes as read"
+                    >
+                      <CheckCheck className="w-3 h-3" />
+                      <span>Mark all read</span>
+                    </button>
+                  )}
                   {selectedFolderFilter !== 'ALL' && (
                     <button
                       type="button"
@@ -735,6 +783,35 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
 
               {/* Folder Capsules Grid & Drop Targets */}
               <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto pr-0.5 scrollbar-thin">
+                {/* 0. Unread Messages Option (Primary Default View) */}
+                <button
+                  type="button"
+                  onClick={() => setSelectedFolderFilter('UNREAD')}
+                  className={cn(
+                    "px-2.5 py-1.5 rounded-xl text-left font-bold text-xs transition-all flex items-center justify-between border relative group",
+                    selectedFolderFilter === 'UNREAD'
+                      ? "bg-gradient-to-r from-emerald-500/25 to-teal-500/25 text-emerald-300 border-emerald-500/60 shadow-md ring-1 ring-emerald-500/40"
+                      : "bg-emerald-500/10 text-emerald-300/80 hover:text-emerald-300 border-emerald-500/20 hover:bg-emerald-500/15"
+                  )}
+                  title="Unread thoughts & mobile messages (opening notes marks them as read and removes them from this view)"
+                >
+                  <div className="flex items-center gap-1.5 min-w-0 truncate">
+                    <Inbox className={cn("w-3.5 h-3.5 shrink-0", selectedFolderFilter === 'UNREAD' ? "text-emerald-300" : "text-emerald-400")} />
+                    <span className="truncate">Unread</span>
+                  </div>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "text-[9.5px] px-1.5 py-0 font-mono shrink-0 ml-1 border-0",
+                      totalUnreadCount > 0
+                        ? "bg-emerald-500 text-slate-950 font-extrabold shadow-sm animate-pulse"
+                        : "bg-emerald-500/20 text-emerald-300"
+                    )}
+                  >
+                    {totalUnreadCount}
+                  </Badge>
+                </button>
+
                 {/* 1. All Folder Option */}
                 <button
                   type="button"
@@ -913,16 +990,40 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                 <Loader2 className="w-6 h-6 animate-spin text-primary mx-auto" />
                 <p className="text-xs text-muted-foreground">Loading thought stream...</p>
               </div>
-            ) : logs.length === 0 ? (
+            ) : displayLogs.length === 0 ? (
               <div className="p-6 text-center rounded-2xl bg-card/40 border border-dashed border-border/60 space-y-3">
-                <NotebookPen className="w-8 h-8 text-muted-foreground/40 mx-auto" />
-                <p className="text-xs text-muted-foreground">No thought logs found matching your filter.</p>
-                <Button size="sm" variant="outline" onClick={handleNewDraft} className="text-xs">
-                  Create First Thought Log
-                </Button>
+                {selectedFolderFilter === 'UNREAD' ? (
+                  <>
+                    <div className="w-10 h-10 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center mx-auto text-emerald-400">
+                      <Inbox className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-bold text-foreground">All caught up! 🎉</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        You have opened and reviewed all unread messages.
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setSelectedFolderFilter('ALL')}
+                      className="text-xs font-bold text-primary border-primary/40 hover:bg-primary/10"
+                    >
+                      Browse All Notes ({allLogs.length})
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <NotebookPen className="w-8 h-8 text-muted-foreground/40 mx-auto" />
+                    <p className="text-xs text-muted-foreground">No thought logs found matching your filter.</p>
+                    <Button size="sm" variant="outline" onClick={handleNewDraft} className="text-xs">
+                      Create First Thought Log
+                    </Button>
+                  </>
+                )}
               </div>
             ) : (
-              logs.map((log) => {
+              displayLogs.map((log) => {
                 const isSelected = log.id === selectedLogId;
                 const sentimentMatch = SENTIMENT_OPTIONS.find((s) => s.value === log.sentiment);
                 const isBeingDragged = draggingLog?.id === log.id;
@@ -960,6 +1061,19 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                         >
                           <GripVertical className="w-3.5 h-3.5" />
                         </div>
+
+                        {/* Unread badge */}
+                        {!log.isRead && (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-1.5 py-0.2 rounded-full animate-pulse" title="Unread note">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                            <span>NEW</span>
+                          </span>
+                        )}
+                        {selectedFolderFilter === 'UNREAD' && log.isRead && (
+                          <span className="text-[9px] font-medium text-emerald-400/70 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.2 rounded-full" title="Opened in this session">
+                            ✓ Read
+                          </span>
+                        )}
 
                         {log.isPinned && (
                           <span className="p-1 rounded-md bg-amber-500/15 text-amber-400 border border-amber-500/30" title="Pinned to top">
@@ -1023,6 +1137,18 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                       </div>
 
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            markReadMutation.mutate({ id: log.id, isRead: !log.isRead });
+                            toast.success(!log.isRead ? 'Marked as read' : 'Marked as unread');
+                          }}
+                          className="p-1 rounded hover:bg-accent/60 text-muted-foreground hover:text-foreground transition-colors"
+                          title={log.isRead ? "Mark as unread" : "Mark as read"}
+                        >
+                          {log.isRead ? <Mail className="w-3.5 h-3.5 text-muted-foreground" /> : <MailOpen className="w-3.5 h-3.5 text-emerald-400" />}
+                        </button>
                         <button
                           type="button"
                           onClick={(e) => {
@@ -1224,6 +1350,30 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                       <><Lightbulb className="w-3.5 h-3.5 text-amber-400" /><span>Save to Ideas</span></>
                     )}
                   </Button>
+
+                  {selectedLogId && selectedLogId !== 'new_draft' && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        const currentLog = allLogs.find((l) => l.id === selectedLogId);
+                        const newReadState = !currentLog?.isRead;
+                        markReadMutation.mutate({ id: selectedLogId, isRead: newReadState });
+                        toast.success(newReadState ? 'Marked as read' : 'Marked as unread');
+                      }}
+                      className="h-8 text-xs font-bold gap-1 text-muted-foreground hover:text-foreground"
+                      title="Toggle read / unread status for this note"
+                    >
+                      {allLogs.find((l) => l.id === selectedLogId)?.isRead ? (
+                        <Mail className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : (
+                        <MailOpen className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {allLogs.find((l) => l.id === selectedLogId)?.isRead ? 'Mark Unread' : 'Mark Read'}
+                      </span>
+                    </Button>
+                  )}
 
                   <Button
                     size="sm"

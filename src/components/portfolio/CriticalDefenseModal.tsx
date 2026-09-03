@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -84,6 +84,64 @@ export function isOptionCall(pos: {
 }
 
 /**
+ * Safely compute Open P&L and Open P&L % across brokers (IBKR, Tastytrade, Trading 212)
+ * Handles raw or unified positions, missing/NaN fields, and dynamically calculates
+ * P&L from averageCost and currentPrice (with multiplier 100 for options, accounting for short vs long).
+ */
+export function getPositionOpenPL(pos: UnifiedPosition | any): { pl: number; plPercent: number } {
+  if (!pos) return { pl: 0, plPercent: 0 };
+
+  const isOption = pos.assetType === 'Option' || pos.assetType === 'OPTION';
+  const multiplier = isOption ? 100 : 1;
+  const qty = Number(pos.quantity) || 0;
+  const avgCost = Number(pos.averageCost) || 0;
+  const curPrice = Number(pos.currentPrice) || 0;
+  const mktVal = Number(pos.marketValue) || 0;
+
+  // 1. Check explicit fields on pos
+  let pl = pos.unrealizedPL ?? pos.unrealizedPnL ?? pos.ppl ?? pos.openPnL ?? pos.pnl;
+  let plPercent = pos.unrealizedPLPercent ?? pos.unrealizedPnLPercent ?? pos.pplPercent;
+
+  // 2. If pl is undefined, null, NaN, or if it is 0 while prices are different:
+  if (
+    pl === undefined ||
+    pl === null ||
+    isNaN(pl) ||
+    (pl === 0 && avgCost > 0 && curPrice > 0 && Math.abs(avgCost - curPrice) > 0.0001)
+  ) {
+    if (qty !== 0 && avgCost > 0 && curPrice > 0) {
+      if (qty < 0) {
+        // Short: profit when price falls below average cost
+        pl = (avgCost - curPrice) * Math.abs(qty) * multiplier;
+      } else {
+        // Long: profit when price rises above average cost
+        pl = (curPrice - avgCost) * qty * multiplier;
+      }
+    } else if (mktVal !== 0 && avgCost > 0 && qty !== 0) {
+      const costBasis = Math.abs(qty * avgCost * multiplier);
+      if (qty < 0) {
+        pl = costBasis - Math.abs(mktVal);
+      } else {
+        pl = mktVal - costBasis;
+      }
+    } else {
+      pl = 0;
+    }
+  }
+
+  // 3. If plPercent is undefined, null, or NaN:
+  if (plPercent === undefined || plPercent === null || isNaN(plPercent)) {
+    const costBasis = Math.abs(qty * avgCost * multiplier) || (mktVal > 0 ? Math.abs(mktVal - pl) : 0) || 1;
+    plPercent = costBasis > 0 ? (pl / costBasis) * 100 : 0;
+  }
+
+  return {
+    pl: Number(pl) || 0,
+    plPercent: Number(plPercent) || 0,
+  };
+}
+
+/**
  * Calculate multi-factor Threat Score (0 to 100) for a position
  */
 export function computePositionThreat(pos: UnifiedPosition): RankedThreatPosition {
@@ -92,10 +150,11 @@ export function computePositionThreat(pos: UnifiedPosition): RankedThreatPositio
 
   const isOption = pos.assetType === 'Option' || pos.assetType === 'OPTION';
   const isShort = pos.quantity < 0;
-  const isLosing = pos.unrealizedPL < 0;
-  const lossPct = Math.abs(pos.unrealizedPLPercent || 0);
-  const lossDollar = Math.abs(pos.unrealizedPL || 0);
-  const isHighProfitWinner = !isLosing && (pos.unrealizedPLPercent || 0) >= 70;
+  const { pl, plPercent } = getPositionOpenPL(pos);
+  const isLosing = pl < 0;
+  const lossPct = Math.abs(plPercent || 0);
+  const lossDollar = Math.abs(pl || 0);
+  const isHighProfitWinner = !isLosing && (plPercent || 0) >= 70;
 
   // 1. Calculate DTE and check for past expiration
   let dte: number | null = null;
@@ -240,9 +299,17 @@ export function CriticalDefenseModal({
   onNavigateToResearch,
   onNavigateToGraphs
 }: CriticalDefenseModalProps) {
-  const [assetFilter, setAssetFilter] = useState<'ALL' | 'OPTIONS' | 'EQUITIES'>('ALL');
+  // Default to showing Options in Critical Position Defense Center
+  const [assetFilter, setAssetFilter] = useState<'ALL' | 'OPTIONS' | 'EQUITIES'>('OPTIONS');
   const [severityFilter, setSeverityFilter] = useState<'ALL' | 'EXTREME' | 'HIGH' | 'ITM_SHORTS'>('ALL');
   const [brokerFilter, setBrokerFilter] = useState<string>('ALL');
+  
+  // Reset asset filter to 'OPTIONS' by default every time the modal is opened
+  useEffect(() => {
+    if (isOpen) {
+      setAssetFilter('OPTIONS');
+    }
+  }, [isOpen]);
   
   // Sort State
   const [sortBy, setSortBy] = useState<'THREAT' | 'DTE' | 'BROKER' | 'LOSS_DOLLARS' | 'LOSS_PCT'>('THREAT');
@@ -286,7 +353,10 @@ export function CriticalDefenseModal({
   const rankedPositions = useMemo(() => {
     const safePositions = Array.isArray(positions) ? positions.filter(Boolean) : [];
     const scored = safePositions.map(p => computePositionThreat(p));
-    const activeThreats = scored.filter(s => s.threatScore >= 15 || (s.position && s.position.unrealizedPL < 0));
+    const activeThreats = scored.filter(s => {
+      const { pl } = getPositionOpenPL(s.position);
+      return s.threatScore >= 15 || pl < 0;
+    });
     return activeThreats.sort((a, b) => b.threatScore - a.threatScore);
   }, [positions]);
 
@@ -346,14 +416,18 @@ export function CriticalDefenseModal({
         return sortDirection === 'asc' ? (dteA - dteB) : (dteB - dteA);
       }
       if (sortBy === 'LOSS_DOLLARS') {
+        const plA = getPositionOpenPL(a.position).pl;
+        const plB = getPositionOpenPL(b.position).pl;
         return sortDirection === 'desc'
-          ? (a.position.unrealizedPL - b.position.unrealizedPL) // most negative first
-          : (b.position.unrealizedPL - a.position.unrealizedPL);
+          ? (plA - plB) // most negative first
+          : (plB - plA);
       }
       if (sortBy === 'LOSS_PCT') {
+        const pctA = getPositionOpenPL(a.position).plPercent;
+        const pctB = getPositionOpenPL(b.position).plPercent;
         return sortDirection === 'desc'
-          ? (a.position.unrealizedPLPercent - b.position.unrealizedPLPercent) // most negative % first
-          : (b.position.unrealizedPLPercent - a.position.unrealizedPLPercent);
+          ? (pctA - pctB) // most negative % first
+          : (pctB - pctA);
       }
       // Default: Threat Rank / Risk Level
       return sortDirection === 'desc'
@@ -367,8 +441,9 @@ export function CriticalDefenseModal({
   // Summary Metrics for the Defense Center
   const totalCapitalAtLoss = useMemo(() => {
     return rankedPositions
-      .filter(p => p.position.unrealizedPL < 0)
-      .reduce((sum, p) => sum + p.position.unrealizedPL, 0);
+      .map(p => getPositionOpenPL(p.position).pl)
+      .filter(pl => pl < 0)
+      .reduce((sum, pl) => sum + pl, 0);
   }, [rankedPositions]);
 
   return (
@@ -535,6 +610,7 @@ export function CriticalDefenseModal({
           ) : (
             filteredPositions.map((threat, index) => {
               const pos = threat.position;
+              const { pl, plPercent } = getPositionOpenPL(pos);
               const cleanBase = (pos.underlyingSymbol || pos.symbol.match(/^[A-Z]+/)?.[0] || pos.symbol).trim().toUpperCase();
               const isShort = pos.quantity < 0;
               const isOption = pos.assetType === 'Option';
@@ -718,7 +794,7 @@ export function CriticalDefenseModal({
                               )}>
                                 {threat.isITM ? `ITM (${threat.distancePct.toFixed(1)}% breach)` : `OTM (${threat.distancePct.toFixed(1)}% away)`}
                               </span>
-                            ) : pos.unrealizedPLPercent >= 70 ? (
+                            ) : plPercent >= 70 ? (
                               <span className="font-mono font-bold text-xs px-2 py-0.5 rounded-md inline-block bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
                                 OTM (High Decay Profit)
                               </span>
@@ -756,10 +832,10 @@ export function CriticalDefenseModal({
                         <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Open P&L</span>
                         <p className={cn(
                           "font-mono font-bold mt-0.5",
-                          pos.unrealizedPL >= 0 ? "text-emerald-400" : "text-rose-400"
+                          pl >= 0 ? "text-emerald-400" : "text-rose-400"
                         )}>
-                          {pos.unrealizedPL >= 0 ? '+' : '-'}${Math.abs(pos.unrealizedPL).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                          <span className="text-[10px] ml-1 font-semibold">({pos.unrealizedPLPercent.toFixed(1)}%)</span>
+                          {pl >= 0 ? '+' : '-'}${Math.abs(pl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          <span className="text-[10px] ml-1 font-semibold">({plPercent >= 0 ? '+' : ''}{plPercent.toFixed(1)}%)</span>
                         </p>
                       </div>
 

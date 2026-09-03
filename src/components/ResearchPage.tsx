@@ -182,6 +182,14 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
     enabled: isDossierRequested && activeDataTab === 'ai-analysis',
   });
 
+  // Fallback quote query if dossier synthesis is loading or fails
+  const { data: fallbackQuoteData } = useQuery({
+    queryKey: ['researchFallbackQuote', selectedSymbol],
+    queryFn: () => marketDataService.getQuote(selectedSymbol),
+    enabled: Boolean(selectedSymbol && isDossierRequested && (isQuoteError || !dossier)),
+    staleTime: 60 * 1000,
+  });
+
   const quote = dossier ? {
     symbol: dossier.header?.symbol,
     name: dossier.header?.shortName || selectedSymbol,
@@ -198,6 +206,22 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
     pe: dossier.fundamentals?.trailingPE,
     eps: dossier.fundamentals?.trailingEps,
     source: 'Yahoo Finance'
+  } : fallbackQuoteData && fallbackQuoteData.price > 0 ? {
+    symbol: fallbackQuoteData.symbol || selectedSymbol,
+    name: fallbackQuoteData.name || selectedSymbol,
+    price: fallbackQuoteData.price,
+    change: fallbackQuoteData.change,
+    changesPercentage: fallbackQuoteData.changesPercentage,
+    yearHigh: fallbackQuoteData.yearHigh,
+    yearLow: fallbackQuoteData.yearLow,
+    dayHigh: fallbackQuoteData.dayHigh,
+    dayLow: fallbackQuoteData.dayLow,
+    volume: fallbackQuoteData.volume,
+    avgVolume: fallbackQuoteData.avgVolume,
+    marketCap: fallbackQuoteData.marketCap,
+    pe: fallbackQuoteData.pe,
+    eps: fallbackQuoteData.eps,
+    source: fallbackQuoteData.source || 'Market Data Fallback'
   } : null;
 
   const financials = dossier ? {
@@ -797,7 +821,7 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                 </p>
               </div>
             </Card>
-          ) : isQuoteError ? (
+          ) : (isQuoteError && !quote) ? (
             <Card className="bg-destructive/10 border-destructive/30 shadow-lg rounded-2xl">
               <CardContent className="p-8 text-center space-y-3">
                 <div className="inline-flex w-12 h-12 rounded-2xl bg-destructive/20 items-center justify-center text-destructive">
@@ -814,6 +838,19 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
             </Card>
           ) : quote ? (
             <>
+              {/* Fallback Market Data Notice Banner if Deep Dossier is Still Re-trying */}
+              {!dossier && (
+                <div className="bg-amber-500/15 border border-amber-500/30 rounded-2xl p-3.5 flex items-center justify-between gap-3 text-xs text-amber-200 animate-in fade-in">
+                  <div className="flex items-center gap-2.5">
+                    <Activity className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+                    <span>Live price and quote telemetry active via secondary provider while deep fundamental dossier completes synthesis.</span>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => refetchDossier()} className="h-7 text-[11px] border-amber-500/40 text-amber-200 hover:bg-amber-500/20 shrink-0">
+                    Retry Dossier
+                  </Button>
+                </div>
+              )}
+
               {/* ================= HERO COMMAND CENTER ================= */}
               <Card className="bg-card/70 backdrop-blur-2xl border border-border/70 shadow-xl hover:border-primary/40 transition-all duration-300 rounded-2xl overflow-hidden relative group">
                 {/* Sentiment Accent Top Glow Strip */}

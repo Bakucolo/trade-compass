@@ -8,6 +8,8 @@ export interface UnifiedPosition {
     currentPrice: number;
     marketValue: number;
     dayPnL: number;
+    unrealizedPnL?: number;
+    unrealizedPnLPercent?: number;
 
     // Options metadata
     strikePrice?: number;
@@ -74,6 +76,23 @@ export class TastytradeAdapter {
             mktVal = mktPrice * qty * multiplier;
         }
 
+        // Calculate Unrealized PnL for Long & Short positions
+        const costBasis = Math.abs(qty * avgOpenPrice * multiplier);
+        let unrealizedPnL = 0;
+        let unrealizedPnLPercent = 0;
+
+        if (qty < 0) {
+            // Short position: profit when current market price is lower than entry price
+            unrealizedPnL = (avgOpenPrice - mktPrice) * Math.abs(qty) * multiplier;
+        } else if (qty > 0) {
+            // Long position: profit when current market price is higher than entry price
+            unrealizedPnL = (mktPrice - avgOpenPrice) * qty * multiplier;
+        }
+
+        if (costBasis > 0) {
+            unrealizedPnLPercent = (unrealizedPnL / costBasis) * 100;
+        }
+
         return {
             brokerSpecificId: symbol,
             symbol: pos['underlying-symbol'] || pos.underlyingSymbol || symbol,
@@ -84,6 +103,8 @@ export class TastytradeAdapter {
             currentPrice: mktPrice,
             marketValue: mktVal,
             dayPnL: Number(pos['day-pnl'] || pos.dayPnl || 0),
+            unrealizedPnL: Number(unrealizedPnL.toFixed(2)),
+            unrealizedPnLPercent: Number(unrealizedPnLPercent.toFixed(2)),
             strikePrice: isOption ? strikePrice : undefined,
             expiryDate: pos['expires-at'] || pos.expiresAt || undefined,
             optionType: optionType,

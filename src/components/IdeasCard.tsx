@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
-import { Lightbulb, TrendingDown, TrendingUp, Minus, Bot, Sparkles, Plus, Loader2, ArrowRight } from 'lucide-react';
+import { Lightbulb, TrendingDown, TrendingUp, Minus, Bot, Sparkles, Plus, Loader2, ArrowRight, Calendar, Clock } from 'lucide-react';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { useTradeIdeas } from '@/services/ideaService';
@@ -141,7 +141,7 @@ export function IdeasCard({ onNavigateToIdeas, onNavigateToResearch }: IdeasCard
                   {getTypeIcon(idea.type)}
                 </div>
 
-                <div className="mb-1.5">
+                <div className="mb-2 flex items-center justify-between gap-2">
                   <Badge
                     variant="outline"
                     className={cn(
@@ -152,6 +152,14 @@ export function IdeasCard({ onNavigateToIdeas, onNavigateToResearch }: IdeasCard
                     <span>{theme.emoji}</span>
                     <span>{theme.shortName}</span>
                   </Badge>
+
+                  <span
+                    className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground bg-accent/40 px-1.5 py-0.5 rounded border border-border/50"
+                    title={`Created: ${new Date(idea.createdAt).toLocaleString()}`}
+                  >
+                    <Calendar className="w-3 h-3 text-amber-400/90" />
+                    <span>{new Date(idea.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                  </span>
                 </div>
 
                 <h4 className="font-semibold text-sm text-foreground mb-1 group-hover:text-primary transition-colors line-clamp-1">
@@ -161,7 +169,7 @@ export function IdeasCard({ onNavigateToIdeas, onNavigateToResearch }: IdeasCard
                   {idea.content ? idea.content.replace(/###|##|#|\*\*|\*/g, '') : ''}
                 </p>
 
-                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1 border-t border-border/40">
                   <div className="flex gap-1 flex-wrap">
                     {tagsList.slice(0, 2).map((tag) => (
                       <span
@@ -172,11 +180,15 @@ export function IdeasCard({ onNavigateToIdeas, onNavigateToResearch }: IdeasCard
                       </span>
                     ))}
                   </div>
-                  <span className="text-[10px] font-mono">
-                    {new Date(idea.createdAt).toLocaleDateString(undefined, {
-                      month: 'short',
-                      day: 'numeric',
-                    })}
+                  <span className="text-[10px] font-mono text-muted-foreground flex items-center gap-1" title={`Created: ${new Date(idea.createdAt).toLocaleString()}`}>
+                    <Clock className="w-2.5 h-2.5 text-muted-foreground/70" />
+                    <span>
+                      {new Date(idea.createdAt).toLocaleDateString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })}
+                    </span>
                   </span>
                 </div>
               </div>

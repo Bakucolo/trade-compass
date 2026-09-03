@@ -204,6 +204,10 @@ function formatMarketCap(val: number | null | undefined): string {
   return `$${val.toLocaleString()}`;
 }
 
+// In-memory telemetry cache for scanner universe to prevent Yahoo Finance request hammering
+let universeTelemetryCache: { timestamp: number; data: ScannedStockResult[] } | null = null;
+const UNIVERSE_CACHE_TTL_MS = 60 * 1000; // 60s cache
+
 /**
  * Core scanning and multi-factor evaluation engine
  */
@@ -215,12 +219,16 @@ export async function runStockScanner(criteria: ScannerCriteria): Promise<Scanne
   });
 
   try {
-    const rawResults: ScannedStockResult[] = [];
+    let rawResults: ScannedStockResult[] = [];
+    const now = Date.now();
 
-    // 1. Fetch live market telemetry for universe stocks in batches
-    const batchSize = 15;
-    for (let i = 0; i < SCANNER_UNIVERSE.length; i += batchSize) {
-      const batch = SCANNER_UNIVERSE.slice(i, i + batchSize);
+    if (universeTelemetryCache && now - universeTelemetryCache.timestamp < UNIVERSE_CACHE_TTL_MS) {
+      rawResults = [...universeTelemetryCache.data];
+    } else {
+      // 1. Fetch live market telemetry for universe stocks in batches
+      const batchSize = 15;
+      for (let i = 0; i < SCANNER_UNIVERSE.length; i += batchSize) {
+        const batch = SCANNER_UNIVERSE.slice(i, i + batchSize);
       const batchPromises = batch.map(async (item) => {
         try {
           const quote: any = await yahooFinance.quote(item.symbol);
@@ -292,7 +300,12 @@ export async function runStockScanner(criteria: ScannerCriteria): Promise<Scanne
       });
     }
 
-    // 2. Apply Custom Multi-Factor Filters
+    if (rawResults.length > 0) {
+      universeTelemetryCache = { timestamp: now, data: rawResults };
+    }
+  }
+
+  // 2. Apply Custom Multi-Factor Filters
     const filtered = rawResults.filter((stock) => {
       // Freeform Text Search (symbol, name, sector, theme)
       if (criteria.search && criteria.search.trim()) {

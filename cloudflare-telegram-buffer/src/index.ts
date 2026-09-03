@@ -12,6 +12,74 @@ export interface Env {
   APP_BUFFER: KVNamespace;
   CONSUME_SECRET?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_CHAT_ID?: string; // Standard chat ID (default report channel)
+  TELEGRAM_ALERTS_CHAT_ID?: string; // Specific Alerts chat ID: -1003872409872
+  TELEGRAM_ALERTS_THREAD_ID?: string | number; // Specific Alerts topic thread ID: 2
+}
+
+export interface SendTelegramMessageOptions {
+  text: string;
+  isAlert?: boolean; // When true: routes to the "Alerts" topic (chat_id: -1003872409872, message_thread_id: 2)
+  chat_id?: string | number; // Custom chat_id override
+  message_thread_id?: number; // Custom message_thread_id override
+  parse_mode?: 'Markdown' | 'HTML' | 'MarkdownV2';
+  disable_notification?: boolean;
+}
+
+/**
+ * Handles the Telegram sendMessage API request with dynamic topic routing:
+ * - When an alert is triggered (isAlert === true):
+ *   Uses chat_id: -1003872409872 and includes message_thread_id: 2 in the JSON payload.
+ * - For standard reports (isAlert === false):
+ *   Uses original chat_id (e.g. 8959044574) without any message_thread_id parameter.
+ */
+export async function sendTelegramMessage(
+  botToken: string,
+  options: SendTelegramMessageOptions,
+  defaultChatId = '8959044574'
+): Promise<any> {
+  const isAlert = Boolean(options.isAlert);
+
+  // Dynamic Routing Logic:
+  // - Alerts: chat_id = -1003872409872, message_thread_id = 2
+  // - Standard Reports: chat_id = defaultChatId, message_thread_id omitted
+  const targetChatId = options.chat_id ?? (isAlert ? '-1003872409872' : defaultChatId);
+  const targetThreadId = options.message_thread_id ?? (isAlert ? 2 : undefined);
+
+  // Construct JSON request payload
+  const payload: Record<string, any> = {
+    chat_id: targetChatId,
+    text: options.text,
+    parse_mode: options.parse_mode || 'Markdown',
+  };
+
+  // Only include message_thread_id parameter when routing to an alert topic
+  if (targetThreadId !== undefined) {
+    payload.message_thread_id = targetThreadId;
+  }
+
+  if (options.disable_notification !== undefined) {
+    payload.disable_notification = options.disable_notification;
+  }
+
+  const endpoint = `https://api.telegram.org/bot${botToken}/sendMessage`;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = (await response.json()) as { ok: boolean; description?: string; result?: any };
+
+  if (!response.ok || !data.ok) {
+    throw new Error(`Telegram sendMessage API error: ${data.description || `HTTP ${response.status}`}`);
+  }
+
+  return data.result;
 }
 
 export interface TelegramUser {
@@ -321,6 +389,78 @@ export default {
             count: validMessages.length,
             messages: validMessages,
             peekedAt: new Date().toISOString(),
+          }),
+          {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          }
+        );
+      }
+
+      // ----------------------------------------------------
+      // ROUTE 5: POST /send (or /send-message) - Outgoing Telegram Message Dispatch
+      // ----------------------------------------------------
+      if (request.method === 'POST' && (path === '/send' || path === '/send-message' || path === '/alert')) {
+        const secretHeader =
+          request.headers.get('X-Consume-Secret') ||
+          request.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
+
+        const expectedSecret = env.CONSUME_SECRET || 'tradecompass_secret_consume_token_2026';
+
+        if (!secretHeader || secretHeader !== expectedSecret) {
+          return new Response(
+            JSON.stringify({ error: 'Unauthorized: Invalid or missing X-Consume-Secret header' }),
+            {
+              status: 401,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        const body: {
+          text: string;
+          isAlert?: boolean;
+          chat_id?: string | number;
+          message_thread_id?: number;
+          parse_mode?: 'Markdown' | 'HTML' | 'MarkdownV2';
+          disable_notification?: boolean;
+        } = await request.json();
+
+        if (!body.text) {
+          return new Response(
+            JSON.stringify({ error: 'Missing required parameter: "text"' }),
+            {
+              status: 400,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            }
+          );
+        }
+
+        const botToken = env.TELEGRAM_BOT_TOKEN || '8755167543:AAEKdWi4R_5BT-EHQCK8qxCGqX-YP0p9dHQ';
+        const defaultChatId = env.TELEGRAM_CHAT_ID || '8959044574';
+
+        // Auto-detect if path is /alert
+        const isAlert = body.isAlert ?? (path === '/alert');
+
+        const result = await sendTelegramMessage(
+          botToken,
+          {
+            text: body.text,
+            isAlert,
+            chat_id: body.chat_id,
+            message_thread_id: body.message_thread_id,
+            parse_mode: body.parse_mode,
+            disable_notification: body.disable_notification,
+          },
+          defaultChatId
+        );
+
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            routedTo: isAlert ? 'Alerts Topic' : 'Standard Chat',
+            chatId: isAlert ? (body.chat_id || env.TELEGRAM_ALERTS_CHAT_ID || '-1003872409872') : (body.chat_id || defaultChatId),
+            messageThreadId: isAlert ? (body.message_thread_id || Number(env.TELEGRAM_ALERTS_THREAD_ID || 2)) : undefined,
+            result,
           }),
           {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },

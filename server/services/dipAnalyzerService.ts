@@ -464,6 +464,10 @@ export function calculateInstitutionalBuyScore(params: {
   };
 }
 
+// In-memory cache for dip radar scan
+let cachedDipScan: { timestamp: number; data: DipRadarScanResult; key: string } | null = null;
+const DIP_SCAN_CACHE_TTL_MS = 45 * 1000; // 45s cache
+
 /**
  * Scan all user Holdings, Watchlists, and Trade Ideas to identify stocks experiencing notable drops
  */
@@ -477,6 +481,12 @@ export async function scanHoldingsAndWatchlistsForDips(
 ): Promise<DipRadarScanResult> {
   const minDayDrop = options.minDayDropPercent ?? -1.8;
   const minDrawdownFromHigh = options.minDrawdownFromHighPercent ?? -12.0;
+  const cacheKey = `${minDayDrop}_${minDrawdownFromHigh}`;
+  const now = Date.now();
+
+  if (cachedDipScan && cachedDipScan.key === cacheKey && now - cachedDipScan.timestamp < DIP_SCAN_CACHE_TTL_MS) {
+    return cachedDipScan.data;
+  }
 
   logToFile(`[Dip Radar] Initiating scan across Holdings & Watchlists (Day Drop <= ${minDayDrop}%, Drawdown <= ${minDrawdownFromHigh}%)...`);
 
@@ -658,34 +668,49 @@ export async function scanHoldingsAndWatchlistsForDips(
   const allSymbols = Array.from(symbolMap.keys());
   logToFile(`[Dip Radar] Identified ${allSymbols.length} unique symbols across portfolio and watchlists: ${allSymbols.slice(0, 10).join(', ')}...`);
 
-  // 3. Parallel Fetch Quotes via Yahoo Finance (with financial & valuation telemetry)
+  // 3. Batched Fetch Quotes via Yahoo Finance (concurrency controlled to avoid Edge 429)
   const candidateDips: DipCandidateItem[] = [];
+  const BATCH_SIZE = 15;
+  const quoteDataMap = new Map<string, any>();
 
-  const quoteResults = await Promise.allSettled(
-    allSymbols.map(sym =>
-      fetchWithTimeout(
-        yahooFinance.quoteSummary(
-          sym,
-          {
-            modules: [
-              'price',
-              'summaryDetail',
-              'financialData',
-              'defaultKeyStatistics',
-              'summaryProfile'
-            ]
-          },
-          { validateResult: false }
-        ),
-        4000
+  for (let i = 0; i < allSymbols.length; i += BATCH_SIZE) {
+    const chunk = allSymbols.slice(i, i + BATCH_SIZE);
+    const chunkResults = await Promise.allSettled(
+      chunk.map(sym =>
+        fetchWithTimeout(
+          yahooFinance.quoteSummary(
+            sym,
+            {
+              modules: [
+                'price',
+                'summaryDetail',
+                'financialData',
+                'defaultKeyStatistics',
+                'summaryProfile'
+              ]
+            },
+            { validateResult: false }
+          ),
+          3500
+        )
       )
-    )
-  );
+    );
 
-  quoteResults.forEach((res, idx) => {
-    if (res.status !== 'fulfilled' || !res.value) return;
-    const data: any = res.value;
-    const sym = allSymbols[idx];
+    chunkResults.forEach((res, idx) => {
+      const sym = chunk[idx];
+      if (res.status === 'fulfilled' && res.value) {
+        quoteDataMap.set(sym, res.value);
+      }
+    });
+
+    if (i + BATCH_SIZE < allSymbols.length) {
+      await new Promise(resolve => setTimeout(resolve, 80));
+    }
+  }
+
+  allSymbols.forEach((sym) => {
+    const data = quoteDataMap.get(sym);
+    if (!data) return;
     const meta = symbolMap.get(sym);
     if (!meta) return;
 
@@ -777,13 +802,16 @@ export async function scanHoldingsAndWatchlistsForDips(
 
   logToFile(`[Dip Radar] Completed scan. Found ${candidateDips.length} dipping opportunities.`);
 
-  return {
+  const scanResult: DipRadarScanResult = {
     scanTimestamp: new Date().toISOString(),
     totalScanned: allSymbols.length,
     dipsCount: candidateDips.length,
     benchmarks,
     dips: candidateDips
   };
+
+  cachedDipScan = { timestamp: now, data: scanResult, key: cacheKey };
+  return scanResult;
 }
 
 /**

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useDebounce } from '@/hooks/useDebounce';
 import {
   useTrades,
   useSyncTrades,
@@ -54,6 +55,7 @@ interface TradesPageProps {
 export function TradesPage({ onNavigateToResearch }: TradesPageProps = {}) {
   // Filter States
   const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 300);
   const [broker, setBroker] = useState<string>('all');
   const [dateRangePreset, setDateRangePreset] = useState<string>('all');
   const [startDate, setStartDate] = useState<string>('');
@@ -85,7 +87,7 @@ export function TradesPage({ onNavigateToResearch }: TradesPageProps = {}) {
   });
 
   const queryFilters: TradeFilterParams = {
-    search: search.trim() || undefined,
+    search: debouncedSearch.trim() || undefined,
     broker: broker !== 'all' ? broker : undefined,
     dateRangePreset: dateRangePreset !== 'all' ? dateRangePreset : undefined,
     startDate: startDate || undefined,

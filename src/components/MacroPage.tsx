@@ -45,6 +45,7 @@ import { YieldsBondsChartCard } from './macro/YieldsBondsChartCard';
 import { SectorsAndIndustriesCard } from './macro/SectorsAndIndustriesCard';
 import { EconomicCycleCard } from './macro/EconomicCycleCard';
 import { VolatilityMacroCard } from './macro/VolatilityMacroCard';
+import { TrendFinderCard } from './macro/TrendFinderCard';
 
 interface MacroPageProps {
   onNavigateToResearch?: (symbol: string) => void;
@@ -254,6 +255,13 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
           </div>
         </div>
       </div>
+
+      {/* ================= 1. MACRO TREND FINDER & LIFECYCLE SCANNER ================= */}
+      <TrendFinderCard
+        onNavigateToResearch={onNavigateToResearch}
+        onNavigateToGraphs={onNavigateToGraphs}
+        onNavigateToTrades={onNavigateToTrades}
+      />
 
       {/* ================= 1.5. VOLATILITY TERM STRUCTURE, DISPERSION & SIGNALS ================= */}
       <VolatilityMacroCard

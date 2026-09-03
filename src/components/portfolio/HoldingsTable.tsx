@@ -58,6 +58,7 @@ import {
     getThemeBadgeStyle, 
     getCompanyStyleAndThemes 
 } from "@/services/stockThematics";
+import { calculatePositionTheta, calculatePortfolioTheta } from "@/utils/greeksUtils";
 
 interface HoldingsTableProps {
     positions: UnifiedPosition[];
@@ -573,6 +574,7 @@ export function HoldingsTable({
         const totalUnrealizedPL = optionsPositions.reduce((sum, p) => sum + p.unrealizedPL, 0);
         const totalDayPL = optionsPositions.reduce((sum, p) => sum + p.dayChange, 0);
         const totalNetDelta = optionsPositions.reduce((sum, p) => sum + calculatePositionDelta(p).netPositionDelta, 0);
+        const thetaSummary = calculatePortfolioTheta(optionsPositions, totalValue);
         const shortCount = optionsPositions.filter(p => p.quantity < 0).length;
         const longCount = optionsPositions.filter(p => p.quantity > 0).length;
         const nearExpiryCount = optionsPositions.filter(p => {
@@ -585,7 +587,21 @@ export function HoldingsTable({
             return isCall ? (p.underlyingPrice > p.strike) : (p.underlyingPrice < p.strike);
         }).length;
 
-        return { totalValue, totalUnrealizedPL, totalDayPL, totalNetDelta, shortCount, longCount, nearExpiryCount, itmCount };
+        return { 
+            totalValue, 
+            totalUnrealizedPL, 
+            totalDayPL, 
+            totalNetDelta, 
+            totalDailyTheta: thetaSummary.totalDailyTheta,
+            totalMonthlyTheta: thetaSummary.totalMonthlyTheta,
+            shortTheta: thetaSummary.shortOptionsTheta,
+            longTheta: thetaSummary.longOptionsTheta,
+            annualizedThetaYield: thetaSummary.annualizedThetaYieldPercent,
+            shortCount, 
+            longCount, 
+            nearExpiryCount, 
+            itmCount 
+        };
     }, [optionsPositions]);
 
     // --- Metrics for Equities Section ---
@@ -844,19 +860,20 @@ export function HoldingsTable({
                     </div>
                 </TableCell>
 
-                {/* Delta (Δ) Column */}
+                {/* Greeks (Δ & Θ) Column */}
                 <TableCell className="text-right">
                     {(() => {
                         const deltaInfo = calculatePositionDelta(pos);
                         const isPositive = deltaInfo.netPositionDelta > 0;
                         const isNegative = deltaInfo.netPositionDelta < 0;
+                        const posTheta = isOption ? calculatePositionTheta(pos) : null;
 
                         return (
                             <div 
-                                className="flex flex-col items-end min-w-[75px]" 
+                                className="flex flex-col items-end min-w-[85px]" 
                                 title={`Position Net Delta: ${deltaInfo.deltaLabel} (${deltaInfo.unitLabel})\n${
                                     isOption 
-                                        ? `A $1.00 move in underlying results in ~$${Math.abs(deltaInfo.netPositionDelta).toFixed(1)} change in contract value.` 
+                                        ? `Delta: A $1.00 move in underlying results in ~$${Math.abs(deltaInfo.netPositionDelta).toFixed(1)} change in contract value.\nTheta: ${posTheta && posTheta.dailyDollarTheta >= 0 ? '+' : ''}$${posTheta ? posTheta.dailyDollarTheta.toFixed(2) : '0.00'}/day (${posTheta?.isShort ? 'Harvested Time Premium' : 'Option Decay Drag'}).` 
                                         : `1.00Δ per share. Net portfolio exposure is ${deltaInfo.deltaLabel}.`
                                 }`}
                             >
@@ -866,9 +883,19 @@ export function HoldingsTable({
                                 )}>
                                     <span>{deltaInfo.deltaLabel}</span>
                                 </div>
-                                <div className="text-[9.5px] font-mono text-muted-foreground/80 tracking-tight">
-                                    {deltaInfo.unitLabel}
-                                </div>
+                                {posTheta ? (
+                                    <div className={cn(
+                                        "text-[10px] font-mono font-bold tracking-tight flex items-center gap-0.5",
+                                        posTheta.dailyDollarTheta > 0 ? "text-emerald-400" : posTheta.dailyDollarTheta < 0 ? "text-amber-400" : "text-muted-foreground"
+                                    )}>
+                                        <span>{posTheta.dailyDollarTheta >= 0 ? '+' : ''}${posTheta.dailyDollarTheta.toFixed(2)}/d</span>
+                                        <span className="text-[9px] text-purple-300 font-sans">Θ</span>
+                                    </div>
+                                ) : (
+                                    <div className="text-[9.5px] font-mono text-muted-foreground/80 tracking-tight">
+                                        {deltaInfo.unitLabel}
+                                    </div>
+                                )}
                             </div>
                         );
                     })()}
@@ -1442,6 +1469,18 @@ export function HoldingsTable({
                                 </span>
                             </div>
 
+                            <div 
+                                className="px-3 py-1.5 rounded-xl bg-card/60 border border-purple-500/30 font-mono"
+                                title={`Portfolio Option Theta:\nShort Options Income: +$${optionsMetrics.shortTheta.toFixed(2)}/day\nLong Options Decay: -$${Math.abs(optionsMetrics.longTheta).toFixed(2)}/day\nMonthly Run-rate: ${optionsMetrics.totalMonthlyTheta >= 0 ? '+' : ''}$${optionsMetrics.totalMonthlyTheta.toFixed(2)}/mo`}
+                            >
+                                <span className="text-[10px] text-purple-300 block uppercase font-bold flex items-center gap-1">
+                                    <Zap className="w-3 h-3 text-purple-400" /> Portfolio Theta (&Theta;)
+                                </span>
+                                <span className={cn("text-sm font-black", optionsMetrics.totalDailyTheta >= 0 ? "text-emerald-400" : "text-amber-400")}>
+                                    {optionsMetrics.totalDailyTheta >= 0 ? '+' : ''}${optionsMetrics.totalDailyTheta.toFixed(2)}/d
+                                </span>
+                            </div>
+
                             <div className="px-3 py-1.5 rounded-xl bg-card/60 border border-border/40 font-mono">
                                 <span className="text-[10px] text-muted-foreground block uppercase font-bold">Expiring &le; 14d</span>
                                 <span className="text-sm font-black text-amber-400">
@@ -1484,7 +1523,7 @@ export function HoldingsTable({
                                         <div className="flex items-center justify-end">Contracts <SortIcon columnKey="quantity" /></div>
                                     </TableHead>
                                     <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('delta')}>
-                                        <div className="flex items-center justify-end text-cyan-300 font-bold">Delta (&Delta;) <SortIcon columnKey="delta" /></div>
+                                        <div className="flex items-center justify-end text-cyan-300 font-bold">Greeks (&Delta; & &Theta;) <SortIcon columnKey="delta" /></div>
                                     </TableHead>
                                     <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('risky')}>
                                         <div className="flex items-center justify-end">Strike & Moneyness <SortIcon columnKey="risky" /></div>

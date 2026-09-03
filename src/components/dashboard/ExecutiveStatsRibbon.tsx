@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,9 +16,12 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Sparkles,
+  Zap,
+  Flame,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PortfolioBalancesResponse } from '@/services/portfolioBalanceService';
+import { calculatePortfolioTheta } from '@/utils/greeksUtils';
 
 interface ExecutiveStatsRibbonProps {
   balancesData?: PortfolioBalancesResponse;
@@ -43,6 +46,11 @@ export function ExecutiveStatsRibbon({
 
   const fxRateGbpUsd = balancesData?.dualCurrency?.fxRateGbpUsd || 1.302;
   const fxRateUsdGbp = balancesData?.dualCurrency?.fxRateUsdGbp || (1 / fxRateGbpUsd);
+
+  // Calculate Overall Portfolio Theta & Greeks Decay
+  const portfolioTheta = useMemo(() => {
+    return calculatePortfolioTheta(positions, netLiq);
+  }, [positions, netLiq]);
 
   // Day P&L %
   const prevCloseNetLiq = netLiq - dayPnL;
@@ -93,8 +101,11 @@ export function ExecutiveStatsRibbon({
     })}`;
   };
 
+  const isThetaPositive = portfolioTheta.totalDailyTheta > 0;
+  const isThetaNegative = portfolioTheta.totalDailyTheta < 0;
+
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
       {/* 1. Total Net Liquidating Value */}
       <Card className="bg-card/70 backdrop-blur-xl border border-border/70 shadow-md hover:border-primary/40 transition-all rounded-2xl overflow-hidden relative group">
         <div className="h-1 w-full bg-gradient-to-r from-primary via-indigo-400 to-primary" />
@@ -194,7 +205,72 @@ export function ExecutiveStatsRibbon({
         </CardContent>
       </Card>
 
-      {/* 3. Yesterday / Prior Day Performance */}
+      {/* 3. Overall Portfolio Theta & Daily Time Decay */}
+      <Card className="bg-card/70 backdrop-blur-xl border border-border/70 shadow-md hover:border-purple-500/40 transition-all rounded-2xl overflow-hidden relative group">
+        <div
+          className={cn(
+            'h-1 w-full',
+            isThetaPositive
+              ? 'bg-gradient-to-r from-purple-500 via-emerald-400 to-teal-500'
+              : isThetaNegative
+              ? 'bg-gradient-to-r from-purple-500 via-amber-400 to-rose-500'
+              : 'bg-gradient-to-r from-purple-500/60 via-indigo-400/60 to-purple-600/60'
+          )}
+        />
+        <CardContent className="p-5 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              <Zap className="w-3.5 h-3.5 text-purple-400" /> Portfolio Theta (Θ)
+            </span>
+            <Badge
+              variant="outline"
+              className={cn(
+                'text-[10px] font-mono font-bold px-1.5 py-0',
+                isThetaPositive
+                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-emerald-500/10'
+                  : isThetaNegative
+                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                  : 'bg-accent/60 text-muted-foreground'
+              )}
+            >
+              {isThetaPositive
+                ? `+${portfolioTheta.annualizedThetaYieldPercent.toFixed(1)}% Yield`
+                : isThetaNegative
+                ? `${portfolioTheta.annualizedThetaYieldPercent.toFixed(1)}% Drag`
+                : 'Neutral Θ'}
+            </Badge>
+          </div>
+
+          <div>
+            <p
+              className={cn(
+                'text-2xl sm:text-3xl font-black font-mono tracking-tight',
+                isThetaPositive
+                  ? 'text-emerald-400'
+                  : isThetaNegative
+                  ? 'text-amber-400'
+                  : 'text-foreground'
+              )}
+            >
+              {fmt(portfolioTheta.totalDailyTheta)}{' '}
+              <span className="text-xs font-sans font-medium text-muted-foreground">/ day</span>
+            </p>
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground font-mono mt-1 flex-wrap gap-1">
+              <span>
+                Monthly:{' '}
+                <strong className={isThetaPositive ? 'text-emerald-400' : isThetaNegative ? 'text-amber-400' : 'text-foreground'}>
+                  {fmt(portfolioTheta.totalMonthlyTheta)}/mo
+                </strong>
+              </span>
+              <span className="text-[10px] text-purple-300/80">
+                {portfolioTheta.totalOptionsCount} contracts ({portfolioTheta.shortOptionsCount}S / {portfolioTheta.longOptionsCount}L)
+              </span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 4. Yesterday / Prior Day Performance */}
       <Card className="bg-card/70 backdrop-blur-xl border border-border/70 shadow-md hover:border-primary/40 transition-all rounded-2xl overflow-hidden relative group">
         <div
           className={cn(
@@ -230,7 +306,7 @@ export function ExecutiveStatsRibbon({
         </CardContent>
       </Card>
 
-      {/* 4. Unified Buying Power & Margin Cushion */}
+      {/* 5. Unified Buying Power & Margin Cushion */}
       <Card className="bg-card/70 backdrop-blur-xl border border-border/70 shadow-md hover:border-primary/40 transition-all rounded-2xl overflow-hidden relative group">
         <div className="h-1 w-full bg-gradient-to-r from-cyan-500 via-blue-400 to-indigo-500" />
         <CardContent className="p-5 space-y-2">
@@ -264,3 +340,4 @@ export function ExecutiveStatsRibbon({
     </div>
   );
 }
+

@@ -5,6 +5,8 @@ import {
   createThoughtLog,
   updateThoughtLog,
   bulkMoveThoughtLogs,
+  markThoughtLogAsRead,
+  markAllThoughtLogsAsRead,
 } from '../../src/services/thoughtLogService';
 import { consumeTelegramBuffer } from '../../server/services/telegramBufferConsumerService';
 
@@ -239,6 +241,92 @@ describe('ThoughtLog Folder Management & Telegram Categorization', () => {
       expect(sentBody.folder).toBe('Research');
       expect(updated.folder).toBe('Research');
       expect(updated.id).toBe('log-drag-1');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('should query unread thought logs using the UNREAD folder filter', async () => {
+    const originalFetch = global.fetch;
+    let requestedUrl = '';
+
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      requestedUrl = url;
+      return Promise.resolve({
+        ok: true,
+        json: async () => [
+          {
+            id: 'unread-log-1',
+            title: 'Unread Telegram message',
+            content: 'Check $SMCI earnings',
+            folder: 'Telegram',
+            isRead: false,
+            createdAt: '2026-09-03T10:00:00Z',
+          },
+        ],
+      });
+    }) as any;
+
+    try {
+      const logs = await fetchThoughtLogs({ folder: 'UNREAD' });
+      expect(requestedUrl).toContain('/api/thought-logs?folder=UNREAD');
+      expect(logs.length).toBe(1);
+      expect(logs[0].isRead).toBe(false);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('should mark a thought log as read via markThoughtLogAsRead', async () => {
+    const originalFetch = global.fetch;
+    let requestedUrl = '';
+    let requestOptions: any = null;
+
+    global.fetch = vi.fn().mockImplementation((url: string, options: any) => {
+      requestedUrl = url;
+      requestOptions = options;
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          id: 'unread-log-1',
+          title: 'Opened note',
+          isRead: true,
+          readAt: '2026-09-03T11:00:00Z',
+        }),
+      });
+    }) as any;
+
+    try {
+      const result = await markThoughtLogAsRead('unread-log-1', true);
+      expect(requestedUrl).toContain('/api/thought-logs/unread-log-1/read');
+      expect(requestOptions.method).toBe('PATCH');
+      expect(JSON.parse(requestOptions.body)).toEqual({ isRead: true });
+      expect(result.isRead).toBe(true);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('should mark all unread thought logs as read via markAllThoughtLogsAsRead', async () => {
+    const originalFetch = global.fetch;
+    let requestedUrl = '';
+    let requestOptions: any = null;
+
+    global.fetch = vi.fn().mockImplementation((url: string, options: any) => {
+      requestedUrl = url;
+      requestOptions = options;
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ success: true, count: 5 }),
+      });
+    }) as any;
+
+    try {
+      const result = await markAllThoughtLogsAsRead();
+      expect(requestedUrl).toContain('/api/thought-logs/mark-all-read');
+      expect(requestOptions.method).toBe('POST');
+      expect(result.success).toBe(true);
+      expect(result.count).toBe(5);
     } finally {
       global.fetch = originalFetch;
     }
