@@ -2,6 +2,7 @@ import { useState, useEffect, lazy, Suspense } from 'react';
 import { Sidebar } from '@/components/Sidebar';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Loader2 } from 'lucide-react';
+import { HybridAgentCopilot, HybridAgentFloatingTrigger } from '@/components/HybridAgentCopilot';
 
 // Lazy-loaded route components for lightning-fast initial load & chunk splitting
 const Dashboard = lazy(() => import('@/components/Dashboard').then((m) => ({ default: m.Dashboard })));
@@ -38,13 +39,20 @@ const PageLoadingFallback = () => (
 const Index = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [researchTicker, setResearchTicker] = useState('AAPL');
+  const [graphsTicker, setGraphsTicker] = useState('AAPL');
+  const [isCopilotOpen, setIsCopilotOpen] = useState(false);
 
   const handleNavigateToResearch = (symbol: string) => {
     setResearchTicker(symbol);
     setActiveTab('research');
   };
 
-  const handleNavigateToGraphs = (_symbol?: string) => {
+  const handleNavigateToGraphs = (symbol?: string) => {
+    if (symbol && symbol.trim()) {
+      const clean = symbol.trim().toUpperCase();
+      setGraphsTicker(clean);
+      window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: clean }));
+    }
     setActiveTab('graphs');
   };
 
@@ -55,8 +63,24 @@ const Index = () => {
         handleNavigateToResearch(customEvent.detail);
       }
     };
+
+    const handleGraphsEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<string>;
+      if (customEvent.detail) {
+        handleNavigateToGraphs(customEvent.detail);
+      }
+    };
+
+    const handleOpenCopilot = () => setIsCopilotOpen(true);
+
     window.addEventListener('select-research-ticker', handleTickerEvent);
-    return () => window.removeEventListener('select-research-ticker', handleTickerEvent);
+    window.addEventListener('select-graphs-ticker', handleGraphsEvent);
+    window.addEventListener('open-hybrid-copilot', handleOpenCopilot);
+    return () => {
+      window.removeEventListener('select-research-ticker', handleTickerEvent);
+      window.removeEventListener('select-graphs-ticker', handleGraphsEvent);
+      window.removeEventListener('open-hybrid-copilot', handleOpenCopilot);
+    };
   }, []);
 
   const renderContent = () => {
@@ -88,7 +112,12 @@ const Index = () => {
           />
         );
       case 'graphs':
-        return <GraphsPage onNavigateToResearch={handleNavigateToResearch} />;
+        return (
+          <GraphsPage
+            initialSymbol={graphsTicker}
+            onNavigateToResearch={handleNavigateToResearch}
+          />
+        );
       case 'earnings':
         return (
           <EarningsPage
@@ -135,12 +164,18 @@ const Index = () => {
       case 'settings':
         return <SettingsPage />;
       default:
-        return <Dashboard />;
+        return (
+          <Dashboard
+            onNavigateTab={setActiveTab}
+            onNavigateToResearch={handleNavigateToResearch}
+            onNavigateToGraphs={handleNavigateToGraphs}
+          />
+        );
     }
   };
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="flex min-h-screen bg-background relative">
       <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
       <main className="flex-1 overflow-y-auto">
         <div className="p-6 lg:p-8">
@@ -151,6 +186,12 @@ const Index = () => {
           </ErrorBoundary>
         </div>
       </main>
+
+      {/* Floating AI Financial Copilot Launcher */}
+      <HybridAgentFloatingTrigger onOpen={() => setIsCopilotOpen(true)} />
+
+      {/* Slide-out Hybrid Copilot Drawer */}
+      <HybridAgentCopilot isOpen={isCopilotOpen} onOpenChange={setIsCopilotOpen} />
     </div>
   );
 };

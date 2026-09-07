@@ -9,6 +9,9 @@ const logToFile = (msg: string) => console.log(msg);
 export interface BufferedTelegramMessage {
   id: string;
   messageId: number;
+  messageThreadId?: number;
+  isTopicMessage?: boolean;
+  topicName?: string;
   type?: 'text' | 'voice';
   text: string;
   date: number;
@@ -176,36 +179,116 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
 
       if (!contentText || !contentText.trim()) continue;
 
-      // Automatically detect and create price alerts (e.g. "RBRK 120", "AAPL below 220")
-      const autoCreatedAlerts = await autoCreateAlertsFromText(
-        prisma,
-        contentText,
-        `📱 Telegram Note (${new Date(msg.timestamp).toLocaleString()}): "${contentText.trim()}"`
-      );
+      const configuredAlertsThreadId = process.env.TELEGRAM_ALERTS_THREAD_ID ? Number(process.env.TELEGRAM_ALERTS_THREAD_ID) : 2;
+      const configuredAppThreadId = process.env.TELEGRAM_APP_THREAD_ID ? Number(process.env.TELEGRAM_APP_THREAD_ID) : 10;
+
+      const isExplicitAppThread = msg.messageThreadId !== undefined && msg.messageThreadId === configuredAppThreadId;
+      const isExplicitAlertsThread = msg.messageThreadId !== undefined && msg.messageThreadId === configuredAlertsThreadId;
+
+      const isAlertsTopic = isExplicitAlertsThread || (!isExplicitAppThread && Boolean(
+        (msg.topicName && msg.topicName.toLowerCase().includes('alert')) ||
+        contentText.toLowerCase().startsWith('#alert') ||
+        contentText.match(/#(?:topic:)?alert(?:s)?\b/i) ||
+        (msg.chat?.id === -1003872409872 && msg.messageThreadId === configuredAlertsThreadId)
+      ));
+
+      const isAppTopic = isExplicitAppThread || (!isAlertsTopic && Boolean(
+        (msg.topicName && msg.topicName.toLowerCase().includes('app')) ||
+        contentText.toLowerCase().startsWith('#app') ||
+        contentText.toLowerCase().includes('#app-idea') ||
+        contentText.match(/#(?:topic:)?app\b/i) ||
+        (msg.chat?.id === -1003872409872 && msg.messageThreadId === configuredAppThreadId)
+      ));
+
+      // Automatically detect and create price alerts only if NOT an app feature idea
+      const autoCreatedAlerts = isAppTopic
+        ? []
+        : await autoCreateAlertsFromText(
+            prisma,
+            contentText,
+            `📱 Telegram Note (${new Date(msg.timestamp).toLocaleString()}): "${contentText.trim()}"`,
+            { isAlertsTopic }
+          );
 
       const detectedSymbols = extractSymbolsFromText(contentText);
-      const sentiment = detectSentimentFromText(contentText);
-      const title = isVoice
-        ? createVoiceTitleFromText(contentText, msg.timestamp)
-        : createTitleFromText(contentText, msg.timestamp);
+      const sentiment = isAppTopic ? 'NEUTRAL' : (isAlertsTopic ? 'CAUTION' : detectSentimentFromText(contentText));
 
       const senderLabel = msg.sender?.username ? `@${msg.sender.username}` : (msg.sender?.firstName || 'Mobile');
-      let tags = isVoice
-        ? `Telegram, Mobile, Voice, ${senderLabel}`
-        : `Telegram, Mobile, ${senderLabel}`;
+      let tags = isAppTopic
+        ? (isVoice ? `Telegram, App, Mobile, Voice, ${senderLabel}` : `Telegram, App, Mobile, ${senderLabel}`)
+        : (isAlertsTopic
+            ? (isVoice ? `Telegram, Alerts, Mobile, Voice, ${senderLabel}` : `Telegram, Alerts, Mobile, ${senderLabel}`)
+            : (isVoice ? `Telegram, Mobile, Voice, ${senderLabel}` : `Telegram, Mobile, ${senderLabel}`));
 
-      if (autoCreatedAlerts.length > 0) {
-        tags += ', Alert';
+      if (autoCreatedAlerts.length > 0 || isAlertsTopic) {
+        if (!tags.includes('Alert')) {
+          tags += ', Alert';
+        }
       }
 
-      // Detect folder from hashtag (e.g. #ideas, #macro, #watchlist, #earnings, #trading, #research) or default
-      let targetFolder = isVoice ? 'Voice Notes' : 'Telegram';
+      // Detect folder: if App topic, route directly to App folder. If Alerts topic, route directly to Alerts folder!
+      let targetFolder = isAppTopic ? 'App' : (isAlertsTopic ? 'Alerts' : (isVoice ? 'Voice Notes' : 'Telegram'));
       const hashMatch = contentText.match(/#(?:folder:)?([A-Za-z0-9_-]+)\b/i);
-      if (hashMatch) {
+      if (hashMatch && !isAppTopic && !isAlertsTopic) {
         const rawFolder = hashMatch[1];
         targetFolder = rawFolder.charAt(0).toUpperCase() + rawFolder.slice(1);
-      } else if (autoCreatedAlerts.length > 0 && !isVoice) {
+      } else if (autoCreatedAlerts.length > 0 && !isVoice && !isAppTopic) {
         targetFolder = 'Alerts';
+      }
+
+      // Clean App Idea details (Title, Topic, Category, Description)
+      let ideaTitle = '';
+      let ideaDescription: string | null = null;
+      let ideaTopic = 'App';
+      let ideaCategory = 'Feature';
+
+      if (isAppTopic) {
+        let cleanText = contentText.replace(/#(?:topic:)?(?:app|app-idea)\b/gi, '').trim();
+        
+        // Check for bracket topic e.g. [UI] or [Portfolio] or [Alerts]
+        const bracketMatch = cleanText.match(/^\[([A-Za-z0-9_\-\s/]+)\]\s*(.*)/s);
+        const colonMatch = cleanText.match(/^([A-Za-z0-9_\-\s]{2,20}):\s+(.*)/s);
+
+        if (bracketMatch) {
+          ideaTopic = bracketMatch[1].trim();
+          cleanText = bracketMatch[2].trim();
+        } else if (colonMatch && !colonMatch[1].toUpperCase().includes('HTTP')) {
+          ideaTopic = colonMatch[1].trim();
+          cleanText = colonMatch[2].trim();
+        }
+
+        const lowerTopic = ideaTopic.toLowerCase();
+        if (lowerTopic.includes('ui') || lowerTopic.includes('design') || lowerTopic.includes('ux') || lowerTopic.includes('theme')) {
+          ideaCategory = 'UI/UX';
+        } else if (lowerTopic.includes('bug') || lowerTopic.includes('fix') || lowerTopic.includes('error') || lowerTopic.includes('crash')) {
+          ideaCategory = 'Bug';
+        } else if (lowerTopic.includes('data') || lowerTopic.includes('api') || lowerTopic.includes('sync')) {
+          ideaCategory = 'Data';
+        } else if (lowerTopic.includes('broker') || lowerTopic.includes('tasty') || lowerTopic.includes('ibkr') || lowerTopic.includes('trading212')) {
+          ideaCategory = 'Integration';
+        }
+
+        const lines = cleanText.split('\n').map((l) => l.trim()).filter(Boolean);
+        const rawHeadline = lines[0] || (isVoice ? 'Voice App Idea' : 'App Idea');
+        ideaTitle = rawHeadline.length > 90 ? rawHeadline.slice(0, 87) + '...' : rawHeadline;
+        ideaDescription = lines.length > 1 ? lines.slice(1).join('\n') : (rawHeadline.length > 90 ? cleanText : null);
+      }
+
+      let title = '';
+      if (isAppTopic) {
+        title = `💡 ${ideaTitle || 'App Idea'}`;
+      } else if (isAlertsTopic) {
+        if (autoCreatedAlerts.length > 0) {
+          const alertSummary = autoCreatedAlerts.map((a) => `${a.symbol} ${a.condition === 'ABOVE' ? '▲' : '▼'} $${a.targetPrice}`).join(', ');
+          title = `🔔 Alert: ${alertSummary}`;
+        } else {
+          const rawHeadline = createTitleFromText(contentText, msg.timestamp).replace(/^📱\s*/, '');
+          title = `🔔 Alert: ${rawHeadline}`;
+        }
+      } else if (isVoice) {
+        title = createVoiceTitleFromText(contentText, msg.timestamp);
+      } else {
+        title = createTitleFromText(contentText, msg.timestamp);
       }
 
       const alertNotes = autoCreatedAlerts.length > 0
@@ -213,7 +296,11 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
           autoCreatedAlerts
             .map((a) => `• **${a.symbol}**: Target **$${a.targetPrice}** (${a.condition})${a.currentPrice ? ` — Spot: $${a.currentPrice.toFixed(2)}` : ''}`)
             .join('\n')
-        : null;
+        : (isAlertsTopic ? `🔔 **Alerts Topic Telegram Note**\n\nSaved in **Alerts** folder.` : null);
+
+      const allSymbols = detectedSymbols.length > 0
+        ? detectedSymbols
+        : autoCreatedAlerts.map((a) => a.symbol);
 
       const savedLog = await (prisma as any).thoughtLog.create({
         data: {
@@ -221,15 +308,47 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
           content: contentText.trim(),
           folder: targetFolder,
           tags,
-          symbols: detectedSymbols.length > 0 ? detectedSymbols.join(', ') : null,
+          symbols: allSymbols.length > 0 ? Array.from(new Set(allSymbols)).join(', ') : null,
           sentiment,
           isPinned: false,
+          isFulfilled: false,
           agentOutput: alertNotes,
-          agentActionType: autoCreatedAlerts.length > 0 ? 'ADD_CONTEXT' : null,
+          agentActionType: (autoCreatedAlerts.length > 0 || isAlertsTopic) ? 'ADD_CONTEXT' : null,
           marketDataJson: null,
           createdAt: new Date(msg.timestamp),
         },
       });
+
+      // Also create dedicated AppIdea record if from App topic
+      if (isAppTopic) {
+        try {
+          const existingIdea = msg.messageId
+            ? await (prisma as any).appIdea.findFirst({
+                where: { telegramMsgId: msg.messageId },
+              })
+            : null;
+
+          if (!existingIdea) {
+            await (prisma as any).appIdea.create({
+              data: {
+                title: ideaTitle || title.replace(/^💡\s*/, ''),
+                description: ideaDescription || (contentText.trim() !== ideaTitle ? contentText.trim() : null),
+                topic: ideaTopic,
+                category: ideaCategory,
+                isFulfilled: false,
+                source: 'TELEGRAM',
+                telegramMsgId: msg.messageId || null,
+                thoughtLogId: savedLog.id,
+                tags,
+                createdAt: new Date(msg.timestamp),
+              },
+            });
+            logToFile(`[TelegramBuffer] Created AppIdea record: "${ideaTitle}" in topic [${ideaTopic}]`);
+          }
+        } catch (ideaErr: any) {
+          logToFile(`[TelegramBuffer] Error saving AppIdea record: ${ideaErr.message}`);
+        }
+      }
 
       createdLogs.push({
         id: savedLog.id,

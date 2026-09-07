@@ -23,5 +23,5 @@ sec_filings/
 temp_audio/
 .wrangler/
 cloudflare-telegram-buffer/.wrangler/
-
-
+.venv/
+venv/

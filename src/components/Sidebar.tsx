@@ -176,6 +176,30 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
           })}
         </nav>
 
+        {/* AI Copilot Quick Launcher Button */}
+        <div className="px-2 pb-1.5">
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent('open-hybrid-copilot'))}
+            className={cn(
+              "w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all border",
+              "bg-gradient-to-r from-indigo-950/40 to-purple-950/40 border-indigo-500/30 text-indigo-300 hover:border-indigo-500/60 hover:text-white shadow-[0_0_10px_rgba(99,102,241,0.15)]"
+            )}
+            title="Open Hybrid AI Copilot (LangGraph)"
+          >
+            <div className="relative shrink-0">
+              <Sparkles className="w-4 h-4 text-indigo-400" />
+            </div>
+            {!collapsed && (
+              <div className="flex items-center justify-between flex-1 min-w-0">
+                <span className="truncate">AI Copilot</span>
+                <span className="text-[9px] bg-indigo-500/30 text-indigo-200 border border-indigo-500/40 px-1.5 py-0.2 rounded-md font-mono">
+                  HYBRID
+                </span>
+              </div>
+            )}
+          </button>
+        </div>
+
         {/* Agent Activity Telemetry Pill */}
         <div className="px-2 pb-2">
           <button

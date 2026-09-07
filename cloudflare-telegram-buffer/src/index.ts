@@ -16,6 +16,7 @@ export interface Env {
   TELEGRAM_CHAT_ID?: string; // Standard chat ID (default report channel)
   TELEGRAM_ALERTS_CHAT_ID?: string; // Specific Alerts chat ID: -1003872409872
   TELEGRAM_ALERTS_THREAD_ID?: string | number; // Specific Alerts topic thread ID: 2
+  TELEGRAM_APP_THREAD_ID?: string | number; // Specific App topic thread ID: 10
 }
 
 export interface SendTelegramMessageOptions {
@@ -111,6 +112,14 @@ export interface TelegramMessage {
   from?: TelegramUser;
   chat: TelegramChat;
   date: number; // Unix timestamp
+  message_thread_id?: number;
+  is_topic_message?: boolean;
+  forum_topic_created?: {
+    name: string;
+    icon_color?: number;
+    icon_custom_emoji_id?: string;
+  };
+  reply_to_message?: TelegramMessage;
   text?: string;
   caption?: string;
   voice?: TelegramVoice;
@@ -127,6 +136,9 @@ export interface TelegramUpdate {
 export interface BufferedTelegramMessage {
   id: string; // e.g. "msg_1787815200000_1042"
   messageId: number;
+  messageThreadId?: number;
+  isTopicMessage?: boolean;
+  topicName?: string;
   type: 'text' | 'voice';
   text: string;
   date: number;
@@ -229,9 +241,21 @@ export default {
         const msgId = msg.message_id || Math.floor(Math.random() * 1000000);
         const storageKey = `msg_${nowMs}_${msgId}`;
 
+        const alertsThreadIdStr = String(env.TELEGRAM_ALERTS_THREAD_ID || '2');
+        const isAlertsThread = msg.message_thread_id !== undefined && String(msg.message_thread_id) === alertsThreadIdStr;
+        const appThreadIdStr = String(env.TELEGRAM_APP_THREAD_ID || '10');
+        const isAppThread = msg.message_thread_id !== undefined && String(msg.message_thread_id) === appThreadIdStr;
+        const topicName =
+          msg.forum_topic_created?.name ||
+          msg.reply_to_message?.forum_topic_created?.name ||
+          (isAppThread ? 'App' : (isAlertsThread ? 'Alerts' : undefined));
+
         const bufferRecord: BufferedTelegramMessage = {
           id: storageKey,
           messageId: msgId,
+          messageThreadId: msg.message_thread_id,
+          isTopicMessage: Boolean(msg.is_topic_message),
+          topicName,
           type: isVoice ? 'voice' : 'text',
           text: messageText || (isVoice ? '🎙️ [Voice Note]' : ''),
           date: msg.date || Math.floor(nowMs / 1000),

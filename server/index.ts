@@ -97,6 +97,7 @@ import {
   consumeTelegramBuffer,
   getTelegramBufferStatus,
 } from './services/telegramBufferConsumerService';
+import { createAppIdeaRouter } from './routes/appIdeaRoutes';
 import { autoCreateAlertsFromText } from './services/thoughtLogAlertService';
 import { SYMBOL_ALIASES, resolveYahooFinanceSymbol } from './services/tickerResolutionService';
 export { SYMBOL_ALIASES, resolveYahooFinanceSymbol };
@@ -3831,6 +3832,19 @@ app.post('/api/research/prompts/reset', async (req, res) => {
 // AUTONOMOUS RESEARCH AGENT & REPORTS API
 // ==========================================
 
+function getPythonExecutable(): { cmd: string; defaultArgs: string[] } {
+  const venvPython = process.platform === 'win32'
+    ? path.resolve(process.cwd(), '.venv', 'Scripts', 'python.exe')
+    : path.resolve(process.cwd(), '.venv', 'bin', 'python');
+
+  if (fs.existsSync(venvPython)) {
+    return { cmd: venvPython, defaultArgs: [] };
+  }
+  return process.platform === 'win32'
+    ? { cmd: 'py', defaultArgs: ['-3.12'] }
+    : { cmd: 'python3', defaultArgs: [] };
+}
+
 // Helper to spawn python autonomous research agent
 async function runAutonomousResearch(ticker: string, reportType: string, promptId?: string) {
   const cleanTicker = ticker.trim().toUpperCase();
@@ -3847,10 +3861,8 @@ async function runAutonomousResearch(ticker: string, reportType: string, promptI
 
   logToFile(`Spawning autonomous python agent for ${cleanTicker} [Type: ${reportType}]...`);
 
-  const pythonCmd = process.platform === 'win32' ? 'py' : 'python3';
-  const pythonArgs = process.platform === 'win32'
-    ? ['-3.12', '-u', 'agent_research/main.py', cleanTicker, reportType]
-    : ['-u', 'agent_research/main.py', cleanTicker, reportType];
+  const { cmd: pythonCmd, defaultArgs } = getPythonExecutable();
+  const pythonArgs = [...defaultArgs, '-u', 'agent_research/main.py', cleanTicker, reportType];
 
   if (promptId) {
     pythonArgs.push(promptId);
@@ -4095,6 +4107,100 @@ app.get('/api/research/autonomous/:ticker', async (req, res) => {
     res.json({ success: true, report, pdfPath });
   } catch (error: any) {
     logToFile(`Error in GET /api/research/autonomous/:ticker: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Helper to spawn LangGraph Hybrid Financial Agent
+async function runHybridFinancialAgent(query: string) {
+  const cleanQuery = query.trim();
+  const task = agentActivityTracker.startTask({
+    agentName: 'Hybrid Financial Copilot (LangGraph)',
+    agentType: 'RESEARCH_AGENT',
+    taskDescription: `Hybrid Query: ${cleanQuery.slice(0, 50)}...`,
+    metadata: { query: cleanQuery }
+  });
+
+  logToFile(`Spawning LangGraph Hybrid Agent for query: "${cleanQuery}"...`);
+  const { cmd: pythonCmd, defaultArgs } = getPythonExecutable();
+  const pythonArgs = [...defaultArgs, '-u', 'hybrid_finance_agent.py', '--query', cleanQuery, '--json'];
+
+  return new Promise<{
+    success: boolean;
+    query: string;
+    classification: 'simple_task' | 'complex_analysis';
+    router_reasoning: string;
+    tools_used: string[];
+    response: string;
+    execution_time_seconds: number;
+  }>((resolve, reject) => {
+    const pythonProcess = spawn(pythonCmd, pythonArgs, {
+      cwd: process.cwd(),
+      env: { ...process.env }
+    });
+
+    let stdoutBuffer = '';
+    let stderrBuffer = '';
+
+    pythonProcess.stdout.on('data', (data: Buffer) => {
+      const chunk = data.toString();
+      stdoutBuffer += chunk;
+      console.log(`[Hybrid Agent] ${chunk.trim()}`);
+    });
+
+    pythonProcess.stderr.on('data', (data: Buffer) => {
+      const errChunk = data.toString();
+      stderrBuffer += errChunk;
+      console.error(`[Hybrid Agent ERR] ${errChunk.trim()}`);
+    });
+
+    pythonProcess.on('close', (code: number) => {
+      if (code !== 0) {
+        agentActivityTracker.completeTask(task.id, {
+          status: 'FAILED',
+          error: `Hybrid agent failed (exit code ${code})`
+        });
+        logToFile(`Hybrid agent exited with code ${code}. Stderr: ${stderrBuffer}`);
+        return reject(new Error(`Hybrid agent execution failed (code ${code}): ${stderrBuffer || 'Unknown error'}`));
+      }
+
+      try {
+        const jsonStart = stdoutBuffer.indexOf('__HYBRID_AGENT_JSON_START__');
+        const jsonEnd = stdoutBuffer.indexOf('__HYBRID_AGENT_JSON_END__');
+        if (jsonStart !== -1 && jsonEnd !== -1) {
+          const jsonText = stdoutBuffer.slice(jsonStart + '__HYBRID_AGENT_JSON_START__'.length, jsonEnd).trim();
+          const parsed = JSON.parse(jsonText);
+          agentActivityTracker.completeTask(task.id, {
+            status: 'COMPLETED',
+            summary: `Classified as ${parsed.classification} (${parsed.tools_used?.join(', ') || 'No tools'}) in ${parsed.execution_time_seconds}s`
+          });
+          return resolve(parsed);
+        } else {
+          throw new Error('Delimited JSON payload not found in agent output.');
+        }
+      } catch (err: any) {
+        agentActivityTracker.completeTask(task.id, {
+          status: 'FAILED',
+          error: `JSON parsing error: ${err.message}`
+        });
+        return reject(err);
+      }
+    });
+  });
+}
+
+// POST /api/agent/hybrid-query - Run query through LangGraph hybrid agent
+app.post('/api/agent/hybrid-query', async (req, res) => {
+  try {
+    const { query } = req.body || {};
+    if (!query || typeof query !== 'string' || !query.trim()) {
+      return res.status(400).json({ error: 'Query parameter is required.' });
+    }
+
+    const result = await runHybridFinancialAgent(query);
+    res.json(result);
+  } catch (error: any) {
+    logToFile(`Error in POST /api/agent/hybrid-query: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -6763,6 +6869,9 @@ app.get('/api/telegram/preview-report-pdf', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// App Ideas Backlog API (Topic: App)
+app.use('/api/app-ideas', createAppIdeaRouter(prisma));
 
 // ==========================================
 // MANAGEMENT PLANNED TRADES & EXECUTION QUEUE API

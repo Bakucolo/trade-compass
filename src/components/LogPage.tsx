@@ -81,9 +81,12 @@ import {
 import { AddToWatchlistModal } from './AddToWatchlistModal';
 import { MoveToFolderModal } from './MoveToFolderModal';
 import { TradeStructureModal } from './TradeStructureModal';
-import { PriceAlertModal } from './PriceAlertModal';
 import { useSendTelegramReport } from '@/services/telegramReportClientService';
 import { useCreateTradeIdea, useTradeIdeas } from '@/services/ideaService';
+import { AppIdeasChecklist } from './AppIdeasChecklist';
+import { useAppIdeas, useToggleAppIdea, AppIdea } from '@/services/appIdeaService';
+import { AntigravityCodingModal } from './AntigravityCodingModal';
+import { CheckSquare } from 'lucide-react';
 
 interface LogPageProps {
   onNavigateToResearch?: (symbol: string) => void;
@@ -185,6 +188,64 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
   const telegramSyncMutation = useTelegramBufferSync();
   const sendReportMutation = useSendTelegramReport();
   const createIdeaMutation = useCreateTradeIdea();
+
+  // App Ideas Backlog Hooks & State
+  const { data: appIdeasData } = useAppIdeas();
+  const appIdeasStats = appIdeasData?.stats || { total: 0, pending: 0, fulfilled: 0, completionPercentage: 0 };
+  const toggleAppIdeaMutation = useToggleAppIdea();
+  const [appFolderViewMode, setAppFolderViewMode] = useState<'checklist' | 'editor'>('checklist');
+
+  // AI Feature Planning Trigger
+  const handlePlanFeatureWithAI = (idea: any) => {
+    setSelectedFolderFilter('App');
+    setAppFolderViewMode('editor');
+    setSelectedLogId('new_draft');
+    setEditTitle(`Feature Blueprint: ${idea.title}`);
+    setEditContent(
+      `## Feature Implementation Blueprint: ${idea.title}\n\n` +
+      `**Topic / Category**: ${idea.topic} (${idea.category || 'Feature'})\n\n` +
+      `### Requirement & Context\n${idea.description || idea.title}\n\n` +
+      `### Architecture & Implementation Plan\n- Frontend UI Component:\n- Backend API Routes:\n- Database Models:\n- Validation & Edge Cases:\n`
+    );
+    setEditFolder('App');
+    setEditSentiment('NEUTRAL');
+    setEditTags(`App, ${idea.topic}, Implementation, Feature`);
+    setActiveActionTab('agent_output');
+    handleTriggerAgent('ORGANIZE_THESIS');
+  };
+
+  // Antigravity Coding Modal State & Handler
+  const [antigravityModalIdea, setAntigravityModalIdea] = useState<AppIdea | null>(null);
+  const [antigravityModalLogId, setAntigravityModalLogId] = useState<string | undefined>(undefined);
+
+  const handleOpenAntigravityFromLog = (log: ThoughtLogRecord) => {
+    const cleanTitle = log.title.replace(/^💡\s*/, '').trim();
+    const matchingIdea = appIdeasData?.ideas.find(
+      (i) => i.thoughtLogId === log.id || i.title.toLowerCase() === cleanTitle.toLowerCase()
+    );
+
+    if (matchingIdea) {
+      setAntigravityModalIdea(matchingIdea);
+      setAntigravityModalLogId(log.id);
+    } else {
+      setAntigravityModalIdea({
+        id: log.id,
+        title: cleanTitle,
+        description: log.content !== cleanTitle ? log.content : null,
+        topic: 'App',
+        category: 'Feature',
+        isFulfilled: Boolean(log.isFulfilled),
+        fulfilledAt: log.fulfilledAt || null,
+        tags: log.tags || 'App',
+        source: 'TELEGRAM',
+        telegramMsgId: null,
+        thoughtLogId: log.id,
+        createdAt: log.createdAt,
+        updatedAt: log.updatedAt,
+      });
+      setAntigravityModalLogId(log.id);
+    }
+  };
 
   // Active Selected Log
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
@@ -876,6 +937,46 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                   </button>
                 )}
 
+                {/* 2.5. App Ideas Checklist Capsule */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedFolderFilter(selectedFolderFilter === 'App' ? 'ALL' : 'App');
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                  }}
+                  onDragEnter={() => setDragOverFolder('App')}
+                  onDragLeave={() => setDragOverFolder(null)}
+                  onDrop={(e) => handleDropOnFolder(e, 'App')}
+                  className={cn(
+                    "px-2.5 py-1.5 rounded-xl text-left font-bold text-xs transition-all flex items-center justify-between border relative group",
+                    selectedFolderFilter === 'App'
+                      ? "bg-gradient-to-r from-purple-500/25 via-indigo-500/25 to-primary/25 text-purple-200 border-purple-500/60 shadow-md ring-1 ring-purple-500/40"
+                      : "bg-purple-500/10 text-purple-300/80 hover:text-purple-200 border-purple-500/25 hover:bg-purple-500/15",
+                    draggingLog && "border-dashed border-purple-400 bg-purple-500/10",
+                    dragOverFolder === 'App' && "scale-105 ring-2 ring-purple-400 border-purple-400 bg-purple-500/30 text-white font-extrabold shadow-[0_0_15px_rgba(168,85,247,0.5)]"
+                  )}
+                  title="App Ideas & Feature Backlog (synced from Telegram #App topic)"
+                >
+                  <div className="flex items-center gap-1.5 min-w-0 truncate">
+                    <CheckSquare className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                    <span className="truncate">App Ideas</span>
+                  </div>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "text-[9.5px] px-1.5 py-0 font-mono shrink-0 ml-1 border-0",
+                      appIdeasStats.pending > 0
+                        ? "bg-purple-500 text-white font-extrabold shadow-sm"
+                        : "bg-purple-500/20 text-purple-300"
+                    )}
+                  >
+                    {appIdeasStats.pending > 0 ? `${appIdeasStats.pending} pending` : appIdeasStats.total}
+                  </Badge>
+                </button>
+
                 {/* 3. System & Custom Folder Drop Capsules */}
                 {[
                   { name: 'General', icon: Folder, color: 'text-slate-400' },
@@ -887,7 +988,7 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                   { name: 'Macro', icon: Globe, color: 'text-blue-400' },
                   { name: 'Trading', icon: Zap, color: 'text-orange-400' },
                   ...((foldersData?.folders || [])
-                    .filter((f) => !['General', 'Ideas', 'Research', 'Earnings', 'Watchlist', 'Alerts', 'Macro', 'Trading', 'Telegram'].includes(f.name))
+                    .filter((f) => !['General', 'Ideas', 'Research', 'Earnings', 'Watchlist', 'Alerts', 'Macro', 'Trading', 'Telegram', 'App'].includes(f.name))
                     .map((f) => ({ name: f.name, icon: Folder, color: 'text-indigo-400' }))
                   )
                 ].map((folder) => {
@@ -1134,6 +1235,53 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                             AI Audited
                           </Badge>
                         )}
+                        {(log.folder === 'App' || log.isFulfilled) && (
+                          <button
+                            type="button"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                const newFulfilled = !log.isFulfilled;
+                                await updateLogMutation.mutateAsync({
+                                  id: log.id,
+                                  data: {
+                                    isFulfilled: newFulfilled,
+                                    fulfilledAt: newFulfilled ? new Date().toISOString() : null,
+                                  } as any,
+                                });
+                                toast.success(newFulfilled ? 'Marked as fulfilled' : 'Marked as pending');
+                              } catch (err: any) {
+                                toast.error(err.message);
+                              }
+                            }}
+                            className={cn(
+                              "px-1.5 py-0.2 rounded-md text-[9px] font-bold border flex items-center gap-1 transition-all",
+                              log.isFulfilled
+                                ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                                : "bg-purple-500/15 text-purple-300 border-purple-500/30 hover:bg-purple-500/25"
+                            )}
+                            title={log.isFulfilled ? "Fulfilled! Click to mark pending" : "Click to mark fulfilled"}
+                          >
+                            <Check className="w-2.5 h-2.5 stroke-[3]" />
+                            <span>{log.isFulfilled ? 'Fulfilled' : 'Tick Done'}</span>
+                          </button>
+                        )}
+
+                        {/* Antigravity Code Button for App ideas */}
+                        {(log.folder === 'App' || (log.tags && log.tags.includes('App'))) && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenAntigravityFromLog(log);
+                            }}
+                            className="px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-gradient-to-r from-violet-600 via-indigo-600 to-purple-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-xs flex items-center gap-1 transition-all shrink-0 border border-indigo-400/30"
+                            title="Code this function with Antigravity AI agent"
+                          >
+                            <Sparkles className="w-2.5 h-2.5 text-amber-300 fill-amber-300" />
+                            <span>⚡ Code</span>
+                          </button>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1228,7 +1376,48 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
 
         {/* ================= RIGHT COLUMN: ACTIVE THOUGHT WORKSPACE & AGENT COPILOT (8 COLS) ================= */}
         <div className="lg:col-span-8 space-y-4">
-          <Card className="bg-card/80 backdrop-blur-2xl border border-border/70 shadow-xl rounded-2xl overflow-hidden">
+          {/* If viewing App folder: offer view switcher between Checklist and Raw Editor */}
+          {selectedFolderFilter === 'App' && (
+            <div className="flex items-center justify-between bg-card/60 border border-border/70 p-2.5 px-3.5 rounded-2xl shadow-sm backdrop-blur-md">
+              <div className="flex items-center gap-2">
+                <CheckSquare className="w-4 h-4 text-purple-400" />
+                <span className="text-xs font-bold text-foreground">App Roadmap View:</span>
+              </div>
+              <div className="flex items-center gap-1 bg-background/80 p-0.5 rounded-xl border border-border/60">
+                <button
+                  type="button"
+                  onClick={() => setAppFolderViewMode('checklist')}
+                  className={cn(
+                    "px-3 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5",
+                    appFolderViewMode === 'checklist'
+                      ? "bg-purple-600 text-white shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <CheckSquare className="w-3.5 h-3.5" />
+                  <span>Roadmap Checklist</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAppFolderViewMode('editor')}
+                  className={cn(
+                    "px-3 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5",
+                    appFolderViewMode === 'editor'
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <NotebookPen className="w-3.5 h-3.5" />
+                  <span>Journal Editor</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {selectedFolderFilter === 'App' && appFolderViewMode === 'checklist' ? (
+            <AppIdeasChecklist onPlanFeatureWithAI={handlePlanFeatureWithAI} />
+          ) : (
+            <Card className="bg-card/80 backdrop-blur-2xl border border-border/70 shadow-xl rounded-2xl overflow-hidden">
             {/* Header Toolbar */}
             <CardHeader className="p-5 pb-3 border-b border-border/50 bg-accent/15">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1299,6 +1488,39 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap justify-end">
+                  {/* Code with Antigravity for App ideas */}
+                  {(editFolder === 'App' || editTags.includes('App')) && (
+                    <Button
+                      size="sm"
+                      variant="default"
+                      onClick={() => {
+                        const current = logs.find((l) => l.id === selectedLogId);
+                        if (current) {
+                          handleOpenAntigravityFromLog(current);
+                        } else {
+                          handleOpenAntigravityFromLog({
+                            id: 'draft',
+                            title: editTitle || 'New App Idea',
+                            content: editContent,
+                            folder: editFolder,
+                            tags: editTags,
+                            sentiment: editSentiment,
+                            isPinned: editIsPinned,
+                            isRead: true,
+                            isFulfilled: false,
+                            createdAt: new Date().toISOString(),
+                            updatedAt: new Date().toISOString(),
+                          } as any);
+                        }
+                      }}
+                      className="h-8 text-xs font-bold gap-1.5 bg-gradient-to-r from-violet-600 via-indigo-600 to-purple-600 hover:from-violet-500 hover:to-indigo-500 text-white border-0 shadow-md shadow-indigo-500/25"
+                      title="Pair with Antigravity AI to code this feature"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-amber-300 fill-amber-300" />
+                      <span>Code with Antigravity</span>
+                    </Button>
+                  )}
+
                   {/* Linked Ideas shortcut indicator */}
                   {linkedIdeasForCurrentLog.length > 0 && onNavigateToIdeas && (
                     <Button
@@ -1804,6 +2026,7 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
               )}
             </CardContent>
           </Card>
+          )}
         </div>
       </div>
 
@@ -1855,6 +2078,19 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
           }}
         />
       )}
+
+      {/* Antigravity Autonomous Coding Modal */}
+      <AntigravityCodingModal
+        isOpen={Boolean(antigravityModalIdea)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAntigravityModalIdea(null);
+            setAntigravityModalLogId(undefined);
+          }
+        }}
+        idea={antigravityModalIdea}
+        logId={antigravityModalLogId}
+      />
     </div>
   );
 }

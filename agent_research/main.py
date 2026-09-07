@@ -6,6 +6,13 @@ from datetime import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
 
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 from tools import TOOL_SCHEMAS, TOOL_DISPATCH, get_live_price, get_macro_data
 from pdf_generator import generate_pdf
 
@@ -153,12 +160,12 @@ def main(ticker: str, report_type: str = "company_research", prompt_id_or_custom
 
     # Prioritize OpenRouter if available (reliable, higher limits) or fallback to Gemini
     if openrouter_key:
-        print("Using OpenRouter API (gpt-4o-mini)...")
+        print("Using OpenRouter API...")
         client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=openrouter_key
         )
-        model = os.getenv("OPENROUTER_RESEARCH_MODEL", "openai/gpt-4o-mini")
+        model = os.getenv("OPENROUTER_RESEARCH_MODEL", "inclusionai/ling-3.0-flash-fin:free")
         provider = "openrouter"
     elif gemini_key:
         print("Using Google AI Studio (Gemini) API...")

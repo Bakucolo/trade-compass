@@ -36,6 +36,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useCreateSingleShortOptionAlerts } from '@/services/alertService';
 import { AddToWatchlistModal } from '../AddToWatchlistModal';
+import { parseTrading212Ticker } from '@/utils/tickerUtils';
 
 interface CriticalDefenseModalProps {
   isOpen: boolean;
@@ -324,9 +325,8 @@ export function CriticalDefenseModal({
     onClose();
     if (onNavigateToResearch) {
       onNavigateToResearch(symbol);
-    } else {
-      window.dispatchEvent(new CustomEvent('select-research-ticker', { detail: symbol }));
     }
+    window.dispatchEvent(new CustomEvent('select-research-ticker', { detail: symbol }));
   };
 
   const handleGoToGraphs = (e: React.MouseEvent, symbol: string) => {
@@ -334,9 +334,8 @@ export function CriticalDefenseModal({
     onClose();
     if (onNavigateToGraphs) {
       onNavigateToGraphs(symbol);
-    } else {
-      window.dispatchEvent(new CustomEvent('select-research-ticker', { detail: symbol }));
     }
+    window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: symbol }));
   };
 
   const handleArmAlerts = async (e: React.MouseEvent, pos: UnifiedPosition) => {
@@ -611,7 +610,22 @@ export function CriticalDefenseModal({
             filteredPositions.map((threat, index) => {
               const pos = threat.position;
               const { pl, plPercent } = getPositionOpenPL(pos);
-              const cleanBase = (pos.underlyingSymbol || pos.symbol.match(/^[A-Z]+/)?.[0] || pos.symbol).trim().toUpperCase();
+              let cleanBase = (pos.underlyingSymbol || '').trim().toUpperCase();
+              if (!cleanBase) {
+                const isOpt = pos.assetType === 'Option' || pos.assetType === 'OPTION';
+                if (isOpt) {
+                  cleanBase = (pos.symbol.match(/^[A-Z]+/)?.[0] || pos.symbol).trim().toUpperCase();
+                } else if (pos.ticker) {
+                  cleanBase = parseTrading212Ticker(pos.ticker).cleanSymbol.toUpperCase();
+                } else {
+                  const raw = (pos.symbol || '').trim().toUpperCase();
+                  if (raw.endsWith('_US_EQ')) cleanBase = raw.replace('_US_EQ', '');
+                  else if (raw.endsWith('_CA_EQ')) cleanBase = raw.replace('_CA_EQ', '') + '.TO';
+                  else if (raw.endsWith('L_EQ') || raw.endsWith('P_EQ')) cleanBase = raw.replace(/[LP]_EQ$/, '') + '.L';
+                  else if (raw.endsWith('_EQ')) cleanBase = raw.replace('_EQ', '');
+                  else cleanBase = raw;
+                }
+              }
               const isShort = pos.quantity < 0;
               const isOption = pos.assetType === 'Option';
 

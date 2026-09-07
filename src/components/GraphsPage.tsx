@@ -47,15 +47,17 @@ import { PriceAlertModal } from './PriceAlertModal';
 import { StockNoteModal } from './StockNoteModal';
 import { AddToWatchlistModal } from './AddToWatchlistModal';
 import { getCompanyStyleAndThemes, STYLE_CONFIG, getThemeBadgeStyle } from '@/services/stockThematics';
+import { parseTrading212Ticker } from '@/utils/tickerUtils';
 import { toast } from 'sonner';
 
 interface GraphsPageProps {
   onNavigateToResearch?: (symbol: string) => void;
+  initialSymbol?: string;
 }
 
 type SidePanelSource = 'WATCHLIST' | 'PORTFOLIO';
 
-export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
+export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPageProps) {
   // --- Side Panel Source & Watchlists ---
   const [sourceMode, setSourceMode] = useState<SidePanelSource>('WATCHLIST');
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
@@ -118,7 +120,9 @@ export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
   const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
 
   // --- Active Selected Stock to Chart ---
-  const [selectedSymbol, setSelectedSymbol] = useState<string>('AAPL');
+  const [selectedSymbol, setSelectedSymbol] = useState<string>(() => {
+    return initialSymbol ? initialSymbol.toUpperCase() : 'AAPL';
+  });
 
   // Combined Portfolio Positions
   const portfolioItems = useMemo(() => {
@@ -126,10 +130,27 @@ export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
     const uniqueMap = new Map<string, any>();
 
     raw.forEach((p: any) => {
-      const sym = (p.underlyingSymbol || p.symbol || p.ticker || '').toUpperCase();
+      const isOption = p.assetType === 'OPTION' || p.assetType === 'Option';
+      let rawSym = (p.underlyingSymbol || p.symbol || p.ticker || '').toUpperCase();
+      if (!rawSym) return;
+
+      let cleanSym = rawSym;
+      if (p.ticker) {
+        cleanSym = parseTrading212Ticker(p.ticker).cleanSymbol.toUpperCase();
+      } else if (rawSym.endsWith('_US_EQ')) {
+        cleanSym = rawSym.replace('_US_EQ', '');
+      } else if (rawSym.endsWith('_CA_EQ')) {
+        cleanSym = rawSym.replace('_CA_EQ', '') + '.TO';
+      } else if (rawSym.endsWith('L_EQ') || rawSym.endsWith('P_EQ')) {
+        cleanSym = rawSym.replace(/[LP]_EQ$/, '') + '.L';
+      } else if (rawSym.endsWith('_EQ')) {
+        cleanSym = rawSym.replace('_EQ', '');
+      }
+
+      const sym = (p.underlyingSymbol || (isOption ? (cleanSym.match(/^[A-Z]+/)?.[0] || cleanSym) : cleanSym)).trim().toUpperCase();
       if (!sym) return;
+
       if (!uniqueMap.has(sym)) {
-        const isOption = p.assetType === 'OPTION' || p.assetType === 'Option';
         const qty = p.quantity || p.shares || 0;
         const curPrice = p.currentPrice || p.underlyingPrice || p.averageCost || 0;
         const dPct = p.dayChangePercent ?? p.dayPnLPercent ?? 0;
@@ -176,6 +197,35 @@ export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
     );
   }, [currentList, searchQuery]);
 
+  // Keep selectedSymbol in sync with initialSymbol prop
+  useEffect(() => {
+    if (initialSymbol && initialSymbol.trim()) {
+      const sym = initialSymbol.trim().toUpperCase();
+      setSelectedSymbol(sym);
+      if (portfolioItems.some((p) => p.symbol === sym)) {
+        setSourceMode('PORTFOLIO');
+      }
+    }
+  }, [initialSymbol, portfolioItems]);
+
+  // Listen for global select-graphs-ticker event
+  useEffect(() => {
+    const handleTickerEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<string>;
+      if (customEvent.detail && customEvent.detail.trim()) {
+        const sym = customEvent.detail.trim().toUpperCase();
+        setSelectedSymbol(sym);
+        if (portfolioItems.some((p) => p.symbol === sym)) {
+          setSourceMode('PORTFOLIO');
+        }
+      }
+    };
+    window.addEventListener('select-graphs-ticker', handleTickerEvent);
+    return () => {
+      window.removeEventListener('select-graphs-ticker', handleTickerEvent);
+    };
+  }, [portfolioItems]);
+
   // Check if searched ticker is an unlisted new ticker
   const searchedCleanTicker = searchQuery.trim().toUpperCase();
   const isSearchNotInList = Boolean(
@@ -193,22 +243,26 @@ export function GraphsPage({ onNavigateToResearch }: GraphsPageProps) {
     );
   }, [activeWatchlistData, selectedSymbol]);
 
-  // If no symbol selected yet, default to first in list
+  // Only default to first item if no symbol has been chosen at all
   useEffect(() => {
-    if (filteredList.length > 0 && !filteredList.some((i) => i.symbol === selectedSymbol) && !isSearchNotInList) {
+    if (!selectedSymbol && filteredList.length > 0) {
       setSelectedSymbol(filteredList[0].symbol);
     }
-  }, [filteredList, selectedSymbol, isSearchNotInList]);
-
-  // Active Symbol Details
-  const activeItemDetails = useMemo(() => {
-    return filteredList.find((i) => i.symbol === selectedSymbol) || {
-      symbol: selectedSymbol,
-      name: `${selectedSymbol} Stock`,
-      price: 0,
-      changePercent: 0,
-    };
   }, [filteredList, selectedSymbol]);
+
+  // Active Symbol Details (find in current list, portfolio, or fallback)
+  const activeItemDetails = useMemo(() => {
+    return (
+      filteredList.find((i) => i.symbol === selectedSymbol) ||
+      currentList.find((i) => i.symbol === selectedSymbol) ||
+      portfolioItems.find((i) => i.symbol === selectedSymbol) || {
+        symbol: selectedSymbol,
+        name: `${selectedSymbol} Stock`,
+        price: 0,
+        changePercent: 0,
+      }
+    );
+  }, [filteredList, currentList, portfolioItems, selectedSymbol]);
 
   const activeThematics = useMemo(() => {
     return getCompanyStyleAndThemes(selectedSymbol, activeItemDetails?.name);

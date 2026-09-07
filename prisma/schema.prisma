@@ -305,13 +305,36 @@ model ThoughtLog {
   agentActionType String?   // "ADD_CONTEXT" | "CHECK_ASSUMPTIONS" | "RESEARCH_FURTHER" | "ORGANIZE_THESIS" | "PROPOSE_STRUCTURES" | "CUSTOM_QUERY"
   agentHistory    String?   // JSON array of iterative dialogue/updates
   marketDataJson  String?   // JSON snapshot of detected market data
+  isFulfilled     Boolean   @default(false)
+  fulfilledAt     DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
   @@index([createdAt])
   @@index([isPinned])
   @@index([isRead])
+  @@index([isFulfilled])
   @@index([folder])
+}
+
+model AppIdea {
+  id            String    @id @default(uuid())
+  title         String
+  description   String?
+  topic         String    @default("App")
+  category      String    @default("Feature") // "Feature" | "UI/UX" | "Data" | "Integration" | "Bug"
+  isFulfilled   Boolean   @default(false)
+  fulfilledAt   DateTime?
+  tags          String?
+  source        String    @default("TELEGRAM") // "TELEGRAM" | "MANUAL"
+  telegramMsgId Int?
+  thoughtLogId  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([isFulfilled])
+  @@index([createdAt])
+  @@index([topic])
 }
 
 model PlannedTrade {

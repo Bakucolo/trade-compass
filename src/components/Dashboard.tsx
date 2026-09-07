@@ -723,7 +723,12 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
           setIsAdvisorOpen(true);
         }}
         onNavigateToResearch={onNavigateToResearch}
-        onNavigateToGraphs={onNavigateToGraphs || (() => goToTab('graphs'))}
+        onNavigateToGraphs={onNavigateToGraphs || ((sym?: string) => {
+          goToTab('graphs');
+          if (sym) {
+            window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: sym }));
+          }
+        })}
       />
     </div>
   );

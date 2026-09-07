@@ -17,5 +17,7 @@ TELEGRAM_CHAT_ID = "8959044574"
 # Alerts Topic Configuration (chat_id: -1003872409872, message_thread_id: 2)
 TELEGRAM_ALERTS_CHAT_ID = "-1003872409872"
 TELEGRAM_ALERTS_THREAD_ID = "2"
+# App Topic Configuration (chat_id: -1003872409872, message_thread_id: 10)
+TELEGRAM_APP_THREAD_ID = "10"
 # Optional secret token to verify Telegram webhook requests
 # TELEGRAM_WEBHOOK_SECRET = "my_telegram_webhook_secret_123"

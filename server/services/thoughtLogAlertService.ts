@@ -1,12 +1,14 @@
 import { PrismaClient } from '@prisma/client';
 import YahooFinance from 'yahoo-finance2';
 import { resolveYahooFinanceSymbol } from './tickerResolutionService';
+import { extractSymbolsFromText } from './thoughtLogAgentService';
 
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey', 'ripHistorical'] });
 
 export interface ParsedAlertCandidate {
   symbol: string;
-  targetPrice: number;
+  targetPrice?: number;
+  percentageOffset?: number;
   condition: 'ABOVE' | 'BELOW' | 'AUTO';
   rawSnippet: string;
 }
@@ -52,6 +54,7 @@ const NON_TICKER_WORDS = new Set([
  *  - "RBRK above 120" / "RBRK > 120"
  *  - "RBRK below 110" / "RBRK < 110"
  *  - "Set alert for RBRK 120"
+ *  - "NVDA -5%" / "Alert NVDA +10%" / "TSLA 5% dip"
  */
 export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[] {
   if (!text || typeof text !== 'string') return [];
@@ -69,9 +72,46 @@ export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[
     const trimmed = seg.trim();
     if (!trimmed) continue;
 
-    // Regex to match:
-    // Optional (ALERT / SET ALERT [FOR/ON]) + Optional $ + Ticker (1-6 letters) + Optional separator (@, at, :, >, <, above, below, over, under, reach) + Optional $ + Price
-    const match = trimmed.match(/(?:(?:SET\s+)?ALERT(?:\s+FOR|\s+ON|:)?\s+)?(?:\$)?([A-Za-z]{1,6})\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH)?\s*\$?([0-9]+(?:\.[0-9]+)?)(?:\s*(?:ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP))?/i);
+    // 1. Check for percentage offset alert: e.g. "NVDA -5%", "Alert NVDA +10%", "TSLA 5% dip", "AAPL down 5%"
+    const pctMatch = trimmed.match(/(?:(?:SET\s+)?ALERT(?:\s+FOR|\s+ON|:)?\s+)?(?:\$)?([A-Za-z]{1,6})\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH|DOWN|UP)?\s*([+-]?\s*[0-9]+(?:\.[0-9]+)?)\s*%/i);
+    if (pctMatch) {
+      const rawSym = pctMatch[1].toUpperCase();
+      const pctVal = parseFloat(pctMatch[2].replace(/\s+/g, ''));
+      if (
+        !NON_TICKER_WORDS.has(rawSym) &&
+        !isNaN(pctVal) &&
+        Math.abs(pctVal) > 0 &&
+        rawSym.length >= 1 &&
+        rawSym.length <= 6
+      ) {
+        const upperSeg = trimmed.toUpperCase();
+        let condition: 'ABOVE' | 'BELOW' = pctVal >= 0 ? 'ABOVE' : 'BELOW';
+        let finalOffset = pctVal;
+        if (upperSeg.includes('BELOW') || upperSeg.includes('<') || upperSeg.includes('UNDER') || upperSeg.includes('DIP') || upperSeg.includes('DROP') || upperSeg.includes('DOWN')) {
+          condition = 'BELOW';
+          finalOffset = -Math.abs(pctVal);
+        } else if (upperSeg.includes('ABOVE') || upperSeg.includes('>') || upperSeg.includes('OVER') || upperSeg.includes('BREAKOUT') || upperSeg.includes('UP')) {
+          condition = 'ABOVE';
+          finalOffset = Math.abs(pctVal);
+        }
+
+        const dedupKey = `${rawSym}-PCT-${finalOffset}-${condition}`;
+        if (!seenSymbols.has(dedupKey)) {
+          seenSymbols.add(dedupKey);
+          results.push({
+            symbol: rawSym,
+            percentageOffset: finalOffset,
+            condition,
+            rawSnippet: trimmed,
+          });
+          continue;
+        }
+      }
+    }
+
+    // 2. Check for fixed target price: e.g. "NVDA 120", "Alert RBRK at 120", "RBRK @ $120.50", "NVDA > 130"
+    // Negative lookahead (?!\s*%) prevents matching "5" in "5%" as a dollar price
+    const match = trimmed.match(/(?:(?:SET\s+)?ALERT(?:\s+FOR|\s+ON|:)?\s+)?(?:\$)?([A-Za-z]{1,6})\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH)?\s*\$?([0-9]+(?:\.[0-9]+)?)(?!\s*%)(\s*(?:ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP))?/i);
 
     if (match) {
       const rawSym = match[1].toUpperCase();
@@ -130,9 +170,28 @@ export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[
 export async function autoCreateAlertsFromText(
   prisma: PrismaClient,
   text: string,
-  sourceNotes?: string
+  sourceNotes?: string,
+  options?: { isAlertsTopic?: boolean }
 ): Promise<CreatedAlertResult[]> {
-  const candidates = extractPriceAlertCandidates(text);
+  let candidates = extractPriceAlertCandidates(text);
+
+  // If in the Alerts topic and no explicit price/percentage was specified, extract detected tickers
+  // and arm a default 5% proximity dip alert (or breakout if bullish keywords detected)
+  if (candidates.length === 0 && options?.isAlertsTopic) {
+    const rawSymbols = extractSymbolsFromText(text);
+    const validSymbols = rawSymbols.filter((s) => !NON_TICKER_WORDS.has(s.toUpperCase()));
+    for (const sym of validSymbols) {
+      const upper = text.toUpperCase();
+      const isBullish = upper.includes('CALL') || upper.includes('ABOVE') || upper.includes('BREAKOUT') || upper.includes('RALLY') || upper.includes('UP');
+      candidates.push({
+        symbol: sym,
+        percentageOffset: isBullish ? 5 : -5,
+        condition: isBullish ? 'ABOVE' : 'BELOW',
+        rawSnippet: text.trim(),
+      });
+    }
+  }
+
   if (candidates.length === 0) return [];
 
   const createdResults: CreatedAlertResult[] = [];
@@ -141,7 +200,7 @@ export async function autoCreateAlertsFromText(
     try {
       const resolvedSym = resolveYahooFinanceSymbol(candidate.symbol) || candidate.symbol;
 
-      // 1. Fetch spot market price to determine AUTO condition (ABOVE vs BELOW)
+      // 1. Fetch spot market price
       let currentPrice: number | null = null;
       try {
         const summary = await yahooFinance.quoteSummary(resolvedSym, { modules: ['price'] }).catch(() => null);
@@ -150,20 +209,32 @@ export async function autoCreateAlertsFromText(
         }
       } catch {}
 
+      // 2. Resolve target price & condition
+      let finalTargetPrice: number;
       let finalCondition: 'ABOVE' | 'BELOW' = 'ABOVE';
-      if (candidate.condition === 'BELOW' || candidate.condition === 'ABOVE') {
-        finalCondition = candidate.condition;
-      } else if (currentPrice != null) {
-        // If target price is above current price, alert when it rises ABOVE target
-        // If target price is below current price, alert when it drops BELOW target
-        finalCondition = candidate.targetPrice >= currentPrice ? 'ABOVE' : 'BELOW';
+
+      if (candidate.targetPrice !== undefined && candidate.targetPrice > 0) {
+        finalTargetPrice = candidate.targetPrice;
+        if (candidate.condition === 'BELOW' || candidate.condition === 'ABOVE') {
+          finalCondition = candidate.condition;
+        } else if (currentPrice != null) {
+          finalCondition = candidate.targetPrice >= currentPrice ? 'ABOVE' : 'BELOW';
+        }
+      } else if (candidate.percentageOffset !== undefined && currentPrice != null && currentPrice > 0) {
+        finalTargetPrice = Number((currentPrice * (1 + candidate.percentageOffset / 100)).toFixed(2));
+        finalCondition = candidate.percentageOffset >= 0 ? 'ABOVE' : 'BELOW';
+      } else {
+        // Cannot determine price without spot or explicit target
+        continue;
       }
 
-      // 2. Check if identical active alert already exists to prevent duplicate spam
+      if (finalTargetPrice <= 0 || isNaN(finalTargetPrice)) continue;
+
+      // 3. Check if identical active alert already exists to prevent duplicate spam
       const existing = await prisma.priceAlert.findFirst({
         where: {
           symbol: resolvedSym,
-          targetPrice: candidate.targetPrice,
+          targetPrice: finalTargetPrice,
           condition: finalCondition,
           status: 'ACTIVE',
         },
@@ -182,18 +253,18 @@ export async function autoCreateAlertsFromText(
         continue;
       }
 
-      // 3. Create active price alert in SQLite database
+      // 4. Create active price alert in SQLite database
       const newAlert = await prisma.priceAlert.create({
         data: {
           symbol: resolvedSym,
-          targetPrice: candidate.targetPrice,
+          targetPrice: finalTargetPrice,
           condition: finalCondition,
           status: 'ACTIVE',
-          notes: sourceNotes || `🔔 Auto-created from Log: "${text.trim()}"`,
+          notes: sourceNotes || `🔔 Auto-created from Telegram Alerts topic: "${text.trim()}"`,
         },
       });
 
-      console.log(`[Auto Price Alert] Created active alert: ${resolvedSym} ${finalCondition} $${candidate.targetPrice} (Spot: $${currentPrice ?? 'N/A'})`);
+      console.log(`[Auto Price Alert] Created active alert: ${resolvedSym} ${finalCondition} $${finalTargetPrice} (Spot: $${currentPrice ?? 'N/A'})`);
 
       createdResults.push({
         id: newAlert.id,
