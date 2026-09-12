@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import YahooFinance from 'yahoo-finance2';
 import { fetchFredMacroData, MacroIndicator } from './fredService';
 import { agentActivityTracker } from './agentActivityService';
+import { generateJsonCompletion } from './llmFallbackRouter';
 
 const prisma = new PrismaClient();
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey', 'ripHistorical'] });
@@ -445,73 +446,18 @@ YOU MUST RETURN STRICT PURE JSON MATCHING THIS EXACT SCHEMA (no markdown outside
   ]
 }`;
 
-  let rawDossierText = '';
-
-  // 4. Try LLM Call via OpenRouter / Gemini
-  try {
-    if (process.env.OPENROUTER_API_KEY) {
-      logToFile('[MacroDossierAgent] Querying OpenRouter API (openai/gpt-4o-mini)...');
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: "openai/gpt-4o-mini",
-          response_format: { type: "json_object" },
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: "Generate the definitive institutional Global Macro Intelligence Dossier based on all active telemetry." }
-          ],
-          temperature: 0.3
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        rawDossierText = data.choices?.[0]?.message?.content || "";
-      } else {
-        const errTxt = await response.text();
-        logToFile(`[MacroDossierAgent] OpenRouter error: ${response.status} ${errTxt}`);
-      }
-    }
-
-    if (!rawDossierText && process.env.GEMINI_API_KEY) {
-      logToFile('[MacroDossierAgent] Querying Gemini API (gemini-1.5-flash)...');
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
-      const response = await fetch(geminiUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            { role: "user", parts: [{ text: `${systemPrompt}\n\nGenerate the complete structured JSON Macro Intelligence Dossier.` }] }
-          ],
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.3
-          }
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        rawDossierText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-      }
-    }
-  } catch (err: any) {
-    logToFile(`[MacroDossierAgent] LLM invocation warning: ${err?.message || err}`);
-  }
-
-  // 5. Parse or Construct Fallback Dossier Result
+  // 4. Query LLM via Multi-Tier Fallback Router (OpenRouter -> Gemini -> Groq)
   let parsed: any = null;
-  if (rawDossierText) {
-    try {
-      const cleanJson = rawDossierText.replace(/```json\n?|\n?```/g, '').trim();
-      parsed = JSON.parse(cleanJson);
-    } catch (e) {
-      logToFile(`[MacroDossierAgent] JSON parse error, building calibrated fallback.`);
-    }
+  try {
+    logToFile('[MacroDossierAgent] Querying LLM via fallback router (OpenRouter -> Gemini -> Groq)...');
+    const result = await generateJsonCompletion<any>({
+      systemPrompt,
+      userPrompt: "Generate the definitive institutional Global Macro Intelligence Dossier based on all active telemetry.",
+      tag: 'MacroDossierAgent',
+    });
+    parsed = result.data;
+  } catch (err: any) {
+    logToFile(`[MacroDossierAgent] LLM fallback cascade warning (${err?.message || err}), building calibrated algorithmic fallback.`);
   }
 
   // Determine heuristic regime tone & score
@@ -824,6 +770,84 @@ For portfolio managers and derivatives traders, this macro backdrop favors high-
 }
 
 /**
+ * Format a raw Prisma record into a validated MacroDossierResult
+ */
+export function formatMacroDossierRecord(record: any): MacroDossierResult {
+  try {
+    const parsed = JSON.parse(record.rawDossierJson);
+    return {
+      ...parsed,
+      id: record.id,
+      createdAt: record.createdAt instanceof Date ? record.createdAt.toISOString() : (record.createdAt || new Date().toISOString())
+    };
+  } catch {
+    return {
+      id: record.id,
+      title: record.title,
+      regimeTitle: record.regimeTitle,
+      regimeTone: record.regimeTone as any,
+      macroScore: record.macroScore,
+      growthOutlook: record.growthOutlook as any,
+      inflationRegime: record.inflationRegime as any,
+      monetaryPolicyPosture: record.monetaryPolicyPosture as any,
+      liquidityCondition: record.liquidityCondition as any,
+      vixLevel: record.vixLevel,
+      yield10y: record.yield10y,
+      spread2y10y: record.spread2y10y,
+      dxyLevel: record.dxyLevel,
+      oilPrice: record.oilPrice,
+      fedFundsRate: 4.83,
+      highYieldSpread: 3.12,
+      executiveSummary: record.executiveSummary,
+      narrativeOverview: record.narrativeOverview,
+      keyTakeaways: [],
+      pillars: JSON.parse(record.pillarsJson || '[]'),
+      scenarios: JSON.parse(record.scenariosJson || '[]'),
+      tacticalAllocations: JSON.parse(record.tacticalAllocationsJson || '[]'),
+      catalystsRadar: JSON.parse(record.catalystsRadarJson || '[]'),
+      createdAt: record.createdAt instanceof Date ? record.createdAt.toISOString() : (record.createdAt || new Date().toISOString())
+    };
+  }
+}
+
+/**
+ * Find today's saved macro dossier report if one was already run today.
+ * Prevents redundant LLM calls and preserves compute allowance.
+ */
+export async function getTodayMacroDossier(clientDate?: string | Date): Promise<MacroDossierResult | null> {
+  try {
+    let startOfDay: Date;
+    if (clientDate) {
+      const d = new Date(clientDate);
+      if (!isNaN(d.getTime())) {
+        startOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+      } else {
+        const now = new Date();
+        startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      }
+    } else {
+      const now = new Date();
+      startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    }
+
+    const record = await (prisma as any).macroDossierReport.findFirst({
+      where: {
+        createdAt: {
+          gte: startOfDay
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    if (!record) return null;
+    return formatMacroDossierRecord(record);
+  } catch (err) {
+    console.error('[MacroDossierAgent] Error finding today macro dossier:', err);
+    return null;
+  }
+}
+
+/**
  * Fetch all saved macro dossiers from SQLite DB
  */
 export async function getMacroDossiers(limit = 20): Promise<MacroDossierResult[]> {
@@ -833,43 +857,7 @@ export async function getMacroDossiers(limit = 20): Promise<MacroDossierResult[]
       take: limit
     });
 
-    return records.map((r: any) => {
-      try {
-        const parsed = JSON.parse(r.rawDossierJson);
-        return {
-          ...parsed,
-          id: r.id,
-          createdAt: r.createdAt.toISOString()
-        };
-      } catch {
-        return {
-          id: r.id,
-          title: r.title,
-          regimeTitle: r.regimeTitle,
-          regimeTone: r.regimeTone as any,
-          macroScore: r.macroScore,
-          growthOutlook: r.growthOutlook as any,
-          inflationRegime: r.inflationRegime as any,
-          monetaryPolicyPosture: r.monetaryPolicyPosture as any,
-          liquidityCondition: r.liquidityCondition as any,
-          vixLevel: r.vixLevel,
-          yield10y: r.yield10y,
-          spread2y10y: r.spread2y10y,
-          dxyLevel: r.dxyLevel,
-          oilPrice: r.oilPrice,
-          fedFundsRate: 4.83,
-          highYieldSpread: 3.12,
-          executiveSummary: r.executiveSummary,
-          narrativeOverview: r.narrativeOverview,
-          keyTakeaways: [],
-          pillars: JSON.parse(r.pillarsJson || '[]'),
-          scenarios: JSON.parse(r.scenariosJson || '[]'),
-          tacticalAllocations: JSON.parse(r.tacticalAllocationsJson || '[]'),
-          catalystsRadar: JSON.parse(r.catalystsRadarJson || '[]'),
-          createdAt: r.createdAt.toISOString()
-        };
-      }
-    });
+    return records.map(formatMacroDossierRecord);
   } catch (err) {
     console.error('Failed to get macro dossiers:', err);
     return [];
@@ -885,38 +873,7 @@ export async function getMacroDossierById(id: string): Promise<MacroDossierResul
       where: { id }
     });
     if (!record) return null;
-
-    try {
-      const parsed = JSON.parse(record.rawDossierJson);
-      return { ...parsed, id: record.id, createdAt: record.createdAt.toISOString() };
-    } catch {
-      return {
-        id: record.id,
-        title: record.title,
-        regimeTitle: record.regimeTitle,
-        regimeTone: record.regimeTone as any,
-        macroScore: record.macroScore,
-        growthOutlook: record.growthOutlook as any,
-        inflationRegime: record.inflationRegime as any,
-        monetaryPolicyPosture: record.monetaryPolicyPosture as any,
-        liquidityCondition: record.liquidityCondition as any,
-        vixLevel: record.vixLevel,
-        yield10y: record.yield10y,
-        spread2y10y: record.spread2y10y,
-        dxyLevel: record.dxyLevel,
-        oilPrice: record.oilPrice,
-        fedFundsRate: 4.83,
-        highYieldSpread: 3.12,
-        executiveSummary: record.executiveSummary,
-        narrativeOverview: record.narrativeOverview,
-        keyTakeaways: [],
-        pillars: JSON.parse(record.pillarsJson || '[]'),
-        scenarios: JSON.parse(record.scenariosJson || '[]'),
-        tacticalAllocations: JSON.parse(record.tacticalAllocationsJson || '[]'),
-        catalystsRadar: JSON.parse(record.catalystsRadarJson || '[]'),
-        createdAt: record.createdAt.toISOString()
-      };
-    }
+    return formatMacroDossierRecord(record);
   } catch (err) {
     console.error(`Failed to get macro dossier ${id}:`, err);
     return null;
@@ -935,3 +892,4 @@ export async function deleteMacroDossier(id: string): Promise<boolean> {
     return false;
   }
 }
+

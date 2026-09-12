@@ -28,6 +28,7 @@ interface ExecutiveStatsRibbonProps {
   positions?: any[];
   isPrivacyMode: boolean;
   onTogglePrivacy: () => void;
+  onOpenThetaBreakdown?: () => void;
 }
 
 export function ExecutiveStatsRibbon({
@@ -35,6 +36,7 @@ export function ExecutiveStatsRibbon({
   positions = [],
   isPrivacyMode,
   onTogglePrivacy,
+  onOpenThetaBreakdown,
 }: ExecutiveStatsRibbonProps) {
   const [dashCurrencyMode, setDashCurrencyMode] = useState<'USD' | 'GBP' | 'DUAL'>('USD');
 
@@ -206,7 +208,14 @@ export function ExecutiveStatsRibbon({
       </Card>
 
       {/* 3. Overall Portfolio Theta & Daily Time Decay */}
-      <Card className="bg-card/70 backdrop-blur-xl border border-border/70 shadow-md hover:border-purple-500/40 transition-all rounded-2xl overflow-hidden relative group">
+      <Card
+        onClick={onOpenThetaBreakdown}
+        className={cn(
+          "bg-card/70 backdrop-blur-xl border border-border/70 shadow-md transition-all rounded-2xl overflow-hidden relative group",
+          onOpenThetaBreakdown && "cursor-pointer hover:border-purple-500/80 hover:shadow-lg hover:shadow-purple-500/10 active:scale-[0.99]"
+        )}
+        title={onOpenThetaBreakdown ? "Click to view which positions provide this Theta" : undefined}
+      >
         <div
           className={cn(
             'h-1 w-full',
@@ -219,26 +228,33 @@ export function ExecutiveStatsRibbon({
         />
         <CardContent className="p-5 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              <Zap className="w-3.5 h-3.5 text-purple-400" /> Portfolio Theta (Θ)
+            <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 group-hover:text-purple-300 transition-colors">
+              <Zap className="w-3.5 h-3.5 text-purple-400 group-hover:scale-110 transition-transform" /> Portfolio Theta (Θ)
             </span>
-            <Badge
-              variant="outline"
-              className={cn(
-                'text-[10px] font-mono font-bold px-1.5 py-0',
-                isThetaPositive
-                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-emerald-500/10'
+            <div className="flex items-center gap-1.5">
+              <Badge
+                variant="outline"
+                className={cn(
+                  'text-[10px] font-mono font-bold px-1.5 py-0',
+                  isThetaPositive
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-emerald-500/10'
+                    : isThetaNegative
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                    : 'bg-accent/60 text-muted-foreground'
+                )}
+              >
+                {isThetaPositive
+                  ? `+${portfolioTheta.annualizedThetaYieldPercent.toFixed(1)}% Yield`
                   : isThetaNegative
-                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
-                  : 'bg-accent/60 text-muted-foreground'
+                  ? `${portfolioTheta.annualizedThetaYieldPercent.toFixed(1)}% Drag`
+                  : 'Neutral Θ'}
+              </Badge>
+              {onOpenThetaBreakdown && (
+                <span className="text-[10px] text-purple-400 font-mono font-bold opacity-0 group-hover:opacity-100 transition-opacity hidden sm:inline-flex items-center">
+                  Breakdown →
+                </span>
               )}
-            >
-              {isThetaPositive
-                ? `+${portfolioTheta.annualizedThetaYieldPercent.toFixed(1)}% Yield`
-                : isThetaNegative
-                ? `${portfolioTheta.annualizedThetaYieldPercent.toFixed(1)}% Drag`
-                : 'Neutral Θ'}
-            </Badge>
+            </div>
           </div>
 
           <div>
@@ -262,7 +278,7 @@ export function ExecutiveStatsRibbon({
                   {fmt(portfolioTheta.totalMonthlyTheta)}/mo
                 </strong>
               </span>
-              <span className="text-[10px] text-purple-300/80">
+              <span className="text-[10px] text-purple-300/80 group-hover:text-purple-300 transition-colors">
                 {portfolioTheta.totalOptionsCount} contracts ({portfolioTheta.shortOptionsCount}S / {portfolioTheta.longOptionsCount}L)
               </span>
             </div>

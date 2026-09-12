@@ -33,7 +33,9 @@ import {
   HelpCircle,
   Calculator,
   Flame,
-  PieChart
+  PieChart,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { usePortfolioBalances } from '@/services/portfolioBalanceService';
@@ -57,6 +59,7 @@ export function BuyingPowerAnalyserModal({
   onNavigateToTrades,
 }: BuyingPowerAnalyserModalProps) {
   const { data: balancesData, isLoading, refetch } = usePortfolioBalances();
+  const [isFullScreen, setIsFullScreen] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<string>('overview');
 
   // Trade Simulator Input State
@@ -134,8 +137,15 @@ export function BuyingPowerAnalyserModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-card/95 backdrop-blur-2xl border-border/80 p-6 shadow-2xl rounded-2xl">
-        <DialogHeader className="pb-4 border-b border-border/50">
+      <DialogContent
+        className={cn(
+          "overflow-y-auto bg-card/95 backdrop-blur-2xl p-6 shadow-2xl transition-all duration-200 scrollbar-thin",
+          isFullScreen
+            ? "!fixed !inset-0 !left-0 !top-0 !translate-x-0 !translate-y-0 !w-screen !h-screen !max-w-none !max-h-none !rounded-none !border-0 !m-0 z-50"
+            : "max-w-4xl w-[95vw] max-h-[90vh] border border-border/80 rounded-2xl"
+        )}
+      >
+        <DialogHeader className="pb-4 border-b border-border/50 pr-10">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500/20 via-primary/20 to-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-md">
@@ -167,6 +177,17 @@ export function BuyingPowerAnalyserModal({
               >
                 <RefreshCw className={cn("w-3.5 h-3.5", isLoading && "animate-spin")} />
                 <span className="hidden sm:inline">Sync</span>
+              </Button>
+
+              {/* Fullscreen Toggle Button */}
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setIsFullScreen(!isFullScreen)}
+                className="h-8 w-8 text-muted-foreground hover:text-foreground rounded-xl border-border/60 hover:bg-accent/40 shrink-0 transition-all shadow-sm"
+                title={isFullScreen ? "Restore window size (Exit Fullscreen)" : "Full size simulate window (Fullscreen)"}
+              >
+                {isFullScreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
               </Button>
             </div>
           </div>

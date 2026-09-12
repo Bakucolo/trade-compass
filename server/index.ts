@@ -38,12 +38,20 @@ import { fetchGrowthAndValuationDossier } from './services/growthValuationServic
 import { fetchInvestorRelationsDossier } from './services/investorRelationsService';
 import { generateTradeStructures } from './services/tradeStructurerService';
 import { diagnoseEconomicCycle, generateMacroStockPicks } from './services/economicCycleService';
+import {
+  executeWithFallback,
+  generateJsonCompletion,
+  getFallbackRouterStats,
+  resetFallbackRouterCooldowns,
+  getProviderAllowances,
+} from './services/llmFallbackRouter';
 import { optionsTradeAgentService } from './services/optionsTradeAgentService';
 import { shortCandidateService } from './services/shortCandidateService';
 import { optionsLiquidityService } from './services/optionsLiquidityService';
 import { optionsChainService } from './services/optionsChainService';
 import { volatilityMacroService } from './services/volatilityMacroService';
 import { trendFinderService } from './services/trendFinderService';
+import { technicalAnalysisService } from './services/technicalAnalysisService';
 import {
   scanHoldingsAndWatchlistsForDips,
   diagnoseStockDip,
@@ -61,10 +69,18 @@ import {
   deletePortfolioValuationAudit,
 } from './services/portfolioValuationService';
 import {
+  runPortfolioValuationScatterGather,
+  getPortfolioTickers,
+  generateStockValuationPdfBuffer,
+  generatePortfolioValuationPdfBuffer,
+  analyzeSingleStockWorkerAgent,
+} from './services/portfolioValuationAgentService';
+import {
   runMacroDossierAgent,
   getMacroDossiers,
   getMacroDossierById,
   deleteMacroDossier,
+  getTodayMacroDossier,
 } from './services/macroDossierService';
 import {
   getScorecardsHubData,
@@ -82,6 +98,8 @@ import {
   syncShortOptionAlerts,
   getShortOptionsAlertStatus,
   createAlertsForSingleShortOption,
+  extractShortOptionKeyFromNote,
+  recordShortOptionAlertDismissedByKey,
 } from './services/shortOptionAlertService';
 import {
   runAgentOnThoughtLog,
@@ -98,8 +116,11 @@ import {
   getTelegramBufferStatus,
 } from './services/telegramBufferConsumerService';
 import { createAppIdeaRouter } from './routes/appIdeaRoutes';
+import { createMonteCarloRouter } from './routes/monteCarloRoutes';
 import { autoCreateAlertsFromText } from './services/thoughtLogAlertService';
 import { SYMBOL_ALIASES, resolveYahooFinanceSymbol } from './services/tickerResolutionService';
+import { KNOWN_COMPANY_NAMES, getKnownCompanyName } from './services/commonTickers';
+import { analyzeImpliedExpectations } from './services/impliedExpectationsService';
 export { SYMBOL_ALIASES, resolveYahooFinanceSymbol };
 import {
   generateAndSendDailyReport,
@@ -144,6 +165,10 @@ app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
   next();
 });
+
+// Quantitative Analytics: Multi-Factor Monte Carlo Equity Valuation Engine
+app.use('/api/quant/monte-carlo', createMonteCarloRouter());
+app.use('/api/app-ideas', createAppIdeaRouter(prisma));
 
 // IBKR Connection Settings & Account Numbers
 export const IBKR_ISA_ACCOUNT = 'U14522424';
@@ -776,9 +801,35 @@ app.get('/api/portfolio', async (req, res) => {
   res.json(enriched);
 });
 
+// In-memory cache for portfolio balances to guarantee sub-millisecond response times
+let cachedPortfolioBalancesResponse: any = null;
+let lastBalancesCacheTime = 0;
+const BALANCES_CACHE_TTL_MS = 15000; // 15 seconds cache
+
+// Cached last-known live broker telemetry for instantaneous timeout fallback
+let lastKnownTastyBalances: any = null;
+let lastKnownTastyMeta: any = null;
+let lastKnownT212Cash: any = null;
+let lastKnownT212Meta: any = null;
+
+const fetchWithTimeout = async <T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> => {
+  let timer: any;
+  const timeoutPromise = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 // Comprehensive Multi-Account Broker Balances & Multi-Currency Endpoint
 app.get('/api/portfolio/balances', async (req, res) => {
   try {
+    if (req.query.force !== 'true' && cachedPortfolioBalancesResponse && (Date.now() - lastBalancesCacheTime < BALANCES_CACHE_TTL_MS)) {
+      return res.json(cachedPortfolioBalancesResponse);
+    }
     const holdings = await prisma.holding.findMany({
       include: { broker: true }
     });
@@ -959,33 +1010,51 @@ app.get('/api/portfolio/balances', async (req, res) => {
       rawMetrics: ibkrAccountsList[0]?.rawMetrics || {}
     };
 
-    // --- Tastytrade Live Balances & Account Info ---
-    let tastyRawBalances: any = null;
-    let tastyAccountMeta: any = null;
-    let tastyConnected = false;
-
-    try {
-      tastyRawBalances = await fetchTastyBalances();
-      if (tastyRawBalances) {
-        tastyConnected = true;
-        tastyAccountMeta = await fetchTastyAccountInfo();
-      }
-    } catch (e) { }
-
-    if (!tastyRawBalances && ttClient) {
-      try {
-        const accounts = await ttClient.accountsAndCustomersService.getCustomerAccounts();
-        if (accounts && accounts.length > 0) {
-          tastyConnected = true;
-          const firstAccount = accounts[0];
-          const acctNo = (firstAccount as any).account?.['account-number'] || (firstAccount as any)['account-number'];
-          tastyAccountMeta = (firstAccount as any).account || firstAccount;
-          if (acctNo) {
-            tastyRawBalances = await ttClient.balancesAndPositionsService.getAccountBalances(acctNo);
+    // --- Parallelized Live Broker Balances (Tastytrade & Trading 212) with 3s Timeout ---
+    const [tastyResult, t212Result] = await Promise.allSettled([
+      fetchWithTimeout(
+        (async () => {
+          let b = await fetchTastyBalances();
+          let m = null;
+          if (b) {
+            m = await fetchTastyAccountInfo();
+          } else if (ttClient) {
+            const accounts = await ttClient.accountsAndCustomersService.getCustomerAccounts();
+            if (accounts && accounts.length > 0) {
+              const firstAccount = accounts[0];
+              const acctNo = (firstAccount as any).account?.['account-number'] || (firstAccount as any)['account-number'];
+              m = (firstAccount as any).account || firstAccount;
+              if (acctNo) {
+                b = await ttClient.balancesAndPositionsService.getAccountBalances(acctNo);
+              }
+            }
           }
-        }
-      } catch (ttErr) { }
+          return { balances: b, meta: m };
+        })(),
+        3000,
+        { balances: lastKnownTastyBalances, meta: lastKnownTastyMeta }
+      ),
+      fetchWithTimeout(
+        (async () => {
+          const cash = await fetchTrading212Cash();
+          let info = null;
+          if (cash) {
+            info = await fetchTrading212AccountInfo();
+          }
+          return { cash, info };
+        })(),
+        3000,
+        { cash: lastKnownT212Cash, info: lastKnownT212Meta }
+      )
+    ]);
+
+    let tastyRawBalances: any = tastyResult.status === 'fulfilled' ? tastyResult.value.balances : lastKnownTastyBalances;
+    let tastyAccountMeta: any = tastyResult.status === 'fulfilled' ? tastyResult.value.meta : lastKnownTastyMeta;
+    if (tastyRawBalances) {
+      lastKnownTastyBalances = tastyRawBalances;
+      if (tastyAccountMeta) lastKnownTastyMeta = tastyAccountMeta;
     }
+    const tastyConnected = Boolean(tastyRawBalances || tastyAccountMeta);
 
     const tastyPositionsMarketValue = tastyHoldings.reduce((sum, h) => sum + (h.marketValue || 0), 0);
     const tastyOptionsCount = tastyHoldings.filter(h => h.assetType === 'OPTION').length;
@@ -1023,7 +1092,7 @@ app.get('/api/portfolio/balances', async (req, res) => {
 
     const tastytradeData = {
       name: 'Tastytrade',
-      status: tastyConnected ? 'connected' : (tastyHoldings.length > 0 ? 'connected' : 'disconnected'),
+      status: tastyConnected ? 'connected' : 'disconnected',
       accountNumber: tastyAcctNum,
       accountType: tastyAccountType,
       nickname: tastyNickname,
@@ -1064,18 +1133,13 @@ app.get('/api/portfolio/balances', async (req, res) => {
 
     // --- Trading 212 Live Balances & Account Info ---
     const t212Holdings = holdings.filter(h => h.broker?.name === 'Trading 212');
-    let t212RawCash: any = null;
-    let t212AccountInfo: any = null;
-    let t212Connected = false;
-
-    try {
-      t212RawCash = await fetchTrading212Cash();
-      if (t212RawCash) {
-        t212Connected = true;
-        t212AccountInfo = await fetchTrading212AccountInfo();
-        syncTrading212HoldingsToDB(prisma).catch(e => console.error('T212 background sync error:', e));
-      }
-    } catch (e) { }
+    let t212RawCash: any = t212Result.status === 'fulfilled' ? t212Result.value.cash : lastKnownT212Cash;
+    let t212AccountInfo: any = t212Result.status === 'fulfilled' ? t212Result.value.info : lastKnownT212Meta;
+    if (t212RawCash) {
+      lastKnownT212Cash = t212RawCash;
+      if (t212AccountInfo) lastKnownT212Meta = t212AccountInfo;
+    }
+    const t212Connected = Boolean(t212RawCash || t212AccountInfo);
 
     const t212FxToUSD = getFxRateToUSD('GBP');
     const t212NetLiqGBP = t212RawCash?.total || t212Holdings.reduce((s, h) => s + (h.marketValue || 0), 0);
@@ -1094,7 +1158,7 @@ app.get('/api/portfolio/balances', async (req, res) => {
 
     const trading212Data = {
       name: 'Trading 212',
-      status: t212Connected ? 'connected' : (t212Holdings.length > 0 ? 'connected' : 'disconnected'),
+      status: t212Connected ? 'connected' : 'disconnected',
       accountNumber: String(t212AccountInfo?.id || '22885001'),
       accountType: 'Invest / ISA Account',
       nickname: 'Invest Growth (GBP)',
@@ -1203,7 +1267,7 @@ app.get('/api/portfolio/balances', async (req, res) => {
       nativeGbpCashUSD: (portfolioCurrencies?.GBP?.cashUSD || 0),
     };
 
-    res.json({
+    const responsePayload = {
       total: {
         netLiquidatingValue: totalNetLiq,
         cash: totalCash,
@@ -1235,7 +1299,10 @@ app.get('/api/portfolio/balances', async (req, res) => {
         tastytrade: tastytradeData,
         trading212: trading212Data
       }
-    });
+    };
+    cachedPortfolioBalancesResponse = responsePayload;
+    lastBalancesCacheTime = Date.now();
+    res.json(responsePayload);
   } catch (err: any) {
     console.error('Error fetching portfolio balances:', err);
     res.status(500).json({ error: err.message });
@@ -1313,6 +1380,38 @@ app.post('/api/tastytrade/login', async (req, res) => {
     logToFile(`Login error: ${error.message}`);
     console.error('Tastytrade Login Error:', error);
     res.status(401).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/tastytrade/status', async (req, res) => {
+  try {
+    if (ttClient && tastyUser) {
+      return res.json({
+        connected: true,
+        user: { username: tastyUser.username, email: tastyUser.email },
+      });
+    }
+
+    const balances = await fetchTastyBalances();
+    if (balances) {
+      return res.json({
+        connected: true,
+        accountNumber: balances['account-number'] || process.env.TASTY_ACCOUNT_NUMBER || null,
+      });
+    }
+
+    if (ttClient) {
+      try {
+        const accounts = await ttClient.accountsAndCustomersService.getCustomerAccounts();
+        if (accounts && accounts.length > 0) {
+          return res.json({ connected: true });
+        }
+      } catch { }
+    }
+
+    return res.json({ connected: false });
+  } catch (error) {
+    return res.json({ connected: false });
   }
 });
 
@@ -2192,13 +2291,39 @@ app.get('/api/macro/overview', async (req, res) => {
 
 // ================= MACRO DOSSIER AGENT ENDPOINTS =================
 
-// POST /api/macro/dossier/generate - Run Autonomous Macro Dossier Agent & Persist
+// GET /api/macro/dossier/today - Quick check to fetch today's saved dossier if one exists (0 compute)
+app.get('/api/macro/dossier/today', async (req, res) => {
+  try {
+    const { clientDate } = req.query;
+    const dossier = await getTodayMacroDossier(clientDate as string);
+    res.json({ exists: Boolean(dossier), dossier });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/macro/dossier/generate - Run Autonomous Macro Dossier Agent & Persist (Protected once-a-day cache)
 app.post('/api/macro/dossier/generate', async (req, res) => {
   try {
-    logToFile('Running Autonomous Global Macro Dossier Agent...');
-    const { portfolioContext } = req.body || {};
+    const { portfolioContext, force, clientDate } = req.body || {};
+
+    // Check if today's dossier was already generated today to prevent unnecessary compute & conserve allowance
+    if (!force) {
+      const existingToday = await getTodayMacroDossier(clientDate);
+      if (existingToday) {
+        logToFile(`[MacroDossierAgent] Returning today's saved dossier #${existingToday.id} (${existingToday.regimeTitle}). 0 AI compute used.`);
+        return res.json({
+          success: true,
+          dossier: existingToday,
+          cachedDaily: true,
+          message: 'Retrieved today\'s saved dossier (0 AI compute consumed).'
+        });
+      }
+    }
+
+    logToFile(`Running Autonomous Global Macro Dossier Agent (consuming AI compute allowance, force=${Boolean(force)})...`);
     const dossier = await runMacroDossierAgent({ portfolioContext }, logToFile);
-    res.json({ success: true, dossier });
+    res.json({ success: true, dossier, cachedDaily: false });
   } catch (error: any) {
     logToFile(`Error generating Macro Dossier: ${error.message}`);
     res.status(500).json({ error: error.message || 'Failed to generate macro dossier' });
@@ -2666,16 +2791,6 @@ app.get('/api/research/analyze/:ticker', async (req, res) => {
   });
 
   try {
-    const apiKey = process.env.OPENROUTER_API_KEY;
-
-    if (!apiKey) {
-      agentActivityTracker.completeTask(task.id, {
-        status: 'FAILED',
-        error: 'OpenRouter API key missing'
-      });
-      return res.status(401).json({ error: 'OpenRouter API key is missing. Please add it to your .env.local file.' });
-    }
-
     logToFile(`Generating AI Analysis for ${ticker}...`);
 
     let quoteSummary: any = null;
@@ -2757,36 +2872,21 @@ Current Price: $${formatMetric(price?.regularMarketPrice)}
 52-Week High: $${formatMetric(summary?.fiftyTwoWeekHigh)}
 52-Week Low: $${formatMetric(summary?.fiftyTwoWeekLow)}`;
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "openai/gpt-4o-mini", // Aggressive model choice per prompt instructions (can be adjusted)
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ]
-      })
+    const llmResult = await executeWithFallback({
+      systemPrompt,
+      userPrompt,
+      jsonMode: true,
+      tag: `EquityResearch-${ticker}`,
     });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`OpenRouter API error: ${response.status} ${errText}`);
-    }
-
-    const data = await response.json();
-    const analysis = data.choices?.[0]?.message?.content || "No analysis generated.";
+    const analysis = llmResult.content || "No analysis generated.";
 
     agentActivityTracker.completeTask(task.id, {
       status: 'SUCCESS',
-      outcomeSummary: `Generated valuation thesis & metrics summary for ${ticker}`
+      outcomeSummary: `Generated valuation thesis & metrics summary for ${ticker} via ${llmResult.provider}`
     });
 
-    res.json({ analysis });
+    res.json({ analysis, provider: llmResult.provider, fallbackTriggered: llmResult.fallbackTriggered });
 
   } catch (error: any) {
     agentActivityTracker.completeTask(task.id, {
@@ -3306,63 +3406,13 @@ ${pricingContext}
 
 Provide exhaustive management recommendations tailored to this position's exact threat level with exact mathematically verified option prices.`;
 
-    let rawAnalysis = '';
+    const llmResult = await generateJsonCompletion<any>({
+      systemPrompt,
+      userPrompt,
+      tag: `CriticalDefense-${symbol}`,
+    });
 
-    if (process.env.OPENROUTER_API_KEY) {
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: "openai/gpt-4o-mini",
-          response_format: { type: "json_object" },
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt }
-          ]
-        })
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`OpenRouter API error: ${response.status} ${errText}`);
-      }
-
-      const data = await response.json();
-      rawAnalysis = data.choices?.[0]?.message?.content || "";
-    } else if (process.env.GEMINI_API_KEY) {
-      // Fallback to Gemini
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
-      const response = await fetch(geminiUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            { role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }
-          ],
-          generationConfig: { responseMimeType: "application/json" }
-        })
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Gemini API error: ${response.status} ${errText}`);
-      }
-
-      const data = await response.json();
-      rawAnalysis = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    } else {
-      agentActivityTracker.completeTask(task.id, {
-        status: 'FAILED',
-        error: 'API key missing'
-      });
-      return res.status(401).json({ error: 'Neither OPENROUTER_API_KEY nor GEMINI_API_KEY found in environment.' });
-    }
-
-    const cleanJson = rawAnalysis.replace(/```json/gi, '').replace(/```/g, '').trim();
-    const parsedAnalysis = JSON.parse(cleanJson);
+    const parsedAnalysis = llmResult.data;
 
     // Apply strict server-side mathematical validation and price enforcement
     if (parsedAnalysis && parsedAnalysis.rankedPlans) {
@@ -4112,22 +4162,26 @@ app.get('/api/research/autonomous/:ticker', async (req, res) => {
 });
 
 // Helper to spawn LangGraph Hybrid Financial Agent
-async function runHybridFinancialAgent(query: string) {
+async function runHybridFinancialAgent(query: string, model?: string) {
   const cleanQuery = query.trim();
   const task = agentActivityTracker.startTask({
-    agentName: 'Hybrid Financial Copilot (LangGraph)',
+    agentName: `Hybrid Financial Copilot (${model || 'Auto'})`,
     agentType: 'RESEARCH_AGENT',
     taskDescription: `Hybrid Query: ${cleanQuery.slice(0, 50)}...`,
-    metadata: { query: cleanQuery }
+    metadata: { query: cleanQuery, model: model || 'auto' }
   });
 
-  logToFile(`Spawning LangGraph Hybrid Agent for query: "${cleanQuery}"...`);
+  logToFile(`Spawning LangGraph Hybrid Agent (Model: ${model || 'auto'}) for query: "${cleanQuery}"...`);
   const { cmd: pythonCmd, defaultArgs } = getPythonExecutable();
   const pythonArgs = [...defaultArgs, '-u', 'hybrid_finance_agent.py', '--query', cleanQuery, '--json'];
+  if (model && model !== 'auto') {
+    pythonArgs.push('--model', model);
+  }
 
   return new Promise<{
     success: boolean;
     query: string;
+    model?: string;
     classification: 'simple_task' | 'complex_analysis';
     router_reasoning: string;
     tools_used: string[];
@@ -4192,12 +4246,12 @@ async function runHybridFinancialAgent(query: string) {
 // POST /api/agent/hybrid-query - Run query through LangGraph hybrid agent
 app.post('/api/agent/hybrid-query', async (req, res) => {
   try {
-    const { query } = req.body || {};
+    const { query, model } = req.body || {};
     if (!query || typeof query !== 'string' || !query.trim()) {
       return res.status(400).json({ error: 'Query parameter is required.' });
     }
 
-    const result = await runHybridFinancialAgent(query);
+    const result = await runHybridFinancialAgent(query, model);
     res.json(result);
   } catch (error: any) {
     logToFile(`Error in POST /api/agent/hybrid-query: ${error.message}`);
@@ -4217,6 +4271,7 @@ app.get('/api/settings/keys', async (req, res) => {
     }
     const geminiKey = process.env.GEMINI_API_KEY || (envContent.match(/^GEMINI_API_KEY=(.*)$/m)?.[1] || '');
     const openrouterKey = process.env.OPENROUTER_API_KEY || (envContent.match(/^OPENROUTER_API_KEY=(.*)$/m)?.[1] || '');
+    const groqKey = process.env.GROQ_API_KEY || (envContent.match(/^GROQ_API_KEY=(.*)$/m)?.[1] || '');
     const fmpKey = process.env.VITE_FMP_API_KEY || (envContent.match(/^VITE_FMP_API_KEY=(.*)$/m)?.[1] || '');
     const finnhubKey = process.env.VITE_FINNHUB_API_KEY || (envContent.match(/^VITE_FINNHUB_API_KEY=(.*)$/m)?.[1] || '');
 
@@ -4225,6 +4280,8 @@ app.get('/api/settings/keys', async (req, res) => {
       hasGeminiApiKey: Boolean(geminiKey),
       openrouterApiKey: openrouterKey ? `${openrouterKey.slice(0, 6)}...${openrouterKey.slice(-4)}` : '',
       hasOpenrouterApiKey: Boolean(openrouterKey),
+      groqApiKey: groqKey ? `${groqKey.slice(0, 6)}...${groqKey.slice(-4)}` : '',
+      hasGroqApiKey: Boolean(groqKey),
       hasFmpApiKey: Boolean(fmpKey),
       hasFinnhubApiKey: Boolean(finnhubKey)
     });
@@ -4235,7 +4292,7 @@ app.get('/api/settings/keys', async (req, res) => {
 
 app.post('/api/settings/keys', async (req, res) => {
   try {
-    const { geminiApiKey, openrouterApiKey } = req.body;
+    const { geminiApiKey, openrouterApiKey, groqApiKey } = req.body;
     const envPath = path.resolve(process.cwd(), '.env.local');
     let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
 
@@ -4259,6 +4316,16 @@ app.post('/api/settings/keys', async (req, res) => {
       }
     }
 
+    if (groqApiKey && groqApiKey.trim()) {
+      const cleanKey = groqApiKey.trim();
+      process.env.GROQ_API_KEY = cleanKey;
+      if (/^GROQ_API_KEY=/m.test(envContent)) {
+        envContent = envContent.replace(/^GROQ_API_KEY=.*$/m, `GROQ_API_KEY=${cleanKey}`);
+      } else {
+        envContent += `\nGROQ_API_KEY=${cleanKey}`;
+      }
+    }
+
     fs.writeFileSync(envPath, envContent.trim() + '\n', 'utf-8');
     res.json({ success: true, message: 'API keys updated successfully.' });
   } catch (error: any) {
@@ -4266,35 +4333,132 @@ app.post('/api/settings/keys', async (req, res) => {
   }
 });
 
-// Generic Symbol Search API (Yahoo Finance + Finnhub fallback + Direct ticker synthesis)
+// ==========================================
+// LLM FALLBACK ROUTER TELEMETRY & HEALTH
+// ==========================================
+app.get('/api/llm/status', (req, res) => {
+  try {
+    const stats = getFallbackRouterStats();
+    res.json(stats);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/llm/allowances', async (req, res) => {
+  try {
+    const allowances = await getProviderAllowances();
+    res.json(allowances);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/llm/cooldown/reset', (req, res) => {
+  try {
+    const { provider } = req.body || {};
+    resetFallbackRouterCooldowns(provider);
+    const stats = getFallbackRouterStats();
+    res.json({
+      success: true,
+      message: `Cooldowns reset${provider ? ` for ${provider}` : ' for all providers'}.`,
+      stats,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// In-memory cache for search queries (5-minute TTL)
+const searchCache = new Map<string, { results: any[]; expiresAt: number }>();
+const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
+
+// Generic Symbol Search API (Fast Query2 + Yahoo Finance + Finnhub + Local Known Names)
 app.get('/api/research/search', async (req, res) => {
   const query = (req.query.query as string || '').trim();
   if (!query) return res.json([]);
-  logToFile(`Searching ticker for query: "${query}"`);
 
-  let results: any[] = [];
-
-  // 1. Try Yahoo Finance with a 4s timeout
-  try {
-    const searchPromise = yahooFinance.search(query, { newsCount: 0, quotesCount: 10 }) as Promise<any>;
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Yahoo search timeout')), 4000));
-    const searchData: any = await Promise.race([searchPromise, timeoutPromise]);
-    const quotes = searchData?.quotes || [];
-
-    results = quotes
-      .filter((q: any) => q && q.symbol && typeof q.symbol === 'string')
-      .map((q: any) => ({
-        symbol: q.symbol,
-        name: q.shortname || q.longname || q.name || q.symbol,
-        currency: 'USD',
-        stockExchange: q.exchange || q.exchDisp || 'N/A',
-        exchangeShortName: q.exchDisp || q.exchange || 'N/A'
-      }));
-  } catch (err: any) {
-    logToFile(`Yahoo search error for "${query}": ${err?.message || err}`);
+  const cacheKey = query.toLowerCase();
+  const cached = searchCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt && cached.results.length > 0) {
+    return res.json(cached.results);
   }
 
-  // 2. If Yahoo Finance returned 0 results or failed, try Finnhub fallback
+  logToFile(`Searching ticker for query: "${query}"`);
+  let results: any[] = [];
+
+  // 1. Direct Yahoo Finance Query2 fetch with fast 2500ms timeout
+  const query2Controller = new AbortController();
+  const query2Timeout = setTimeout(() => query2Controller.abort(), 2500);
+  try {
+    const yqUrl = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=12&newsCount=0`;
+    const yqRes = await fetch(yqUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
+      },
+      signal: query2Controller.signal
+    });
+
+    if (yqRes.ok) {
+      const data: any = await yqRes.json();
+      const quotes = data?.quotes || [];
+      results = quotes
+        .filter((q: any) => q && q.symbol && typeof q.symbol === 'string' && q.quoteType !== 'OPTION')
+        .map((q: any) => {
+          const sym = q.symbol.toUpperCase();
+          const rawName = q.shortname || q.longname || q.name;
+          const known = KNOWN_COMPANY_NAMES[sym];
+          const name = (rawName && rawName.trim().length > 0 && rawName.trim() !== sym)
+            ? rawName.trim()
+            : (known?.name || sym);
+          return {
+            symbol: sym,
+            name: name,
+            currency: 'USD',
+            stockExchange: q.exchDisp || q.exchange || known?.exchange || 'US',
+            exchangeShortName: q.exchange || q.exchDisp || known?.exchange || 'US',
+            quoteType: q.quoteType || 'EQUITY'
+          };
+        });
+    }
+  } catch (err: any) {
+    logToFile(`Direct Yahoo query2 error for "${query}": ${err?.message || err}`);
+  } finally {
+    clearTimeout(query2Timeout);
+  }
+
+  // 2. Fallback to yahooFinance.search if Query2 returned 0 results
+  if (results.length === 0) {
+    try {
+      const searchPromise = yahooFinance.search(query, { newsCount: 0, quotesCount: 10 }) as Promise<any>;
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Yahoo search timeout')), 1800));
+      const searchData: any = await Promise.race([searchPromise, timeoutPromise]);
+      const quotes = searchData?.quotes || [];
+
+      results = quotes
+        .filter((q: any) => q && q.symbol && typeof q.symbol === 'string' && q.quoteType !== 'OPTION')
+        .map((q: any) => {
+          const sym = q.symbol.toUpperCase();
+          const rawName = q.shortname || q.longname || q.name;
+          const known = KNOWN_COMPANY_NAMES[sym];
+          const name = (rawName && rawName.trim().length > 0 && rawName.trim() !== sym)
+            ? rawName.trim()
+            : (known?.name || sym);
+          return {
+            symbol: sym,
+            name: name,
+            currency: 'USD',
+            stockExchange: q.exchange || q.exchDisp || known?.exchange || 'US',
+            exchangeShortName: q.exchDisp || q.exchange || known?.exchange || 'US'
+          };
+        });
+    } catch (err: any) {
+      logToFile(`Yahoo search fallback error for "${query}": ${err?.message || err}`);
+    }
+  }
+
+  // 3. Fallback to Finnhub if still 0 results
   if (results.length === 0) {
     const finnhubKey = process.env.VITE_FINNHUB_API_KEY || process.env.FINNHUB_API_KEY;
     if (finnhubKey) {
@@ -4307,13 +4471,21 @@ app.get('/api/research/search', async (req, res) => {
             results = data.result
               .filter((r: any) => r && r.symbol && !r.symbol.includes('.'))
               .slice(0, 10)
-              .map((r: any) => ({
-                symbol: r.symbol,
-                name: r.description || r.displaySymbol || r.symbol,
-                currency: 'USD',
-                stockExchange: r.type || 'US',
-                exchangeShortName: r.type || 'US'
-              }));
+              .map((r: any) => {
+                const sym = r.symbol.toUpperCase();
+                const known = KNOWN_COMPANY_NAMES[sym];
+                const rawName = r.description || r.displaySymbol;
+                const name = (rawName && rawName.trim().length > 0 && rawName.trim() !== sym)
+                  ? rawName.trim()
+                  : (known?.name || sym);
+                return {
+                  symbol: sym,
+                  name: name,
+                  currency: 'USD',
+                  stockExchange: r.type || known?.exchange || 'US',
+                  exchangeShortName: r.type || known?.exchange || 'US'
+                };
+              });
           }
         }
       } catch (fhErr: any) {
@@ -4322,16 +4494,73 @@ app.get('/api/research/search', async (req, res) => {
     }
   }
 
-  // 3. If still empty, but query looks like a valid ticker symbol (e.g. "AAPL", "MSFT", "BTC-USD")
+  // 4. Enrich with Local Known Universe and Database Holdings
+  const qUpper = query.toUpperCase();
+  const qLower = query.toLowerCase();
+
+  // If results are empty or few, search known dictionary
+  if (results.length < 5) {
+    for (const [sym, info] of Object.entries(KNOWN_COMPANY_NAMES)) {
+      if (results.some((r) => r.symbol === sym)) continue;
+      if (sym === qUpper || sym.startsWith(qUpper) || info.name.toLowerCase().includes(qLower)) {
+        results.push({
+          symbol: sym,
+          name: info.name,
+          currency: 'USD',
+          stockExchange: info.exchange,
+          exchangeShortName: info.exchange
+        });
+        if (results.length >= 8) break;
+      }
+    }
+  }
+
+  // Also check database holdings for matching descriptions
+  if (results.length < 5) {
+    try {
+      const holdings = await prisma.holding.findMany({
+        where: {
+          OR: [
+            { symbol: { contains: qUpper } },
+            { description: { contains: query } }
+          ]
+        },
+        select: { symbol: true, description: true },
+        take: 5
+      });
+      for (const h of holdings) {
+        const sym = h.symbol.toUpperCase();
+        if (!results.some((r) => r.symbol === sym)) {
+          results.push({
+            symbol: sym,
+            name: h.description || KNOWN_COMPANY_NAMES[sym]?.name || sym,
+            currency: 'USD',
+            stockExchange: 'Portfolio',
+            exchangeShortName: 'Portfolio'
+          });
+        }
+      }
+    } catch (e) {
+      // Ignore DB query errors for search
+    }
+  }
+
+  // 5. Final fallback for ticker-like queries (e.g. "AAPL", "BTC-USD")
   if (results.length === 0 && /^[A-Za-z0-9\.\-\=]{1,10}$/.test(query)) {
     const cleanSym = query.toUpperCase();
+    const known = KNOWN_COMPANY_NAMES[cleanSym];
     results = [{
       symbol: cleanSym,
-      name: cleanSym,
+      name: known?.name || cleanSym,
       currency: 'USD',
-      stockExchange: 'US',
-      exchangeShortName: 'US'
+      stockExchange: known?.exchange || 'US',
+      exchangeShortName: known?.exchange || 'US'
     }];
+  }
+
+  // Save in cache if we got results
+  if (results.length > 0) {
+    searchCache.set(cacheKey, { results, expiresAt: Date.now() + SEARCH_CACHE_TTL_MS });
   }
 
   res.json(results);
@@ -4948,7 +5177,10 @@ async function checkPriceAlerts() {
     }
 
     const activeAlerts = await prisma.priceAlert.findMany({
-      where: { status: 'ACTIVE' }
+      where: {
+        status: 'ACTIVE',
+        isMuted: false
+      }
     });
 
     if (activeAlerts.length === 0) return;
@@ -4967,8 +5199,9 @@ async function checkPriceAlerts() {
       })
     );
 
-    // Evaluate triggers
+    // Evaluate triggers (strictly skip muted alerts)
     for (const alert of activeAlerts) {
+      if (alert.isMuted) continue;
       const currentPrice = priceMap[alert.symbol.toUpperCase()];
       if (currentPrice == null) continue;
 
@@ -4990,8 +5223,10 @@ async function checkPriceAlerts() {
           }
         });
 
-        // Dispatch alert to Telegram Alerts topic (chat_id: -1003872409872, message_thread_id: 2)
+        // Dispatch alert to Telegram Alerts topic (chat_id: -1003872409872, message_thread_id: 2) and save to Alerts folder
         try {
+          const conditionLabel = alert.condition === 'ABOVE' ? '▲ Risen Above' : '▼ Fallen Below';
+          const alertTitle = `🚨 Alert: ${alert.symbol} ${conditionLabel} $${alert.targetPrice.toFixed(2)} (Hit $${currentPrice.toFixed(2)})`;
           const alertMsg =
             `🚨 *PRICE ALERT TRIGGERED*\n\n` +
             `• *Symbol:* ${alert.symbol}\n` +
@@ -5000,7 +5235,12 @@ async function checkPriceAlerts() {
             (alert.notes ? `• *Notes:* _${alert.notes}_\n` : '') +
             `• *Timestamp:* ${new Date().toLocaleTimeString()} UTC`;
 
-          await sendTelegramAlert(alertMsg);
+          await sendTelegramAlert(alertMsg, {
+            prisma,
+            symbol: alert.symbol,
+            title: alertTitle,
+            saveToAlertsFolder: false, // Do not save triggered alerts to ThoughtLog / Log
+          });
           logToFile(`[Telegram Alert Sent] Dispatched alert for ${alert.symbol} to Telegram topic 2`);
         } catch (tgErr: any) {
           logToFile(`[Telegram Alert Error] Failed to dispatch alert: ${tgErr?.message || tgErr}`);
@@ -5295,6 +5535,20 @@ app.post('/api/alerts/:id/reset', async (req, res) => {
 // DELETE /api/alerts/muted - Delete all muted / cancelled alerts
 app.delete('/api/alerts/muted', async (req, res) => {
   try {
+    const mutedAlerts = await prisma.priceAlert.findMany({
+      where: {
+        OR: [
+          { isMuted: true },
+          { status: 'CANCELLED' }
+        ]
+      }
+    });
+
+    for (const a of mutedAlerts) {
+      const key = extractShortOptionKeyFromNote(a.notes);
+      if (key) recordShortOptionAlertDismissedByKey(key);
+    }
+
     const result = await prisma.priceAlert.deleteMany({
       where: {
         OR: [
@@ -5343,12 +5597,49 @@ app.post('/api/alerts/bulk-mute', async (req, res) => {
 app.delete('/api/alerts/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const alert = await prisma.priceAlert.findUnique({ where: { id } });
+    if (alert) {
+      const key = extractShortOptionKeyFromNote(alert.notes);
+      if (key) recordShortOptionAlertDismissedByKey(key);
+    }
+
     await prisma.priceAlert.delete({
       where: { id }
     });
     res.json({ success: true, message: 'Alert deleted successfully.' });
   } catch (error: any) {
     logToFile(`Error deleting alert: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/alerts/bulk-delete - Delete multiple alerts by IDs
+app.post('/api/alerts/bulk-delete', async (req, res) => {
+  try {
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids array is required and must not be empty' });
+    }
+
+    const alertsToDelete = await prisma.priceAlert.findMany({
+      where: { id: { in: ids } }
+    });
+
+    for (const a of alertsToDelete) {
+      const key = extractShortOptionKeyFromNote(a.notes);
+      if (key) recordShortOptionAlertDismissedByKey(key);
+    }
+
+    const result = await prisma.priceAlert.deleteMany({
+      where: {
+        id: { in: ids }
+      }
+    });
+
+    logToFile(`[Alerts] Bulk deleted ${result.count} alerts`);
+    res.json({ success: true, count: result.count, message: `Deleted ${result.count} alert(s).` });
+  } catch (error: any) {
+    logToFile(`Error bulk deleting alerts: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -5648,6 +5939,8 @@ Megapack and utility energy storage deployments are accelerating faster than EV 
   }
 ];
 
+const ideaQuoteCache = new Map<string, { data: { price: number; name: string; changePercent: number }; timestamp: number }>();
+
 // GET /api/ideas - List all trade ideas with live prices and enrichments
 app.get('/api/ideas', async (req, res) => {
   try {
@@ -5687,23 +5980,39 @@ app.get('/api/ideas', async (req, res) => {
     // Fetch live market quotes for all unique symbols in ideas
     const uniqueSymbols = Array.from(new Set(ideas.map(i => i.symbol.toUpperCase())));
     const livePriceMap: Record<string, { price: number; name: string; changePercent: number }> = {};
+    const now = Date.now();
 
-    await Promise.all(
-      uniqueSymbols.map(async (sym) => {
-        try {
-          const summary = await yahooFinance.quoteSummary(sym, { modules: ['price'] });
-          if (summary?.price?.regularMarketPrice) {
-            livePriceMap[sym] = {
-              price: summary.price.regularMarketPrice,
-              name: summary.price.shortName || summary.price.longName || sym,
-              changePercent: (summary.price.regularMarketChangePercent || 0) * 100
-            };
+    const symbolsToFetch = uniqueSymbols.filter(sym => {
+      const cached = ideaQuoteCache.get(sym);
+      if (cached && (now - cached.timestamp) < 60000) {
+        livePriceMap[sym] = cached.data;
+        return false;
+      }
+      return true;
+    });
+
+    if (symbolsToFetch.length > 0) {
+      await Promise.allSettled(
+        symbolsToFetch.map(async (sym) => {
+          try {
+            const fetchPromise = yahooFinance.quoteSummary(sym, { modules: ['price'] });
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000));
+            const summary: any = await Promise.race([fetchPromise, timeoutPromise]);
+            if (summary?.price?.regularMarketPrice) {
+              const quoteData = {
+                price: summary.price.regularMarketPrice,
+                name: summary.price.shortName || summary.price.longName || sym,
+                changePercent: (summary.price.regularMarketChangePercent || 0) * 100
+              };
+              livePriceMap[sym] = quoteData;
+              ideaQuoteCache.set(sym, { data: quoteData, timestamp: now });
+            }
+          } catch {
+            // ignore failures or timeouts
           }
-        } catch {
-          // ignore failures
-        }
-      })
-    );
+        })
+      );
+    }
 
     const enrichedIdeas = ideas.map(idea => {
       const live = livePriceMap[idea.symbol.toUpperCase()];
@@ -6399,6 +6708,131 @@ app.delete('/api/portfolio/valuation-audits/:id', async (req, res) => {
 });
 
 // ==========================================
+// SCATTER-GATHER PORTFOLIO VALUATION & ALERTING AGENT
+// ==========================================
+
+// POST /api/portfolio/valuation-agent/run - Trigger Scatter-Gather Map-Reduce pipeline
+app.post('/api/portfolio/valuation-agent/run', async (req, res) => {
+  try {
+    logToFile(`Received POST /api/portfolio/valuation-agent/run`);
+    const { tickers, concurrencyLimit = 5 } = req.body || {};
+
+    const result = await runPortfolioValuationScatterGather({
+      tickers,
+      concurrencyLimit: typeof concurrencyLimit === 'number' ? concurrencyLimit : 5,
+      logToFile
+    });
+
+    res.json({ success: true, result });
+  } catch (error: any) {
+    logToFile(`Error in POST /api/portfolio/valuation-agent/run: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/portfolio/valuation-agent/tickers - Retrieve unique current portfolio tickers
+app.get('/api/portfolio/valuation-agent/tickers', async (req, res) => {
+  try {
+    const tickers = await getPortfolioTickers(logToFile);
+    res.json({ success: true, tickers });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/portfolio/valuation-agent/reports - Retrieve saved worker valuation reports
+app.get('/api/portfolio/valuation-agent/reports', async (req, res) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+    const symbol = req.query.symbol as string | undefined;
+
+    const whereClause: any = {
+      reportType: 'portfolio_valuation_worker'
+    };
+    if (symbol) {
+      whereClause.symbol = symbol.trim().toUpperCase();
+    }
+
+    const reports = await prisma.autonomousReport.findMany({
+      where: whereClause,
+      orderBy: { createdAt: 'desc' },
+      take: limit
+    });
+
+    res.json({ success: true, reports });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/portfolio/valuation-agent/stock-pdf/:symbol - Stream or generate single stock PDF
+app.get('/api/portfolio/valuation-agent/stock-pdf/:symbol', async (req, res) => {
+  try {
+    const symbol = req.params.symbol.trim().toUpperCase();
+    
+    // Find latest worker report for this symbol
+    const latestReport = await prisma.autonomousReport.findFirst({
+      where: {
+        symbol,
+        reportType: 'portfolio_valuation_worker'
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    if (latestReport?.pdfPath && fs.existsSync(latestReport.pdfPath)) {
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="Valuation_${symbol}.pdf"`);
+      return fs.createReadStream(latestReport.pdfPath).pipe(res);
+    }
+
+    // If report content exists, generate PDF from contentJson
+    if (latestReport?.contentJson) {
+      try {
+        const parsedReport = JSON.parse(latestReport.contentJson);
+        const pdfBuffer = await generateStockValuationPdfBuffer(parsedReport);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="Valuation_${symbol}.pdf"`);
+        return res.send(pdfBuffer);
+      } catch (parseErr) {
+        // Fall through to live worker generation
+      }
+    }
+
+    // If no existing report, generate on the fly
+    const freshReport = await analyzeSingleStockWorkerAgent(symbol, logToFile);
+    const pdfBuffer = await generateStockValuationPdfBuffer(freshReport);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Valuation_${symbol}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (error: any) {
+    logToFile(`Error streaming stock PDF for ${req.params.symbol}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/portfolio/valuation-agent/portfolio-pdf/:id - Stream master portfolio PDF
+app.get('/api/portfolio/valuation-agent/portfolio-pdf/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const audit = await (prisma as any).portfolioValuationAudit.findUnique({
+      where: { id }
+    });
+
+    if (!audit) {
+      return res.status(404).json({ error: 'Audit record not found' });
+    }
+
+    const rawData = JSON.parse(audit.rawReportJson || '{}');
+    const pdfBuffer = await generatePortfolioValuationPdfBuffer(rawData);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Portfolio_Valuation_Briefing_${audit.id}.pdf"`);
+    res.send(pdfBuffer);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==========================================
 // THOUGHT LOG & RESEARCH JOURNAL API
 // ==========================================
 
@@ -6407,7 +6841,15 @@ app.delete('/api/portfolio/valuation-audits/:id', async (req, res) => {
 app.get('/api/thought-logs/folders', async (req, res) => {
   try {
     const logs = await (prisma as any).thoughtLog.findMany({
-      select: { id: true, folder: true, tags: true, title: true }
+      where: {
+        NOT: [
+          { tags: { contains: 'Triggered' } },
+          { title: { contains: 'PRICE ALERT TRIGGERED' } },
+          { content: { contains: 'PRICE ALERT TRIGGERED' } },
+          { title: { contains: 'Hit $' } },
+        ]
+      },
+      select: { id: true, folder: true, tags: true, title: true, isRead: true }
     });
 
     const folderMap = new Map<string, number>();
@@ -6417,7 +6859,7 @@ app.get('/api/thought-logs/folders', async (req, res) => {
     let unreadCount = 0;
 
     // Standard baseline category folders
-    const defaultFolders = ['General', 'Ideas', 'Research', 'Watchlist', 'Macro', 'Earnings', 'Trading'];
+    const defaultFolders = ['General', 'Saved', 'Ideas', 'Research', 'Watchlist', 'Alerts', 'Macro', 'Earnings', 'Trading', 'Execution'];
     defaultFolders.forEach(f => folderMap.set(f, 0));
 
     for (const l of logs) {
@@ -6465,7 +6907,16 @@ app.get('/api/thought-logs/folders', async (req, res) => {
 app.get('/api/thought-logs', async (req, res) => {
   try {
     const { search, tag, sentiment, folder, isRead } = req.query;
-    const andClauses: any[] = [];
+    const andClauses: any[] = [
+      {
+        NOT: [
+          { tags: { contains: 'Triggered' } },
+          { title: { contains: 'PRICE ALERT TRIGGERED' } },
+          { content: { contains: 'PRICE ALERT TRIGGERED' } },
+          { title: { contains: 'Hit $' } },
+        ]
+      }
+    ];
 
     if (isRead !== undefined) {
       andClauses.push({ isRead: isRead === 'true' || isRead === true });
@@ -6496,6 +6947,35 @@ app.get('/api/thought-logs', async (req, res) => {
             { folder: 'Voice Notes' },
             { tags: { contains: 'Voice' } },
             { title: { contains: '🎙️' } }
+          ]
+        });
+      } else if (folder === 'Alerts') {
+        andClauses.push({
+          OR: [
+            { folder: 'Alerts' },
+            { tags: { contains: 'Alert' } },
+            { tags: { contains: 'Alerts' } },
+            { title: { contains: '🔔' } },
+            { title: { contains: '🚨' } }
+          ]
+        });
+      } else if (folder === 'Ideas') {
+        andClauses.push({
+          OR: [
+            { folder: 'Ideas' },
+            { tags: { contains: 'Idea' } },
+            { tags: { contains: 'Ideas' } },
+            { title: { contains: '💡' } }
+          ]
+        });
+      } else if (folder === 'Execution') {
+        andClauses.push({
+          OR: [
+            { folder: 'Execution' },
+            { folder: 'Trading' },
+            { tags: { contains: 'Execution' } },
+            { tags: { contains: 'Queue' } },
+            { title: { contains: '🎯' } }
           ]
         });
       } else {
@@ -6563,11 +7043,23 @@ app.post('/api/thought-logs', async (req, res) => {
     const detectedSymbols = symbols || extractSymbolsFromText(`${title || ''} ${content}`).join(', ');
 
     // Automatically parse and create price alerts (e.g. "RBRK 120", "Alert AAPL 250")
-    const autoCreatedAlerts = await autoCreateAlertsFromText(
-      prisma,
-      `${title || ''}\n${content}`,
-      `Created from ThoughtLog: "${content.trim()}"`
-    );
+    // Only auto-create price alerts if:
+    // 1. Explicit folder 'Alerts' or tags including 'Alert'
+    // 2. Short alert note (<= 250 chars) with alert keywords or cashtag
+    // 3. DO NOT auto-create alerts from long AI Copilot responses, Saved Answers, or Research Dossiers!
+    const isExplicitAlert = folder === 'Alerts' || (typeof tags === 'string' && /\balert\b/i.test(tags));
+    const isCopilotOrSaved = (folder === 'Saved') || (typeof tags === 'string' && /AI Copilot|Saved Answer|Research/i.test(tags)) || (typeof title === 'string' && title.toLowerCase().startsWith('copilot:'));
+    const isShortAlertNote = !isCopilotOrSaved && content.length <= 250;
+
+    let autoCreatedAlerts: any[] = [];
+    if (isExplicitAlert || isShortAlertNote || /\b(?:SET\s+)?ALERT\b|\$([A-Za-z]{1,5})\b/i.test(content)) {
+      const sourceSnippet = (title || content.split('\n')[0] || '').trim().slice(0, 80);
+      autoCreatedAlerts = await autoCreateAlertsFromText(
+        prisma,
+        `${title || ''}\n${content}`,
+        `Created from ThoughtLog: "${sourceSnippet}"`
+      );
+    }
 
     if (autoCreatedAlerts.length > 0) {
       setTimeout(checkPriceAlerts, 500);
@@ -6815,6 +7307,45 @@ app.get('/api/macro/trend-finder/:symbol', async (req, res) => {
     res.json(item);
   } catch (error: any) {
     logToFile(`Error in GET /api/macro/trend-finder/${req.params.symbol}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==========================================
+// TECHNICAL ANALYSIS & MULTI-TIMEFRAME S/R API
+// ==========================================
+
+// GET /api/technical-analysis/:symbol - Complete multi-timeframe S/R, Phase & Trend analysis
+app.get('/api/technical-analysis/:symbol', async (req, res) => {
+  try {
+    const sym = req.params.symbol?.trim().toUpperCase();
+    if (!sym) {
+      return res.status(400).json({ error: 'Symbol parameter is required' });
+    }
+    const analysis = await technicalAnalysisService.getTechnicalAnalysis(sym);
+    res.json(analysis);
+  } catch (error: any) {
+    logToFile(`Error in GET /api/technical-analysis/${req.params.symbol}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==========================================
+// IMPLIED EXPECTATIONS & "WHAT'S PRICED IN?" API
+// ==========================================
+
+// GET /api/implied-expectations/:symbol - Reverse DCF, Implied Growth, Margins & Hurdle Checklist
+app.get('/api/implied-expectations/:symbol', async (req, res) => {
+  try {
+    const sym = req.params.symbol?.trim().toUpperCase();
+    if (!sym) {
+      return res.status(400).json({ error: 'Symbol parameter is required' });
+    }
+    const priceOverride = req.query.price ? parseFloat(String(req.query.price)) : undefined;
+    const analysis = await analyzeImpliedExpectations(sym, priceOverride);
+    res.json(analysis);
+  } catch (error: any) {
+    logToFile(`Error in GET /api/implied-expectations/${req.params.symbol}: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });

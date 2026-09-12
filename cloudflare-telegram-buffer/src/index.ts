@@ -459,7 +459,16 @@ export default {
           );
         }
 
-        const botToken = env.TELEGRAM_BOT_TOKEN || '8755167543:AAEKdWi4R_5BT-EHQCK8qxCGqX-YP0p9dHQ';
+        const botToken = env.TELEGRAM_BOT_TOKEN;
+        if (!botToken) {
+          return new Response(
+            JSON.stringify({ error: 'Server configuration error: TELEGRAM_BOT_TOKEN secret is not set in Cloudflare Worker environment.' }),
+            {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            }
+          );
+        }
         const defaultChatId = env.TELEGRAM_CHAT_ID || '8959044574';
 
         // Auto-detect if path is /alert

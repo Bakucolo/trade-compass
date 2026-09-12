@@ -27,9 +27,12 @@ import {
   DollarSign,
   Activity,
   Layers,
-  ArrowRight
+  ArrowRight,
+  FolderPlus,
+  CheckCircle2,
 } from 'lucide-react';
 import { useCreateAlert, useUpdateAlert, useDeleteAlert, useAlerts, PriceAlert } from '@/services/alertService';
+import { useWatchlists, useAddSymbolToWatchlist, useCreateWatchlist } from '@/services/watchlistService';
 import { marketDataService } from '@/services/marketData';
 import { toast } from 'sonner';
 
@@ -44,6 +47,7 @@ interface PriceAlertModalProps {
   initialNotes?: string;
   editAlert?: PriceAlert | null;
   onSuccess?: () => void;
+  currentWatchlistId?: string | null;
 }
 
 interface BatchCreatedItem {
@@ -64,6 +68,7 @@ export function PriceAlertModal({
   initialNotes,
   editAlert = null,
   onSuccess,
+  currentWatchlistId,
 }: PriceAlertModalProps) {
   const [symbol, setSymbol] = useState('');
   const [stockName, setStockName] = useState('');
@@ -89,10 +94,103 @@ export function PriceAlertModal({
   const updateAlertMutation = useUpdateAlert();
   const deleteAlertMutation = useDeleteAlert();
 
+  // Watchlist integration
+  const { data: watchlists = [] } = useWatchlists();
+  const addSymbolMutation = useAddSymbolToWatchlist();
+  const createWatchlistMutation = useCreateWatchlist();
+  const [addToWatchlist, setAddToWatchlist] = useState(false);
+  const [targetWatchlistId, setTargetWatchlistId] = useState<string>('');
+  const [isCreatingWatchlist, setIsCreatingWatchlist] = useState(false);
+  const [newWatchlistName, setNewWatchlistName] = useState('');
+
   const cleanSymbol = symbol.trim().toUpperCase();
   const { data: allAlertsData = [], isLoading: isLoadingExistingAlerts } = useAlerts(
     cleanSymbol ? { symbol: cleanSymbol, status: 'ALL' } : undefined
   );
+
+  // Sync target watchlist selection when modal opens or lists change
+  useEffect(() => {
+    if (open && watchlists.length > 0) {
+      if (currentWatchlistId && watchlists.some((w) => w.id === currentWatchlistId)) {
+        setTargetWatchlistId(currentWatchlistId);
+      } else if (!targetWatchlistId || !watchlists.some((w) => w.id === targetWatchlistId)) {
+        const defaultW = watchlists.find((w) => w.isDefault) || watchlists[0];
+        if (defaultW) {
+          setTargetWatchlistId(defaultW.id);
+        }
+      }
+    }
+  }, [open, currentWatchlistId, watchlists, targetWatchlistId]);
+
+  const targetWatchlist = useMemo(() => {
+    return watchlists.find((w) => w.id === targetWatchlistId);
+  }, [watchlists, targetWatchlistId]);
+
+  const isAlreadyInTargetWatchlist = useMemo(() => {
+    if (!cleanSymbol || !targetWatchlist) return false;
+    return (targetWatchlist.items || []).some(
+      (item) => item.symbol.toUpperCase() === cleanSymbol
+    );
+  }, [cleanSymbol, targetWatchlist]);
+
+  const watchlistsContainingStock = useMemo(() => {
+    if (!cleanSymbol) return [];
+    return watchlists.filter((w) =>
+      (w.items || []).some((i) => i.symbol.toUpperCase() === cleanSymbol)
+    );
+  }, [cleanSymbol, watchlists]);
+
+  // Automatically update checkbox state when selected stock or watchlist changes
+  useEffect(() => {
+    if (cleanSymbol && targetWatchlist) {
+      const alreadyThere = (targetWatchlist.items || []).some(
+        (item) => item.symbol.toUpperCase() === cleanSymbol
+      );
+      if (!alreadyThere && !editAlert) {
+        setAddToWatchlist(true);
+      } else {
+        setAddToWatchlist(false);
+      }
+    }
+  }, [cleanSymbol, targetWatchlistId, targetWatchlist, editAlert]);
+
+  const handleDirectAddToWatchlist = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (!cleanSymbol) {
+      toast.error('Please enter or select a valid stock symbol first.');
+      return;
+    }
+    if (!targetWatchlistId) {
+      toast.error('Please select a target watchlist.');
+      return;
+    }
+    try {
+      await addSymbolMutation.mutateAsync({
+        watchlistId: targetWatchlistId,
+        symbol: cleanSymbol,
+      });
+      toast.success(`Added ${cleanSymbol} to "${targetWatchlist?.name || 'Watchlist'}"!`);
+    } catch (err: any) {
+      toast.error(`Failed to add to watchlist: ${err.message}`);
+    }
+  };
+
+  const handleCreateAndSelectWatchlist = async () => {
+    const trimmed = newWatchlistName.trim();
+    if (!trimmed) return;
+    try {
+      const created = await createWatchlistMutation.mutateAsync(trimmed);
+      setTargetWatchlistId(created.id);
+      setIsCreatingWatchlist(false);
+      setNewWatchlistName('');
+      toast.success(`Created watchlist "${created.name}"`);
+    } catch (err: any) {
+      toast.error(`Failed to create watchlist: ${err.message}`);
+    }
+  };
 
   const existingAlertsForStock = useMemo(() => {
     if (!cleanSymbol) return [];
@@ -290,7 +388,26 @@ export function PriceAlertModal({
           ...prev,
         ]);
 
-        setLastCreatedNotice(`Alert for ${cleanSym} @ $${numTarget.toFixed(2)} (${condition === 'ABOVE' ? '≥ Higher' : '≤ Lower'}) created!`);
+        // Auto-add to watchlist if requested and not already present
+        let addedToWatchlistName: string | null = null;
+        if (addToWatchlist && targetWatchlistId && !isAlreadyInTargetWatchlist) {
+          try {
+            await addSymbolMutation.mutateAsync({
+              watchlistId: targetWatchlistId,
+              symbol: cleanSym,
+            });
+            addedToWatchlistName = targetWatchlist?.name || 'Watchlist';
+          } catch (watchErr) {
+            console.warn('Auto-add to watchlist failed:', watchErr);
+          }
+        }
+
+        const successNotice = addedToWatchlistName
+          ? `Alert for ${cleanSym} @ $${numTarget.toFixed(2)} created & added to "${addedToWatchlistName}"!`
+          : `Alert for ${cleanSym} @ $${numTarget.toFixed(2)} (${condition === 'ABOVE' ? '≥ Higher' : '≤ Lower'}) created!`;
+
+        setLastCreatedNotice(successNotice);
+        toast.success(successNotice);
 
         if (keepOpen || keepOpenMode) {
           // Keep dialog open and prepare for next alert
@@ -323,7 +440,7 @@ export function PriceAlertModal({
       : null;
 
   const isEditing = Boolean(editAlert);
-  const isPending = createAlertMutation.isPending || updateAlertMutation.isPending;
+  const isPending = createAlertMutation.isPending || updateAlertMutation.isPending || addSymbolMutation.isPending;
   const isPositiveChange = priceChangePercent >= 0;
 
   return (
@@ -773,6 +890,160 @@ export function PriceAlertModal({
               className="h-9 text-xs bg-card border-border"
             />
           </div>
+
+          {/* Watchlist Integration Option */}
+          {cleanSymbol && (
+            <div className="rounded-2xl border border-border/80 bg-card/50 p-3.5 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-lg bg-primary/10 border border-primary/25 flex items-center justify-center text-primary">
+                    <FolderPlus className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold text-foreground">Add to Watchlist</span>
+                    <p className="text-[10px] text-muted-foreground">
+                      Include {cleanSymbol} in a watchlist
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {isAlreadyInTargetWatchlist ? (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] bg-success/15 text-success border-success/30 font-semibold gap-1 py-0.5 px-2"
+                    >
+                      <CheckCircle2 className="w-3 h-3" />
+                      Already in Watchlist
+                    </Badge>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <Label htmlFor="add-to-watchlist-switch" className="text-[11px] text-muted-foreground cursor-pointer">
+                        Add to list
+                      </Label>
+                      <Switch
+                        id="add-to-watchlist-switch"
+                        checked={addToWatchlist}
+                        onCheckedChange={setAddToWatchlist}
+                        className="data-[state=checked]:bg-primary scale-90"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Watchlist selection dropdown & quick actions */}
+              <div className="space-y-2 pt-0.5">
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <select
+                      id="target-watchlist-select"
+                      aria-label="Select target watchlist"
+                      value={targetWatchlistId}
+                      onChange={(e) => {
+                        if (e.target.value === '__CREATE_NEW__') {
+                          setIsCreatingWatchlist(true);
+                        } else {
+                          setTargetWatchlistId(e.target.value);
+                        }
+                      }}
+                      className="w-full h-8 text-xs rounded-lg bg-background border border-border/80 px-2.5 font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer"
+                    >
+                      {watchlists.map((w) => {
+                        const hasStock = (w.items || []).some(
+                          (i) => i.symbol.toUpperCase() === cleanSymbol
+                        );
+                        return (
+                          <option key={w.id} value={w.id}>
+                            {w.name} {w.isDefault ? '(Default)' : ''} {hasStock ? '✓ (Already Added)' : ''}
+                          </option>
+                        );
+                      })}
+                      <option value="__CREATE_NEW__">+ Create New Watchlist...</option>
+                    </select>
+                  </div>
+
+                  {!isAlreadyInTargetWatchlist && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={addSymbolMutation.isPending || !cleanSymbol || !targetWatchlistId}
+                      onClick={handleDirectAddToWatchlist}
+                      className="h-8 text-xs gap-1 font-semibold border-primary/30 hover:bg-primary/10 text-primary shrink-0"
+                      title="Add to selected watchlist right now without waiting to submit alert"
+                    >
+                      {addSymbolMutation.isPending ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Plus className="w-3 h-3" />
+                      )}
+                      <span>Add Now</span>
+                    </Button>
+                  )}
+                </div>
+
+                {/* New Watchlist Inline Creator */}
+                {isCreatingWatchlist && (
+                  <div className="flex items-center gap-1.5 p-2 rounded-xl bg-accent/30 border border-border animate-in fade-in">
+                    <Input
+                      placeholder="New watchlist name..."
+                      value={newWatchlistName}
+                      onChange={(e) => setNewWatchlistName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleCreateAndSelectWatchlist();
+                        }
+                      }}
+                      className="h-7 text-xs bg-background"
+                      autoFocus
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={createWatchlistMutation.isPending || !newWatchlistName.trim()}
+                      onClick={handleCreateAndSelectWatchlist}
+                      className="h-7 px-2.5 text-xs bg-primary text-primary-foreground font-semibold"
+                    >
+                      {createWatchlistMutation.isPending ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        'Create'
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setIsCreatingWatchlist(false);
+                        setNewWatchlistName('');
+                      }}
+                      className="h-7 px-2 text-xs text-muted-foreground"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                )}
+
+                {/* Watchlists containing this stock badges */}
+                {watchlistsContainingStock.length > 0 && (
+                  <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-muted-foreground pt-0.5">
+                    <span className="font-medium">Currently in:</span>
+                    {watchlistsContainingStock.map((w) => (
+                      <Badge
+                        key={w.id}
+                        variant="secondary"
+                        className="text-[10px] py-0 px-1.5 bg-primary/10 text-primary border border-primary/20 font-medium"
+                      >
+                        {w.name}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Session Added Alerts History Chips (Batch Mode) */}
           {sessionAlerts.length > 0 && (

@@ -25,10 +25,16 @@ export interface CreatedAlertResult {
 
 // Stop words / common non-ticker uppercase terms to avoid false positives
 const NON_TICKER_WORDS = new Set([
+  // Single-letter English words & pronouns
+  'A', 'I',
+
+  // Time & Dates & Timezones
   'AM', 'PM', 'EST', 'EDT', 'PST', 'PDT', 'CST', 'CDT', 'UTC', 'GMT',
   'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN',
   'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC',
   'TODAY', 'WEEK', 'MONTH', 'YEAR', 'TIME', 'DATE', 'HOUR', 'MIN', 'SEC', 'DAILY',
+
+  // Common prepositions, verbs & short words
   'IS', 'IT', 'AT', 'ON', 'IN', 'TO', 'IF', 'DO', 'GO', 'NO', 'SO', 'UP', 'MY', 'BY',
   'OR', 'AS', 'HE', 'WE', 'ME', 'US', 'OK', 'AN', 'BE', 'OF', 'THE', 'AND', 'FOR',
   'NOT', 'BUT', 'ALL', 'ANY', 'CAN', 'SEE', 'GET', 'SET', 'PUT', 'RUN', 'LET', 'DID',
@@ -40,9 +46,38 @@ const NON_TICKER_WORDS = new Set([
   'ABOUT', 'AFTER', 'BEFORE', 'COULD', 'WOULD', 'SHOULD', 'WHICH', 'WHERE', 'THESE',
   'THOSE', 'BECAUSE', 'HERE', 'THERE', 'EACH', 'BOTH', 'MANY', 'SUCH', 'EVEN', 'MOST',
   'ALSO', 'BACK', 'WELL', 'ONLY', 'DOWN', 'REAL', 'GOOD', 'BEST', 'LONG', 'SHORT',
-  'OPEN', 'STOP', 'RISK', 'SELL', 'CASH', 'LOSS', 'GAIN', 'DROP', 'PUMP', 'DUMP',
+  'OPEN', 'STOP', 'RISK', 'SELL', 'CASH', 'LOSS', 'GAIN', 'GAINS', 'DROP', 'PUMP', 'DUMP',
   'HOLD', 'FEEL', 'LOOK', 'SEEM', 'TAKE', 'MAKE', 'KNOW', 'CALL', 'PUTS', 'TRADE',
-  'TRADES', 'IDEA', 'IDEAS', 'WATCH', 'PRICE', 'LEVEL', 'MONEY', 'RALLY', 'ALERT', 'ALERTS'
+  'TRADES', 'IDEA', 'IDEAS', 'WATCH', 'PRICE', 'LEVEL', 'MONEY', 'RALLY', 'ALERT', 'ALERTS',
+
+  // Common verbs and descriptive words frequently matching numbers
+  'CLOSE', 'CLOSES', 'CLOSED', 'CLOSING',
+  'FINAL', 'FINALS', 'FINALLY',
+  'EXCEED', 'EXCEEDS', 'EXCEEDED', 'XCEEDS',
+  'APPROACH', 'APPROACHES', 'APPROACHED', 'OACHES',
+  'ROUGH', 'ROUGHLY', 'OUGHLY',
+  'GROW', 'GROWS', 'GROWTH', 'GREW',
+  'WIN', 'WINS', 'WINNER', 'WINNERS',
+  'TARGET', 'TARGETS', 'FLOOR', 'CEIL', 'CEILING',
+  'RANGE', 'STRIKE', 'STRIKES', 'EXP', 'EXPIRY', 'EXPIRATION',
+  'DELTA', 'THETA', 'GAMMA', 'VEGA', 'RHO', 'SPOT',
+  'CONTRACT', 'CONTRACTS', 'POSITION', 'POSITIONS',
+  'PROB', 'PROBS', 'PROBABILITY', 'PROBABILITIES', 'METRIC', 'METRICS',
+  'SHARE', 'SHARES', 'VALUE', 'VALUES', 'TOTAL', 'TOTALS', 'NET', 'FREE',
+  'BASE', 'RATE', 'RATES', 'RATIO', 'RATIOS', 'POINT', 'POINTS', 'PERCENT',
+  'PROFIT', 'PROFITS', 'STAGE', 'STEP', 'STEPS', 'SECTION', 'SECTIONS', 'TABLE', 'TABLES',
+  'MODEL', 'CHAT', 'COPILOT', 'ANALYSIS', 'REPORT', 'SUMMARY', 'RULE', 'RULES',
+  'ABOUT', 'ACROSS', 'AGAINST', 'ALONG', 'AMONG', 'AROUND', 'BEHIND',
+  'BESIDE', 'BETWEEN', 'BEYOND', 'DURING', 'EXCEPT', 'INSIDE', 'OUTSIDE',
+  'TOWARD', 'TOWARDS', 'UNDER', 'WITHIN', 'WITHOUT',
+
+  // Financial / Accounting Acronyms
+  'PE', 'EPS', 'FCF', 'ROE', 'ROIC', 'ROA', 'EBITDA', 'EBIT', 'NAV', 'CAGR',
+  'CPI', 'PPI', 'GDP', 'PMI', 'VIX', 'DXY', 'YTD', 'MTD', 'QOQ', 'YOY',
+  'DTE', 'ATM', 'OTM', 'ITM', 'IVR', 'IV', 'HV', 'OI', 'VOL', 'POP', 'POT', 'ROC',
+  'AI', 'SAAS', 'EV', 'GPU', 'CPU', 'SMR', 'CEO', 'CFO', 'CTO', 'COO', 'CIO',
+  'IPO', 'LLC', 'INC', 'CORP', 'LTD', 'PDF', 'URL', 'API', 'APP', 'BOT', 'MSG', 'SMS',
+  'LOG', 'NOTE', 'POST', 'TEXT', 'SYNC', 'EDIT', 'VIEW', 'CHART', 'GRAPH'
 ]);
 
 /**
@@ -59,6 +94,13 @@ const NON_TICKER_WORDS = new Set([
 export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[] {
   if (!text || typeof text !== 'string') return [];
 
+  // If text is long (> 300 chars) and does NOT contain explicit alert keywords ("alert", "set alert", or "#alert") or cashtag "$",
+  // do not scan long narrative documents (e.g. Copilot answers, research reports, articles)
+  const hasExplicitAlertKeyword = /\b(?:SET\s+)?ALERTS?\b|#(?:topic:)?alerts?\b|\$[A-Za-z]/i.test(text);
+  if (text.length > 300 && !hasExplicitAlertKeyword) {
+    return [];
+  }
+
   // Remove timestamps like "10:30 AM", "09:15"
   const sanitized = text.replace(/\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM|am|pm)?\b/gi, ' ');
 
@@ -69,11 +111,34 @@ export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[
   const segments = sanitized.split(/[\r\n,;]+/);
 
   for (const seg of segments) {
-    const trimmed = seg.trim();
+    let trimmed = seg.trim();
     if (!trimmed) continue;
 
-    // 1. Check for percentage offset alert: e.g. "NVDA -5%", "Alert NVDA +10%", "TSLA 5% dip", "AAPL down 5%"
-    const pctMatch = trimmed.match(/(?:(?:SET\s+)?ALERT(?:\s+FOR|\s+ON|:)?\s+)?(?:\$)?([A-Za-z]{1,6})\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH|DOWN|UP)?\s*([+-]?\s*[0-9]+(?:\.[0-9]+)?)\s*%/i);
+    // Skip markdown table separators/rows, headers, blockquotes, code blocks
+    if (/^[|#>`~\-=]{1,3}/.test(trimmed) || trimmed.startsWith('---') || trimmed.startsWith('***')) {
+      continue;
+    }
+
+    // Strip leading markdown bullets / list numbers (e.g. "- RBRK 120", "* NVDA 130", "1. PLTR 120")
+    trimmed = trimmed.replace(/^[\s*\-•#>|~\d+.)\]\[]+/, '').trim();
+    if (!trimmed) continue;
+
+    // If segment is a long prose sentence (> 80 chars or > 10 words) without an explicit ALERT keyword or cashtag, skip
+    const isExplicitLine = /\b(?:SET\s+)?ALERTS?\b|\$[A-Za-z]/i.test(trimmed);
+    const wordCount = trimmed.split(/\s+/).length;
+    if (!isExplicitLine && (trimmed.length > 80 || wordCount > 10)) {
+      continue;
+    }
+
+    // --- 1. Check for percentage offset alert: e.g. "NVDA -5%", "Alert NVDA +10%", "TSLA 5% dip", "AAPL down 5%" ---
+    let pctMatch = trimmed.match(/^(?:(?:SET\s+)?ALERT(?:\s+FOR|\s+ON|:)?\s+)(?:\$)?([A-Za-z]{1,6})\b\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH|DOWN|UP)?\s*([+-]?\s*[0-9]+(?:\.[0-9]+)?)\s*%(?:\s*(?:DIP|DROP|UP|DOWN|RALLY|TARGET))?(?:\s|$)/i);
+    if (!pctMatch) {
+      pctMatch = trimmed.match(/^\$([A-Za-z]{1,6})\b\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH|DOWN|UP)?\s*([+-]?\s*[0-9]+(?:\.[0-9]+)?)\s*%(?:\s*(?:DIP|DROP|UP|DOWN|RALLY|TARGET))?\s*$/i);
+    }
+    if (!pctMatch) {
+      pctMatch = trimmed.match(/^([A-Za-z]{2,6})\b\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH|DOWN|UP)?\s*([+-]?\s*[0-9]+(?:\.[0-9]+)?)\s*%(?:\s*(?:DIP|DROP|UP|DOWN|RALLY|TARGET))?\s*$/i);
+    }
+
     if (pctMatch) {
       const rawSym = pctMatch[1].toUpperCase();
       const pctVal = parseFloat(pctMatch[2].replace(/\s+/g, ''));
@@ -84,6 +149,11 @@ export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[
         rawSym.length >= 1 &&
         rawSym.length <= 6
       ) {
+        // Single letter without explicit alert prefix or $ is rejected
+        if (rawSym.length === 1 && !isExplicitLine) {
+          continue;
+        }
+
         const upperSeg = trimmed.toUpperCase();
         let condition: 'ABOVE' | 'BELOW' = pctVal >= 0 ? 'ABOVE' : 'BELOW';
         let finalOffset = pctVal;
@@ -109,9 +179,14 @@ export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[
       }
     }
 
-    // 2. Check for fixed target price: e.g. "NVDA 120", "Alert RBRK at 120", "RBRK @ $120.50", "NVDA > 130"
-    // Negative lookahead (?!\s*%) prevents matching "5" in "5%" as a dollar price
-    const match = trimmed.match(/(?:(?:SET\s+)?ALERT(?:\s+FOR|\s+ON|:)?\s+)?(?:\$)?([A-Za-z]{1,6})\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH)?\s*\$?([0-9]+(?:\.[0-9]+)?)(?!\s*%)(\s*(?:ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP))?/i);
+    // --- 2. Check for fixed target price: e.g. "NVDA 120", "Alert RBRK at 120", "RBRK @ $120.50", "NVDA > 130" ---
+    let match = trimmed.match(/^(?:(?:SET\s+)?ALERT(?:\s+FOR|\s+ON|:)?\s+)(?:\$)?([A-Za-z]{1,6})\b\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH)?\s*\$?([0-9]+(?:\.[0-9]+)?)(?!\s*%)(?:\s*(?:ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|TARGET))?(?:\s|$)/i);
+    if (!match) {
+      match = trimmed.match(/^\$([A-Za-z]{1,6})\b\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH)?\s*\$?([0-9]+(?:\.[0-9]+)?)(?!\s*%)(?:\s*(?:ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|TARGET))?\s*$/i);
+    }
+    if (!match) {
+      match = trimmed.match(/^([A-Za-z]{2,6})\b\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH)?\s*\$?([0-9]+(?:\.[0-9]+)?)(?!\s*%)(?:\s*(?:ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|TARGET))?\s*$/i);
+    }
 
     if (match) {
       const rawSym = match[1].toUpperCase();
@@ -125,6 +200,11 @@ export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[
         rawSym.length >= 1 &&
         rawSym.length <= 6
       ) {
+        // Single letter without explicit alert prefix or $ is rejected
+        if (rawSym.length === 1 && !isExplicitLine) {
+          continue;
+        }
+
         // Condition detection
         let condition: 'ABOVE' | 'BELOW' | 'AUTO' = 'AUTO';
         const upperSeg = trimmed.toUpperCase();
@@ -202,12 +282,24 @@ export async function autoCreateAlertsFromText(
 
       // 1. Fetch spot market price
       let currentPrice: number | null = null;
+      let symbolNotFound = false;
       try {
-        const summary = await yahooFinance.quoteSummary(resolvedSym, { modules: ['price'] }).catch(() => null);
+        const summary = await yahooFinance.quoteSummary(resolvedSym, { modules: ['price'] }).catch((err: any) => {
+          const msg = String(err?.message || '');
+          if (msg.includes('Not Found') || msg.includes('404') || msg.includes('not found') || msg.includes('Cannot read properties')) {
+            symbolNotFound = true;
+          }
+          return null;
+        });
         if (summary?.price?.regularMarketPrice != null) {
           currentPrice = Number(summary.price.regularMarketPrice);
         }
       } catch {}
+
+      if (symbolNotFound) {
+        console.warn(`[Auto Price Alert] Skipped unrecognized ticker: "${resolvedSym}"`);
+        continue;
+      }
 
       // 2. Resolve target price & condition
       let finalTargetPrice: number;
@@ -220,8 +312,9 @@ export async function autoCreateAlertsFromText(
         } else if (currentPrice != null) {
           finalCondition = candidate.targetPrice >= currentPrice ? 'ABOVE' : 'BELOW';
         }
-      } else if (candidate.percentageOffset !== undefined && currentPrice != null && currentPrice > 0) {
-        finalTargetPrice = Number((currentPrice * (1 + candidate.percentageOffset / 100)).toFixed(2));
+      } else if (candidate.percentageOffset !== undefined) {
+        const base = (currentPrice != null && currentPrice > 0) ? currentPrice : 150;
+        finalTargetPrice = Number((base * (1 + candidate.percentageOffset / 100)).toFixed(2));
         finalCondition = candidate.percentageOffset >= 0 ? 'ABOVE' : 'BELOW';
       } else {
         // Cannot determine price without spot or explicit target

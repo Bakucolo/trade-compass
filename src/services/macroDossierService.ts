@@ -87,20 +87,47 @@ export interface MacroDossierReport {
   createdAt?: string;
 }
 
+/**
+ * Check if a dossier was generated on the current calendar day
+ */
+export function isDossierFromToday(createdAt?: string | Date | null): boolean {
+  if (!createdAt) return false;
+  const d = new Date(createdAt);
+  if (isNaN(d.getTime())) return false;
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
 export interface GenerateMacroDossierPayload {
   portfolioContext?: {
     totalPositions?: number;
     netLiquidValue?: number;
     optionsCount?: number;
   };
+  force?: boolean;
+  clientDate?: string;
+}
+
+export interface GenerateMacroDossierResponse {
+  success: boolean;
+  dossier: MacroDossierReport;
+  cachedDaily?: boolean;
+  message?: string;
 }
 
 export const macroDossierService = {
-  async generateDossier(payload: GenerateMacroDossierPayload = {}): Promise<{ success: boolean; dossier: MacroDossierReport }> {
+  async generateDossier(payload: GenerateMacroDossierPayload = {}): Promise<GenerateMacroDossierResponse> {
     const res = await fetch('/api/macro/dossier/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({
+        ...payload,
+        clientDate: payload.clientDate || new Date().toISOString()
+      })
     });
 
     if (!res.ok) {
@@ -108,6 +135,15 @@ export const macroDossierService = {
       throw new Error(err.error || `Failed to generate macro dossier (${res.status})`);
     }
 
+    return res.json();
+  },
+
+  async getTodayDossier(clientDate?: string): Promise<{ exists: boolean; dossier: MacroDossierReport | null }> {
+    const query = clientDate ? `?clientDate=${encodeURIComponent(clientDate)}` : `?clientDate=${encodeURIComponent(new Date().toISOString())}`;
+    const res = await fetch(`/api/macro/dossier/today${query}`);
+    if (!res.ok) {
+      throw new Error(`Failed to check today's macro dossier (${res.status})`);
+    }
     return res.json();
   },
 
@@ -157,6 +193,17 @@ export function useMacroDossier(id?: string) {
     queryKey: ['macroDossier', id],
     queryFn: () => macroDossierService.getDossierById(id!),
     enabled: Boolean(id)
+  });
+}
+
+/**
+ * React Query: Check/fetch today's saved macro dossier
+ */
+export function useTodayMacroDossier() {
+  return useQuery({
+    queryKey: ['macroDossierToday', new Date().toDateString()],
+    queryFn: () => macroDossierService.getTodayDossier(new Date().toISOString()),
+    staleTime: 60 * 1000
   });
 }
 

@@ -143,6 +143,16 @@ export interface PositionThetaResult {
   thetaPerShare: number;
   dailyDollarTheta: number; // Positive = income/gain per day; Negative = cost/decay per day
   monthlyDollarTheta: number;
+  broker?: string;
+  brokerName?: string;
+  currentPrice?: number;
+  averageCost?: number;
+  marketValue?: number;
+  unrealizedPnL?: number;
+  unrealizedPnLPercent?: number;
+  underlyingPrice?: number;
+  description?: string;
+  rawPosition?: any;
 }
 
 export interface PortfolioThetaSummary {
@@ -224,6 +234,16 @@ export function calculatePositionTheta(pos: any): PositionThetaResult | null {
     thetaPerShare: Number(thetaPerShare.toFixed(4)),
     dailyDollarTheta: Number(dailyDollarTheta.toFixed(2)),
     monthlyDollarTheta: Number(monthlyDollarTheta.toFixed(2)),
+    broker: pos.broker || pos.brokerName || (pos.brokerId === 'ibkr' ? 'IBKR' : pos.brokerId === 'tastytrade' ? 'Tastytrade' : undefined),
+    brokerName: pos.brokerName || pos.broker,
+    currentPrice: pos.currentPrice !== undefined ? Number(pos.currentPrice) : undefined,
+    averageCost: pos.averageCost !== undefined ? Number(pos.averageCost) : undefined,
+    marketValue: pos.marketValue !== undefined ? Number(pos.marketValue) : undefined,
+    unrealizedPnL: pos.unrealizedPnL !== undefined ? Number(pos.unrealizedPnL) : (pos.unrealizedPL !== undefined ? Number(pos.unrealizedPL) : (pos.totalPnL !== undefined ? Number(pos.totalPnL) : undefined)),
+    unrealizedPnLPercent: pos.unrealizedPnLPercent !== undefined ? Number(pos.unrealizedPnLPercent) : (pos.unrealizedPLPercent !== undefined ? Number(pos.unrealizedPLPercent) : (pos.totalPnLPercent !== undefined ? Number(pos.totalPnLPercent) : undefined)),
+    underlyingPrice: spot,
+    description: pos.description || undefined,
+    rawPosition: pos,
   };
 }
 

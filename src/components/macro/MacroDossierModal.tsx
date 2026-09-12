@@ -18,7 +18,8 @@ import {
   CatalystRadarItem,
   useMacroDossiers,
   useGenerateMacroDossier,
-  useDeleteMacroDossier
+  useDeleteMacroDossier,
+  isDossierFromToday
 } from '@/services/macroDossierService';
 import {
   Globe,
@@ -75,30 +76,56 @@ export function MacroDossierModal({
   const [activeDossier, setActiveDossier] = useState<MacroDossierReport | null>(null);
   const [activeTab, setActiveTab] = useState('overview');
   const [copied, setCopied] = useState(false);
+  const [showForceConfirm, setShowForceConfirm] = useState(false);
 
   const { data: dossiersHistory = [], refetch: refetchHistory, isLoading: isLoadingHistory } = useMacroDossiers(20);
   const generateMutation = useGenerateMacroDossier();
   const deleteMutation = useDeleteMacroDossier();
 
-  // On open, if no active dossier selected, pick most recent or trigger first generation
+  // Find if today's dossier already exists in SQLite history
+  const todayDossier = React.useMemo(() => {
+    return dossiersHistory.find(d => isDossierFromToday(d.createdAt)) || null;
+  }, [dossiersHistory]);
+
+  const hasAttemptedAutoRunRef = React.useRef(false);
+
+  // On open, check if today's dossier exists. If it exists, load it immediately with 0 compute.
+  // If NO dossier exists for today, automatically trigger generation ONCE for today.
   useEffect(() => {
     if (isOpen) {
-      if (!activeDossier) {
-        if (dossiersHistory.length > 0 && !generateMutation.isPending) {
+      if (!isLoadingHistory) {
+        if (todayDossier) {
+          // Today's dossier already exists: load it immediately with 0 AI compute!
+          if (!activeDossier || activeDossier.id !== todayDossier.id) {
+            setActiveDossier(todayDossier);
+          }
+        } else if (!hasAttemptedAutoRunRef.current && !generateMutation.isPending) {
+          // No dossier exists for today yet: run AI thinking ONCE and save for the day
+          hasAttemptedAutoRunRef.current = true;
+          handleGenerateDossier(false);
+        } else if (!activeDossier && dossiersHistory.length > 0) {
           setActiveDossier(dossiersHistory[0]);
-        } else if (!generateMutation.isPending && dossiersHistory.length === 0) {
-          handleGenerateDossier();
         }
       }
+    } else {
+      hasAttemptedAutoRunRef.current = false;
+      setShowForceConfirm(false);
     }
-  }, [isOpen, dossiersHistory.length]);
+  }, [isOpen, isLoadingHistory, todayDossier?.id, dossiersHistory.length]);
 
-  const handleGenerateDossier = async () => {
+  const handleGenerateDossier = async (force = false) => {
     try {
-      const res = await generateMutation.mutateAsync({});
+      const res = await generateMutation.mutateAsync({
+        force,
+        clientDate: new Date().toISOString()
+      });
       setActiveDossier(res.dossier);
       setActiveTab('overview');
-      toast.success('Global Macro Intelligence Dossier synthesized & saved!');
+      if (res.cachedDaily) {
+        toast.info("Loaded today's saved dossier (0 AI compute consumed)");
+      } else {
+        toast.success("Global Macro Intelligence Dossier synthesized & saved for today!");
+      }
     } catch (err: any) {
       console.error(err);
       toast.error(err.message || 'Failed to generate macro dossier');
@@ -231,6 +258,17 @@ ${allocations}
                     {activeDossier.regimeTitle}
                   </Badge>
                 )}
+                {isDossierFromToday(activeDossier?.createdAt) ? (
+                  <Badge variant="outline" className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px] gap-1 py-0.5">
+                    <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                    <span>Today's Saved Dossier (0 Compute)</span>
+                  </Badge>
+                ) : activeDossier?.createdAt ? (
+                  <Badge variant="outline" className="bg-slate-800 text-slate-400 border-slate-700 text-[10px] gap-1 py-0.5">
+                    <History className="w-3 h-3 text-slate-400" />
+                    <span>Archive ({new Date(activeDossier.createdAt).toLocaleDateString()})</span>
+                  </Badge>
+                ) : null}
               </div>
               <DialogDescription className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
                 <span>Autonomous Cross-Asset Macroeconomic Assessment & Playbook</span>
@@ -255,23 +293,45 @@ ${allocations}
                 }}
                 className="h-8 text-xs bg-slate-900 border border-slate-700/60 rounded-xl px-2 text-muted-foreground focus:outline-none focus:border-primary"
               >
-                {dossiersHistory.map((d, idx) => (
-                  <option key={d.id} value={d.id}>
-                    {idx === 0 ? 'Latest: ' : ''}{d.regimeTitle} ({d.createdAt ? new Date(d.createdAt).toLocaleDateString() : 'Dossier'})
-                  </option>
-                ))}
+                {dossiersHistory.map((d, idx) => {
+                  const isToday = isDossierFromToday(d.createdAt);
+                  return (
+                    <option key={d.id} value={d.id}>
+                      {isToday ? '🟢 [Saved Today] ' : idx === 0 ? 'Latest: ' : ''}
+                      {d.regimeTitle} ({d.createdAt ? new Date(d.createdAt).toLocaleDateString() : 'Dossier'})
+                    </option>
+                  );
+                })}
               </select>
             )}
 
-            {/* Run Agent / Refresh Button */}
+            {/* Run Agent / Refresh Button with allowance guard */}
             <Button
               size="sm"
-              onClick={handleGenerateDossier}
+              onClick={() => {
+                if (todayDossier) {
+                  setShowForceConfirm(true);
+                } else {
+                  handleGenerateDossier(false);
+                }
+              }}
               disabled={generateMutation.isPending}
-              className="h-8 text-xs font-bold gap-1.5 bg-gradient-to-r from-primary via-cyan-600 to-purple-600 hover:opacity-90 text-white shadow-md rounded-xl"
+              className={cn(
+                "h-8 text-xs font-bold gap-1.5 shadow-md rounded-xl transition-all",
+                todayDossier
+                  ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700"
+                  : "bg-gradient-to-r from-primary via-cyan-600 to-purple-600 hover:opacity-90 text-white"
+              )}
+              title={todayDossier ? "Today's dossier is already saved. Click to force re-run." : "Synthesize Today's Macro Dossier"}
             >
               <RefreshCw className={cn("w-3.5 h-3.5", generateMutation.isPending && "animate-spin")} />
-              <span>{generateMutation.isPending ? 'Synthesizing...' : 'Run Macro Agent'}</span>
+              <span>
+                {generateMutation.isPending
+                  ? 'Synthesizing...'
+                  : todayDossier
+                  ? 'Re-run (Uses Compute)'
+                  : 'Run Macro Agent'}
+              </span>
             </Button>
 
             {/* Copy Markdown */}
@@ -314,6 +374,39 @@ ${allocations}
             </Button>
           </div>
         </div>
+
+        {/* Daily Save Status Notification Strip */}
+        {activeDossier && (
+          <div className="bg-slate-950/90 border-b border-slate-800/80 px-4 sm:px-6 py-1.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground shrink-0">
+            <div className="flex items-center gap-2">
+              {isDossierFromToday(activeDossier.createdAt) ? (
+                <>
+                  <span className="flex h-2 w-2 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <span className="text-emerald-300 font-semibold">Daily Intelligence Active:</span>
+                  <span>
+                    Saved today at {new Date(activeDossier.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.
+                    0 compute allowance used on re-opening.
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="inline-flex rounded-full h-2 w-2 bg-slate-500"></span>
+                  <span className="text-slate-400">Historical Archive:</span>
+                  <span>Viewing saved report from {new Date(activeDossier.createdAt).toLocaleDateString()}.</span>
+                </>
+              )}
+            </div>
+            {isDossierFromToday(activeDossier.createdAt) && (
+              <span className="hidden sm:inline-flex items-center gap-1 font-mono text-[10px] text-emerald-400/90 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/20">
+                <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                0 Compute Spent
+              </span>
+            )}
+          </div>
+        )}
 
         {/* ================= TELEMETRY EXECUTIVE STRIP ================= */}
         {activeDossier && (
@@ -813,6 +906,52 @@ ${allocations}
 
               </div>
             </Tabs>
+          </div>
+        )}
+
+        {/* Force Re-run Allowance Confirmation Overlay */}
+        {showForceConfirm && (
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <Card className="bg-slate-900 border border-slate-700 max-w-md w-full shadow-2xl p-6 rounded-2xl">
+              <div className="flex items-center gap-3 text-amber-400 mb-2">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-foreground">
+                    Re-run Today's AI Macro Dossier?
+                  </h3>
+                  <p className="text-[11px] text-muted-foreground">Allowance compute protection</p>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed my-3">
+                Today's macro intelligence dossier was already synthesized and saved in the database.
+                <br /><br />
+                Re-running will query AI models again and <strong className="text-rose-400">consume your compute allowance</strong>.
+                <br /><br />
+                Are you sure you want to regenerate today's report?
+              </p>
+              <div className="flex items-center justify-end gap-2 mt-4 pt-3 border-t border-slate-800">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowForceConfirm(false)}
+                  className="text-xs rounded-xl border-slate-700 hover:bg-slate-800"
+                >
+                  Cancel (Save Allowance)
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setShowForceConfirm(false);
+                    handleGenerateDossier(true);
+                  }}
+                  className="text-xs rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold"
+                >
+                  Yes, Re-run (Use Allowance)
+                </Button>
+              </div>
+            </Card>
           </div>
         )}
       </DialogContent>

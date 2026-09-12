@@ -161,6 +161,19 @@ export async function bulkMuteAlerts(ids?: string[]): Promise<{ success: boolean
   return res.json();
 }
 
+export async function bulkDeleteAlerts(ids: string[]): Promise<{ success: boolean; count: number; message: string }> {
+  const res = await fetch(`${API_BASE}/bulk-delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to bulk delete alerts');
+  }
+  return res.json();
+}
+
 // React Query Hooks
 export function useAlerts(params?: {
   status?: string;
@@ -249,6 +262,16 @@ export function useBulkMuteAlerts() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: bulkMuteAlerts,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+    },
+  });
+}
+
+export function useBulkDeleteAlerts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: bulkDeleteAlerts,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['alerts'] });
     },

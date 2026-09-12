@@ -31,6 +31,20 @@ export type CoverageStatus =
   | 'FULLY_COVERED'
   | 'DELTA_DEFICIT';
 
+export interface ActiveCoveredCallPosition {
+  contractSymbol: string;
+  strike: number;
+  expiration: string;
+  dte: number;
+  quantity: number;
+  currentPrice: number;
+  marketValue: number;
+  unrealizedPL?: number;
+  unrealizedPLPercent?: number;
+  broker?: string;
+  account?: string;
+}
+
 export interface CoveredCallPositionCandidate {
   symbol: string;
   companyName: string;
@@ -38,22 +52,17 @@ export interface CoveredCallPositionCandidate {
   currentPrice: number;
   totalMarketValue: number;
   shareCount: number;
+  totalCapacity: number; // Gross capacity (shares/100 + long calls)
+  coveredCallCapacity: number; // Real remaining UNCOVERED call capacity (totalCapacity - activeCalls)
+  coveredSharesCount: number; // Shares currently pledged to active calls (activeCalls * 100)
+  uncoveredSharesCount: number; // Shares truly free and unhedged (shareCount - coveredSharesCount)
+  hasActiveCalls: boolean; // Convenience flag: true if shortCallsCount > 0
   longCallsCount: number;
   shortCallsCount: number;
   netPositionDelta: number; // Net aggregate delta (1 share = +1, 1 long call ~ +60-90, 1 short call ~ -30-50)
   unhedgedDelta: number; // Delta available to cover with short calls
-  coveredCallCapacity: number; // Math.floor(unhedgedDelta / 100) contracts
   coverageStatus: CoverageStatus;
-  activeCoveredCalls: Array<{
-    contractSymbol: string;
-    strike: number;
-    expiration: string;
-    dte: number;
-    quantity: number;
-    currentPrice: number;
-    marketValue: number;
-    unrealizedPLPercent?: number;
-  }>;
+  activeCoveredCalls: ActiveCoveredCallPosition[];
   proposedCalls: {
     conservative: ProposedCallStrike;
     balanced: ProposedCallStrike;
@@ -73,6 +82,8 @@ export interface CoveredCallsAnalysisResult {
   uncoveredPositionsCount: number;
   partiallyCoveredCount: number;
   fullyCoveredCount: number;
+  activePositionsCount: number; // Number of underlying stocks with active short call positions
+  totalActiveCallsCount: number; // Total active short call contracts currently open across the portfolio
   totalUncoveredCallCapacity: number; // Total number of 100-share call contracts that can be sold
   potentialMonthlyIncomeEstimate: number; // Conservative/Balanced blended estimate
   potentialAnnualizedYieldEstimate: number;
@@ -283,12 +294,45 @@ export async function analyzePortfolioCoveredCalls(
     shares: number;
     marketValue: number;
     currentPrice: number;
-    longCalls: Array<{ strike: number; expiry?: string; quantity: number; price: number; marketValue: number }>;
-    shortCalls: Array<{ strike: number; expiry?: string; quantity: number; price: number; marketValue: number; symbol: string }>;
+    longCalls: Array<{
+      strike: number;
+      expiry?: string;
+      quantity: number;
+      price: number;
+      marketValue: number;
+      unrealizedPL?: number;
+      unrealizedPLPercent?: number;
+      symbol: string;
+      broker?: string;
+      account?: string;
+    }>;
+    shortCalls: Array<{
+      strike: number;
+      expiry?: string;
+      quantity: number;
+      price: number;
+      marketValue: number;
+      unrealizedPL?: number;
+      unrealizedPLPercent?: number;
+      symbol: string;
+      broker?: string;
+      account?: string;
+    }>;
     brokers: Set<string>;
   }
 
   const underlyingMap = new Map<string, AggregatedUnderlying>();
+
+  const formatExpiryDate = (val: any): string | undefined => {
+    if (!val) return undefined;
+    if (val instanceof Date) return val.toISOString().split('T')[0];
+    const str = String(val).trim();
+    if (/^\d{8}$/.test(str)) {
+      return `${str.substring(0, 4)}-${str.substring(4, 6)}-${str.substring(6, 8)}`;
+    }
+    if (str.includes('T')) return str.split('T')[0];
+    return str;
+  };
 
   for (const h of rawHoldings) {
     const rawSym = (h.symbol || '').trim().toUpperCase();
@@ -328,9 +372,23 @@ export async function analyzePortfolioCoveredCalls(
       continue;
     }
 
+    // Detect OCC standard option formatting (e.g., PLTR  241018C00030000)
+    const occMatch = rawSym.match(/^([A-Z0-9]+)\s*(\d{2})(\d{2})(\d{2})([CP])(\d{8})$/i);
+    let parsedUnderlying = '';
+    let parsedExpiry: string | undefined = undefined;
+    let parsedStrike = 0;
+    let parsedType = '';
+
+    if (occMatch) {
+      parsedUnderlying = occMatch[1].trim().toUpperCase();
+      parsedExpiry = `20${occMatch[2]}-${occMatch[3]}-${occMatch[4]}`;
+      parsedType = occMatch[5].toUpperCase() === 'C' ? 'CALL' : 'PUT';
+      parsedStrike = parseInt(occMatch[6], 10) / 1000;
+    }
+
     // Detect if this is an option contract
-    const isOption = h.assetType === 'OPTION' || rawSym.includes('  ') || Boolean(h.optionType);
-    const underlying = isOption ? (h.underlyingSymbol || rawSym.split(' ')[0] || rawSym) : rawSym;
+    const isOption = h.assetType === 'OPTION' || Boolean(occMatch) || rawSym.includes('  ') || Boolean(h.optionType);
+    const underlying = isOption ? (h.underlyingSymbol || parsedUnderlying || rawSym.split(' ')[0] || rawSym) : rawSym;
 
     if (!underlyingMap.has(underlying)) {
       underlyingMap.set(underlying, {
@@ -357,34 +415,44 @@ export async function analyzePortfolioCoveredCalls(
       group.marketValue += h.marketValue || (h.quantity * (h.currentPrice || 0));
     } else {
       // Option contract
-      const isCall = h.optionType === 'CALL' || rawSym.includes('C0') || rawSym.includes('C00');
-      const isShort = (h.quantity || 0) < 0 || h.action === 'SELL_TO_OPEN' || h.positionEffect === 'SHORT';
+      const isCall = h.optionType === 'CALL' || parsedType === 'CALL' || rawSym.includes('C0') || rawSym.includes('C00');
+      const isShort = (h.quantity || 0) < 0 || (h as any).action === 'SELL_TO_OPEN' || (h as any).positionEffect === 'SHORT';
       const absQty = Math.abs(h.quantity || 1);
+      const effectiveExpiry = formatExpiryDate(h.expiryDate) || parsedExpiry;
+      const effectiveStrike = h.strikePrice || parsedStrike || 0;
 
       if (isCall) {
         if (isShort) {
           group.shortCalls.push({
             symbol: rawSym,
-            strike: h.strikePrice || 0,
-            expiry: h.expiryDate ? h.expiryDate.toISOString().split('T')[0] : undefined,
+            strike: effectiveStrike,
+            expiry: effectiveExpiry,
             quantity: absQty,
             price: h.currentPrice || 0,
             marketValue: h.marketValue || 0,
+            unrealizedPL: h.unrealizedPnL ?? undefined,
+            unrealizedPLPercent: h.unrealizedPnLPercent ?? undefined,
+            broker: brokerTag,
+            account: h.brokerSpecificId,
           });
         } else {
           group.longCalls.push({
-            strike: h.strikePrice || 0,
-            expiry: h.expiryDate ? h.expiryDate.toISOString().split('T')[0] : undefined,
+            symbol: rawSym,
+            strike: effectiveStrike,
+            expiry: effectiveExpiry,
             quantity: absQty,
             price: h.currentPrice || 0,
             marketValue: h.marketValue || 0,
+            unrealizedPL: h.unrealizedPnL ?? undefined,
+            unrealizedPLPercent: h.unrealizedPnLPercent ?? undefined,
+            broker: brokerTag,
+            account: h.brokerSpecificId,
           });
         }
       }
     }
   }
 
-  // 3. Process candidate evaluation and option chains in parallel
   // 3. Process candidate evaluation and option chains in parallel
   const underlyingEntries = Array.from(underlyingMap.entries()).filter(
     ([_, group]) => group.shares >= 1 || group.longCalls.length > 0 || group.shortCalls.length > 0
@@ -397,6 +465,21 @@ export async function analyzePortfolioCoveredCalls(
     ]);
 
   const candidatePromises = underlyingEntries.map(async ([underlying, group]) => {
+    // Number of active short calls covering 100-share blocks
+    const totalShortCallContracts = group.shortCalls.reduce((sum, sc) => sum + sc.quantity, 0);
+    const totalLongCallContracts = group.longCalls.reduce((sum, lc) => sum + lc.quantity, 0);
+
+    // Total gross long capacity (100 shares = 1 contract, 1 long call = 1 contract)
+    const stockContracts = Math.floor(group.shares / 100);
+    const totalCapacity = stockContracts + totalLongCallContracts;
+
+    // REAL remaining UNCOVERED capacity (available contracts to sell without going naked)
+    const realUncoveredCapacity = Math.max(0, totalCapacity - totalShortCallContracts);
+
+    // Shares committed to active calls vs shares completely uncovered
+    const coveredSharesCount = Math.min(group.shares, totalShortCallContracts * 100);
+    const uncoveredSharesCount = Math.max(0, group.shares - (totalShortCallContracts * 100));
+
     // Determine net position delta
     let calculatedDelta = group.shares;
     for (const lc of group.longCalls) {
@@ -406,25 +489,20 @@ export async function analyzePortfolioCoveredCalls(
       calculatedDelta -= sc.quantity * 30; // ~0.30 Delta per short call
     }
 
-    // Number of active covered calls covering 100-share blocks
-    const totalShortCallContracts = group.shortCalls.reduce((sum, sc) => sum + sc.quantity, 0);
-    const coveredShares = totalShortCallContracts * 100;
-    const unhedgedShares = Math.max(0, group.shares - coveredShares);
-
-    // Delta available to sell calls against
     const unhedgedDelta = Math.max(0, calculatedDelta);
-    const capacity = Math.floor(unhedgedDelta / 100);
 
     // Determine coverage status
     let coverageStatus: CoverageStatus = 'DELTA_DEFICIT';
-    if (calculatedDelta >= 100) {
+    if (totalCapacity >= 1) {
       if (totalShortCallContracts === 0) {
         coverageStatus = 'UNCOVERED_OPPORTUNITY';
-      } else if (unhedgedDelta >= 100) {
+      } else if (realUncoveredCapacity >= 1) {
         coverageStatus = 'PARTIALLY_COVERED';
       } else {
         coverageStatus = 'FULLY_COVERED';
       }
+    } else if (calculatedDelta >= 100 && realUncoveredCapacity >= 1) {
+      coverageStatus = 'UNCOVERED_OPPORTUNITY';
     }
 
     let price = group.currentPrice || 10;
@@ -449,7 +527,8 @@ export async function analyzePortfolioCoveredCalls(
     }
 
     // If eligible for covered calls (capacity >= 1), attempt live options chain fetch
-    if (capacity >= 1) {
+    const effectiveProposeContracts = realUncoveredCapacity > 0 ? realUncoveredCapacity : 1;
+    if (totalCapacity >= 1) {
       try {
         const chain = await fetchWithTimeout(yahooFinance.options(underlying), 2500);
         if (chain?.options?.[0]?.calls) {
@@ -482,12 +561,16 @@ export async function analyzePortfolioCoveredCalls(
     }
 
     // Generate the 3 proposed call strike tiers
-    const proposedCalls = buildProposedCallStrikes(price, capacity || 1, liveOptions, 0.35);
+    const proposedCalls = buildProposedCallStrikes(price, effectiveProposeContracts, liveOptions, 0.35);
 
-    const activeCoveredCalls = group.shortCalls.map((sc) => {
-      const dte = sc.expiry
-        ? Math.max(0, Math.round((new Date(sc.expiry).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
-        : 20;
+    const activeCoveredCalls: ActiveCoveredCallPosition[] = group.shortCalls.map((sc) => {
+      let dte = 20;
+      if (sc.expiry) {
+        const expDate = new Date(sc.expiry);
+        if (!isNaN(expDate.getTime())) {
+          dte = Math.max(0, Math.round((expDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+        }
+      }
       return {
         contractSymbol: sc.symbol,
         strike: sc.strike,
@@ -496,6 +579,10 @@ export async function analyzePortfolioCoveredCalls(
         quantity: sc.quantity,
         currentPrice: sc.price,
         marketValue: sc.marketValue,
+        unrealizedPL: sc.unrealizedPL,
+        unrealizedPLPercent: sc.unrealizedPLPercent,
+        broker: sc.broker,
+        account: sc.account,
       };
     });
 
@@ -506,11 +593,15 @@ export async function analyzePortfolioCoveredCalls(
       currentPrice: parseFloat(price.toFixed(2)),
       totalMarketValue: parseFloat((group.marketValue || group.shares * price).toFixed(2)),
       shareCount: group.shares,
-      longCallsCount: group.longCalls.reduce((s, c) => s + c.quantity, 0),
+      totalCapacity,
+      coveredCallCapacity: realUncoveredCapacity,
+      coveredSharesCount,
+      uncoveredSharesCount,
+      hasActiveCalls: totalShortCallContracts > 0,
+      longCallsCount: totalLongCallContracts,
       shortCallsCount: totalShortCallContracts,
       netPositionDelta: Math.round(calculatedDelta),
       unhedgedDelta: Math.round(unhedgedDelta),
-      coveredCallCapacity: capacity,
       coverageStatus,
       activeCoveredCalls,
       proposedCalls,
@@ -534,7 +625,7 @@ export async function analyzePortfolioCoveredCalls(
 
   // Sort candidates: Uncovered Opportunities with highest capacity first, then partially covered, then covered
   candidates.sort((a, b) => {
-    const statusPriority = {
+    const statusPriority: Record<CoverageStatus, number> = {
       UNCOVERED_OPPORTUNITY: 1,
       PARTIALLY_COVERED: 2,
       FULLY_COVERED: 3,
@@ -547,17 +638,19 @@ export async function analyzePortfolioCoveredCalls(
   });
 
   // Calculate summary metrics
-  const totalEligible = candidates.filter((c) => c.netPositionDelta >= 100);
+  const totalEligible = candidates.filter((c) => c.netPositionDelta >= 100 || c.totalCapacity >= 1);
   const uncoveredCandidates = candidates.filter((c) => c.coverageStatus === 'UNCOVERED_OPPORTUNITY');
   const partiallyCovered = candidates.filter((c) => c.coverageStatus === 'PARTIALLY_COVERED');
   const fullyCovered = candidates.filter((c) => c.coverageStatus === 'FULLY_COVERED');
+  const activePositions = candidates.filter((c) => c.hasActiveCalls || c.shortCallsCount > 0);
+  const totalActiveCalls = candidates.reduce((sum, c) => sum + c.shortCallsCount, 0);
 
   const totalUncoveredCapacity = candidates.reduce(
     (sum, c) => sum + (c.coverageStatus === 'UNCOVERED_OPPORTUNITY' || c.coverageStatus === 'PARTIALLY_COVERED' ? c.coveredCallCapacity : 0),
     0
   );
 
-  // Estimate potential monthly income across all uncovered capacity
+  // Estimate potential monthly income across all real uncovered capacity
   const potentialMonthlyIncome = candidates.reduce((sum, c) => {
     if (c.coveredCallCapacity >= 1 && (c.coverageStatus === 'UNCOVERED_OPPORTUNITY' || c.coverageStatus === 'PARTIALLY_COVERED')) {
       const balancedIncome = c.proposedCalls.balanced.totalPotentialIncome;
@@ -576,6 +669,8 @@ export async function analyzePortfolioCoveredCalls(
     uncoveredPositionsCount: uncoveredCandidates.length,
     partiallyCoveredCount: partiallyCovered.length,
     fullyCoveredCount: fullyCovered.length,
+    activePositionsCount: activePositions.length,
+    totalActiveCallsCount: totalActiveCalls,
     totalUncoveredCallCapacity: totalUncoveredCapacity,
     potentialMonthlyIncomeEstimate: Math.round(potentialMonthlyIncome),
     potentialAnnualizedYieldEstimate: parseFloat(annualizedYieldEst.toFixed(1)),

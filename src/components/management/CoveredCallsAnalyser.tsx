@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import {
   TrendingUp,
   ShieldCheck,
+  ShieldAlert,
   Zap,
   ArrowRight,
   DollarSign,
@@ -56,9 +57,9 @@ export function CoveredCallsAnalyser({
 }: CoveredCallsAnalyserProps) {
   const { data: analysisData, isLoading, isFetching, refetch } = useCoveredCallsAnalysis();
 
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'UNCOVERED' | 'PARTIAL' | 'COVERED'>('UNCOVERED');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'UNCOVERED' | 'PARTIAL' | 'COVERED' | 'ACTIVE_CALLS'>('UNCOVERED');
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState<'CAPACITY' | 'YIELD' | 'MARKET_VALUE' | 'DELTA'>('CAPACITY');
+  const [sortBy, setSortBy] = useState<'CAPACITY' | 'ACTIVE_CALLS' | 'YIELD' | 'MARKET_VALUE' | 'DELTA'>('CAPACITY');
   const [selectedChainSymbol, setSelectedChainSymbol] = useState<string | null>(null);
   const [expandedPositionId, setExpandedPositionId] = useState<string | null>(null);
 
@@ -78,6 +79,7 @@ export function CoveredCallsAnalyser({
         if (statusFilter === 'UNCOVERED' && c.coverageStatus !== 'UNCOVERED_OPPORTUNITY') return false;
         if (statusFilter === 'PARTIAL' && c.coverageStatus !== 'PARTIALLY_COVERED') return false;
         if (statusFilter === 'COVERED' && c.coverageStatus !== 'FULLY_COVERED') return false;
+        if (statusFilter === 'ACTIVE_CALLS' && !c.hasActiveCalls && (c.shortCallsCount || 0) === 0 && (!c.activeCoveredCalls || c.activeCoveredCalls.length === 0)) return false;
 
         // Search query
         if (searchQuery.trim()) {
@@ -92,6 +94,9 @@ export function CoveredCallsAnalyser({
       .sort((a, b) => {
         if (sortBy === 'CAPACITY') {
           return (b.coveredCallCapacity || 0) - (a.coveredCallCapacity || 0) || (b.totalMarketValue || 0) - (a.totalMarketValue || 0);
+        }
+        if (sortBy === 'ACTIVE_CALLS') {
+          return (b.shortCallsCount || 0) - (a.shortCallsCount || 0) || (b.totalMarketValue || 0) - (a.totalMarketValue || 0);
         }
         if (sortBy === 'YIELD') {
           const yieldA = a.proposedCalls?.balanced?.annualizedYieldPercent || 0;
@@ -124,26 +129,27 @@ export function CoveredCallsAnalyser({
     }
   };
 
-  const getStatusBadge = (status: CoverageStatus, capacity: number) => {
+  const getStatusBadge = (status: CoverageStatus, capacity: number, shortCallsCount = 0) => {
     switch (status) {
       case 'UNCOVERED_OPPORTUNITY':
         return (
           <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 text-xs font-bold gap-1 shadow-sm">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block" />
-            <span>Uncovered Opportunity ({capacity}x Calls Available)</span>
+            <span>Uncovered Opportunity ({capacity}x Real Capacity)</span>
           </Badge>
         );
       case 'PARTIALLY_COVERED':
         return (
           <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/40 text-xs font-bold gap-1">
-            <span>Partially Covered (+{capacity}x Calls Available)</span>
+            <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+            <span>Partially Covered ({shortCallsCount}x Active, +{capacity}x Real Remaining)</span>
           </Badge>
         );
       case 'FULLY_COVERED':
         return (
           <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/40 text-xs font-bold gap-1">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>Fully Covered (100% Hedged)</span>
+            <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+            <span>Fully Covered ({shortCallsCount}x Active • 0x New Capacity)</span>
           </Badge>
         );
       default:
@@ -305,6 +311,21 @@ export function CoveredCallsAnalyser({
           </Button>
 
           <Button
+            variant={statusFilter === 'ACTIVE_CALLS' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setStatusFilter('ACTIVE_CALLS')}
+            className={cn(
+              'h-8 text-xs font-semibold gap-1.5',
+              statusFilter === 'ACTIVE_CALLS'
+                ? 'bg-amber-600 text-white shadow-sm'
+                : 'border-border/70 text-amber-300 hover:bg-accent'
+            )}
+          >
+            <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+            <span>Active Calls Open ({analysisData?.activePositionsCount ?? 0})</span>
+          </Button>
+
+          <Button
             variant={statusFilter === 'ALL' ? 'default' : 'outline'}
             size="sm"
             onClick={() => setStatusFilter('ALL')}
@@ -334,7 +355,8 @@ export function CoveredCallsAnalyser({
             onChange={(e) => setSortBy(e.target.value as any)}
             className="h-8 text-xs font-semibold bg-card/80 border border-border/70 rounded-xl px-2.5 text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer"
           >
-            <option value="CAPACITY">Sort: Uncovered Calls (High &rarr; Low)</option>
+            <option value="CAPACITY">Sort: Real Capacity (High &rarr; Low)</option>
+            <option value="ACTIVE_CALLS">Sort: Active Short Calls First</option>
             <option value="YIELD">Sort: APY Yield (% High &rarr; Low)</option>
             <option value="MARKET_VALUE">Sort: Position Market Value</option>
             <option value="DELTA">Sort: Net Delta (&Delta; High &rarr; Low)</option>
@@ -414,7 +436,21 @@ export function CoveredCallsAnalyser({
                           {candidate.symbol}
                         </span>
 
-                        {getStatusBadge(candidate.coverageStatus, candidate.coveredCallCapacity)}
+                        {getStatusBadge(candidate.coverageStatus, candidate.coveredCallCapacity, candidate.shortCallsCount)}
+
+                        {candidate.hasActiveCalls && (
+                          <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/40 text-xs font-bold gap-1 shadow-xs">
+                            <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+                            <span>{candidate.shortCallsCount}x Active Call{candidate.shortCallsCount > 1 ? 's' : ''} Open</span>
+                          </Badge>
+                        )}
+
+                        {!candidate.hasActiveCalls && candidate.shareCount >= 100 && (
+                          <Badge variant="outline" className="text-emerald-400 border-emerald-500/30 text-[10px] font-medium gap-1 bg-emerald-950/20">
+                            <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                            <span>No Active Calls (100% Real Capacity)</span>
+                          </Badge>
+                        )}
 
                         {(candidate.brokers || []).map((b) => (
                           <span
@@ -432,8 +468,21 @@ export function CoveredCallsAnalyser({
                         </span>
                         <span>•</span>
                         <span>
-                          {Math.round(candidate.shareCount)} Shares
+                          {Math.round(candidate.shareCount)} Shares ({candidate.totalCapacity || Math.floor(candidate.shareCount / 100)}x Max Capacity)
                         </span>
+                        <span>•</span>
+                        <span className={candidate.coveredCallCapacity > 0 ? "text-emerald-400 font-bold" : "text-muted-foreground font-bold"}>
+                          Real Capacity: {candidate.coveredCallCapacity}x ({candidate.uncoveredSharesCount ?? candidate.shareCount} shs free)
+                        </span>
+                        {candidate.shortCallsCount > 0 && (
+                          <>
+                            <span>•</span>
+                            <span className="text-amber-300 font-semibold flex items-center gap-1">
+                              <ShieldAlert className="w-3 h-3 text-amber-400" />
+                              Covered: {candidate.shortCallsCount}x ({candidate.coveredSharesCount ?? (candidate.shortCallsCount * 100)} shs committed)
+                            </span>
+                          </>
+                        )}
                         <span>•</span>
                         <span className="text-primary font-bold">
                           +{candidate.netPositionDelta} &Delta; Net Delta
@@ -490,12 +539,93 @@ export function CoveredCallsAnalyser({
                   </div>
                 </div>
 
+                {/* ================= ACTIVE SHORT CALL POSITIONS (REAL CAPACITY VERIFICATION) ================= */}
+                {candidate.activeCoveredCalls && candidate.activeCoveredCalls.length > 0 && (
+                  <div className="mx-5 mb-3 p-4 rounded-xl border border-amber-500/30 bg-amber-950/15 space-y-2.5 animate-in fade-in duration-150">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-amber-500/20 pb-2">
+                      <div className="flex items-center gap-2">
+                        <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span className="text-xs font-bold text-amber-300 uppercase tracking-wide">
+                          Active Short Call Positions ({candidate.activeCoveredCalls.reduce((s, c) => s + c.quantity, 0)}x Contracts Open)
+                        </span>
+                      </div>
+                      <div className="text-[11px] font-mono text-muted-foreground bg-slate-900/60 px-2.5 py-0.5 rounded border border-white/5">
+                        Capacity Real Check: <span className="text-foreground font-semibold">{candidate.shareCount} shs</span> &minus; <span className="text-amber-300 font-semibold">{candidate.coveredSharesCount ?? (candidate.shortCallsCount * 100)} covered</span> = <span className="text-emerald-400 font-bold">{candidate.uncoveredSharesCount ?? 0} free ({candidate.coveredCallCapacity}x Real Remaining Capacity)</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+                      {candidate.activeCoveredCalls.map((call, idx) => (
+                        <div key={idx} className="p-3 rounded-lg border border-amber-500/25 bg-card/80 font-mono text-xs space-y-1.5 shadow-xs">
+                          <div className="flex items-center justify-between font-bold text-foreground">
+                            <span className="text-amber-300 text-sm">${call.strike.toFixed(2)} Call</span>
+                            <Badge variant="outline" className="text-[10px] border-amber-500/30 text-amber-300 bg-amber-500/10">
+                              {call.broker || 'Tastytrade'}
+                            </Badge>
+                          </div>
+                          <div className="flex justify-between text-[11px] text-muted-foreground">
+                            <span>Contract:</span>
+                            <span className="text-foreground truncate max-w-[170px]" title={call.contractSymbol}>{call.contractSymbol}</span>
+                          </div>
+                          <div className="flex justify-between text-[11px] text-muted-foreground">
+                            <span>Expiration:</span>
+                            <span className="text-foreground font-semibold">{call.expiration} ({call.dte}d DTE)</span>
+                          </div>
+                          <div className="flex justify-between text-[11px] text-muted-foreground">
+                            <span>Position Size:</span>
+                            <span className="text-amber-200 font-semibold">{call.quantity}x Short (-{call.quantity * 100} shs)</span>
+                          </div>
+                          <div className="flex justify-between text-[11px] text-muted-foreground">
+                            <span>Option Price / Val:</span>
+                            <span className="text-foreground">${call.currentPrice.toFixed(2)} (${call.marketValue.toFixed(2)})</span>
+                          </div>
+                          {call.unrealizedPL !== undefined && (
+                            <div className="flex justify-between text-[11px] pt-1 border-t border-border/40">
+                              <span className="text-muted-foreground">Unrealized P&L:</span>
+                              <span className={call.unrealizedPL >= 0 ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>
+                                {call.unrealizedPL >= 0 ? '+' : ''}${call.unrealizedPL.toFixed(2)}
+                                {call.unrealizedPLPercent !== undefined ? ` (${call.unrealizedPLPercent >= 0 ? '+' : ''}${call.unrealizedPLPercent.toFixed(1)}%)` : ''}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* ================= 3 PROPOSED CALL STRIKE TIERS (EXPANDABLE OR DEFAULT FOR UNCOVERED) ================= */}
                 {(isExpanded || (isUncovered && hasCapacity)) && candidate.proposedCalls && (
                   <div className="px-5 pb-5 pt-1 border-t border-border/40 bg-accent/5 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                    {/* Capacity Verification Banner when 0 active calls */}
+                    {(!candidate.activeCoveredCalls || candidate.activeCoveredCalls.length === 0) && candidate.shareCount >= 100 && (
+                      <div className="p-2.5 rounded-lg border border-emerald-500/20 bg-emerald-950/15 text-xs text-emerald-300 flex items-center justify-between font-mono">
+                        <div className="flex items-center gap-2">
+                          <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span>Capacity Verified Real: 0 active call positions on {candidate.symbol}. All {candidate.shareCount} shares ({candidate.coveredCallCapacity}x contracts) are completely unhedged and 100% available.</span>
+                        </div>
+                        <Badge className="bg-emerald-500/20 text-emerald-300 text-[10px] font-mono shrink-0">
+                          {candidate.coveredCallCapacity}x Real Capacity
+                        </Badge>
+                      </div>
+                    )}
+
+                    {/* Fully covered notice */}
+                    {candidate.coveredCallCapacity === 0 && candidate.shareCount >= 100 && (
+                      <div className="p-3 rounded-lg border border-blue-500/30 bg-blue-950/20 text-xs flex items-center gap-2.5 text-blue-200 font-mono">
+                        <Info className="w-4 h-4 text-blue-400 shrink-0" />
+                        <span>
+                          <strong>Position 100% Covered:</strong> All {candidate.shareCount} shares are currently pledged to {candidate.shortCallsCount}x active short call positions. <strong>Remaining new capacity is 0 contracts</strong>. The playbooks below represent potential roll or replacement targets when managing your active call.
+                        </span>
+                      </div>
+                    )}
+
                     <div className="flex items-center justify-between text-xs pt-1">
                       <span className="font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5 text-[11px]">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-300" /> Proposed Call-Selling Playbooks ({candidate.coveredCallCapacity}x Contracts)
+                        <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                        {candidate.coveredCallCapacity > 0
+                          ? `Proposed Call-Selling Playbooks (${candidate.coveredCallCapacity}x Real Available Contracts)`
+                          : `Proposed Call Management / Roll Playbooks (0x New Capacity)`}
                       </span>
                       <span className="text-[11px] text-muted-foreground">
                         Select a strike to copy plan or review telemetry

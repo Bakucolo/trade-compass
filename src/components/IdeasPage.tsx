@@ -33,6 +33,7 @@ import {
   Check,
   Tag,
   NotebookPen,
+  FolderPlus,
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -49,6 +50,7 @@ import { IdeaDetailModal } from './IdeaDetailModal';
 import { TradeStructureModal } from './TradeStructureModal';
 import { AddThemeModal } from './AddThemeModal';
 import { OptionsTradeAgentModal } from './trades/OptionsTradeAgentModal';
+import { AddToWatchlistModal } from './AddToWatchlistModal';
 import {
   MarketThemeDefinition,
   getAllMarketThemes,
@@ -89,6 +91,7 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
   const [selectedIdeaForDetail, setSelectedIdeaForDetail] = useState<TradeIdea | null>(null);
   const [selectedIdeaForStructure, setSelectedIdeaForStructure] = useState<TradeIdea | null>(null);
   const [ideaToEdit, setIdeaToEdit] = useState<TradeIdea | null>(null);
+  const [watchlistModalSymbol, setWatchlistModalSymbol] = useState<string | null>(null);
 
   const { data: rawIdeas = [], isLoading, isError, refetch } = useTradeIdeas({
     type: filterType,
@@ -669,6 +672,13 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
         onClose={() => setIsOptionsAgentModalOpen(false)}
         onNavigateToResearch={onNavigateToResearch}
       />
+
+      {/* Add To Watchlist Modal */}
+      <AddToWatchlistModal
+        isOpen={Boolean(watchlistModalSymbol)}
+        onClose={() => setWatchlistModalSymbol(null)}
+        symbol={watchlistModalSymbol || ''}
+      />
     </div>
   );
 
@@ -929,6 +939,17 @@ export function IdeasPage({ onNavigateToResearch }: IdeasPageProps) {
                       title="Structure Trade with AI (Stocks, Options, Collars, Spreads)"
                     >
                       <Sparkles className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setWatchlistModalSymbol(idea.symbol);
+                      }}
+                      className="p-1 hover:bg-emerald-500/20 rounded text-emerald-400 hover:text-emerald-300 transition-colors"
+                      title={`Save $${idea.symbol} directly to a Watchlist`}
+                    >
+                      <FolderPlus className="w-3.5 h-3.5" />
                     </button>
                     <button
                       type="button"

@@ -4,6 +4,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { PriceAlertModal } from '../components/PriceAlertModal';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as alertService from '../services/alertService';
+import * as watchlistService from '../services/watchlistService';
 
 // Mock alertService
 vi.mock('../services/alertService', async () => {
@@ -14,6 +15,17 @@ vi.mock('../services/alertService', async () => {
     useCreateAlert: vi.fn(),
     useUpdateAlert: vi.fn(),
     useDeleteAlert: vi.fn(),
+  };
+});
+
+// Mock watchlistService
+vi.mock('../services/watchlistService', async () => {
+  const actual = await vi.importActual('../services/watchlistService');
+  return {
+    ...actual,
+    useWatchlists: vi.fn(),
+    useAddSymbolToWatchlist: vi.fn(),
+    useCreateWatchlist: vi.fn(),
   };
 });
 
@@ -98,7 +110,41 @@ describe('PriceAlertModal - Existing Alerts for Stock View', () => {
       mutateAsync: mockDeleteMutateAsync,
       isPending: false,
     } as any);
+
+    vi.mocked(watchlistService.useWatchlists).mockReturnValue({
+      data: [
+        {
+          id: 'wl-1',
+          name: 'Tech Growth',
+          isDefault: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          items: [{ id: 'item-1', watchlistId: 'wl-1', symbol: 'NVDA', addedAt: new Date().toISOString() }],
+        },
+        {
+          id: 'wl-2',
+          name: 'Dividends',
+          isDefault: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          items: [],
+        },
+      ],
+      isLoading: false,
+    } as any);
+
+    vi.mocked(watchlistService.useAddSymbolToWatchlist).mockReturnValue({
+      mutateAsync: mockAddSymbolMutateAsync,
+      isPending: false,
+    } as any);
+
+    vi.mocked(watchlistService.useCreateWatchlist).mockReturnValue({
+      mutateAsync: vi.fn(),
+      isPending: false,
+    } as any);
   });
+
+  const mockAddSymbolMutateAsync = vi.fn().mockResolvedValue({ success: true });
 
   it('displays the existing alerts set for the selected stock with count, condition badges and notes', async () => {
     render(
@@ -122,8 +168,8 @@ describe('PriceAlertModal - Existing Alerts for Stock View', () => {
     expect(screen.getByText(/≤ \$110\.00/i)).toBeInTheDocument();
 
     // Check notes
-    expect(screen.getByText(/"Breakout above resistance"/i)).toBeInTheDocument();
-    expect(screen.getByText(/"Support level stop watch"/i)).toBeInTheDocument();
+    expect(screen.getByText(/"Breakout above resistance"/)).toBeInTheDocument();
+    expect(screen.getByText(/"Support level stop watch"/)).toBeInTheDocument();
 
     // Ensure TSLA alert is not in this stock list
     expect(screen.queryByText(/Tesla swing/i)).not.toBeInTheDocument();
@@ -137,6 +183,7 @@ describe('PriceAlertModal - Existing Alerts for Stock View', () => {
           onOpenChange={vi.fn()}
           initialSymbol="NVDA"
           initialPrice={120.0}
+          initialStockName="NVIDIA Corporation"
         />
       </QueryClientProvider>
     );
@@ -193,6 +240,64 @@ describe('PriceAlertModal - Existing Alerts for Stock View', () => {
 
     await waitFor(() => {
       expect(mockDeleteMutateAsync).toHaveBeenCalledWith('alert-1');
+    });
+  });
+
+  it('renders Add to Watchlist option in PriceAlertModal with target watchlist selection', () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PriceAlertModal
+          open={true}
+          onOpenChange={vi.fn()}
+          initialSymbol="AAPL"
+          initialPrice={220.0}
+        />
+      </QueryClientProvider>
+    );
+
+    // Check Add to Watchlist section
+    expect(screen.getByText(/Add to Watchlist/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/select target watchlist/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /add now/i })).toBeInTheDocument();
+  });
+
+  it('displays Already in Watchlist when stock is present in target watchlist', () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PriceAlertModal
+          open={true}
+          onOpenChange={vi.fn()}
+          initialSymbol="NVDA"
+          initialPrice={120.0}
+        />
+      </QueryClientProvider>
+    );
+
+    expect(screen.getByText(/Already in Watchlist/i)).toBeInTheDocument();
+    expect(screen.getByText(/Currently in:/i)).toBeInTheDocument();
+    expect(screen.getByText('Tech Growth')).toBeInTheDocument();
+  });
+
+  it('triggers addSymbolToWatchlist when clicking Add Now', async () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PriceAlertModal
+          open={true}
+          onOpenChange={vi.fn()}
+          initialSymbol="AAPL"
+          initialPrice={220.0}
+        />
+      </QueryClientProvider>
+    );
+
+    const addNowButton = screen.getByRole('button', { name: /add now/i });
+    fireEvent.click(addNowButton);
+
+    await waitFor(() => {
+      expect(mockAddSymbolMutateAsync).toHaveBeenCalledWith({
+        watchlistId: 'wl-1',
+        symbol: 'AAPL',
+      });
     });
   });
 });

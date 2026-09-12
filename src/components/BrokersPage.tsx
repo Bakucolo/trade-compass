@@ -1,7 +1,7 @@
 
 import { useEffect, useState, useMemo, useRef } from 'react';
 import { useIBKRStatus, useIBKRPortfolio } from '../services/ibkr';
-import { useTastytradePositions } from '../services/tastytrade';
+import { useTastytradePositions, useTastytradeStatus } from '../services/tastytrade';
 import { useTrading212Status, useTrading212Positions } from '../services/trading212';
 import { usePortfolioBalances } from '../services/portfolioBalanceService';
 import { marketDataService, StockQuote } from '../services/marketData';
@@ -53,11 +53,13 @@ export function BrokersPage({ onNavigateToResearch, onNavigateToGraphs }: Broker
   // --- IBKR State ---
   const { data: ibStatus } = useIBKRStatus();
   const { data: ibPortfolio, isLoading: isIBLoading } = useIBKRPortfolio();
-  const isIBConnected = ibStatus?.connected ?? false;
+  const isIBConnected = Boolean(ibStatus?.connected || balancesData?.brokers?.ibkr?.status === 'connected');
 
   const { data: tastyPositions, isLoading: isTastyLoading } = useTastytradePositions();
+  const { data: tastyStatus } = useTastytradeStatus();
+  const isTastyConnected = Boolean(tastyStatus?.connected || balancesData?.brokers?.tastytrade?.status === 'connected' || balancesData?.brokers?.tastytrade?.status === 'active');
   const { data: t212Status, isLoading: isT212Loading } = useTrading212Status();
-  const isT212Connected = t212Status?.connected || balancesData?.brokers?.trading212?.status === 'connected' || false;
+  const isT212Connected = Boolean(t212Status?.connected || balancesData?.brokers?.trading212?.status === 'connected');
 
   // --- Aggregation State ---
   // --- Aggregation State ---
@@ -495,10 +497,10 @@ export function BrokersPage({ onNavigateToResearch, onNavigateToGraphs }: Broker
             variant="default"
             size="sm"
             onClick={() => setIsValuationModalOpen(true)}
-            className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold text-xs shadow-md gap-1.5"
+            className="bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white font-semibold text-xs shadow-md gap-1.5"
           >
             <Scale className="w-3.5 h-3.5" />
-            AI Valuation Agent
+            <span>Portfolio Valuation & Alerts</span>
           </Button>
 
           <Button
@@ -563,7 +565,7 @@ export function BrokersPage({ onNavigateToResearch, onNavigateToGraphs }: Broker
               buyingPower={balancesData?.total?.buyingPower ?? totals.buyingPower}
               connectedSources={{
                 ibkr: isIBConnected,
-                tastytrade: balancesData?.brokers?.tastytrade?.status === 'connected' || balancesData?.brokers?.tastytrade?.status === 'active' || true,
+                tastytrade: isTastyConnected,
                 trading212: isT212Connected
               }}
               isPrivacyMode={isPrivacyMode}

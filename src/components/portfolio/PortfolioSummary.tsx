@@ -33,6 +33,7 @@ import { BuyingPowerAnalyserModal } from "./BuyingPowerAnalyserModal";
 import { DualCurrencyComparisonCard } from "./DualCurrencyComparisonCard";
 import { UnifiedPosition } from "./types";
 import { calculatePortfolioTheta } from "@/utils/greeksUtils";
+import { ThetaBreakdownModal } from "@/components/dashboard/ThetaBreakdownModal";
 
 interface PortfolioSummaryProps {
   netLiquidValue: number;
@@ -83,6 +84,7 @@ export function PortfolioSummary({
   const [isCurrencyBreakdownOpen, setIsCurrencyBreakdownOpen] = useState(true);
   const [selectedCurrencyForModal, setSelectedCurrencyForModal] = useState<string | null>(null);
   const [isBuyingPowerModalOpen, setIsBuyingPowerModalOpen] = useState(false);
+  const [isThetaModalOpen, setIsThetaModalOpen] = useState(false);
 
   const isPositiveDay = dailyPL >= 0;
   const isPositiveTotal = unrealizedPL >= 0;
@@ -356,14 +358,16 @@ export function PortfolioSummary({
 
         {/* 4. Overall Portfolio Theta & Time Decay */}
         <Card
+          onClick={() => setIsThetaModalOpen(true)}
           className={cn(
-            "glass-card p-5 relative overflow-hidden border-l-4 transition-all",
+            "glass-card p-5 relative overflow-hidden border-l-4 transition-all cursor-pointer group active:scale-[0.99]",
             portfolioTheta.totalDailyTheta > 0
               ? "border-l-purple-500 hover:border-purple-500/80 shadow-purple-500/10"
               : portfolioTheta.totalDailyTheta < 0
               ? "border-l-amber-500 hover:border-amber-500/80"
               : "border-l-slate-600 hover:border-slate-500"
           )}
+          title="Click to view which positions provide this Theta"
         >
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
@@ -1271,6 +1275,15 @@ export function PortfolioSummary({
       <BuyingPowerAnalyserModal
         isOpen={isBuyingPowerModalOpen}
         onClose={() => setIsBuyingPowerModalOpen(false)}
+      />
+
+      {/* Portfolio Theta Breakdown Modal */}
+      <ThetaBreakdownModal
+        isOpen={isThetaModalOpen}
+        onClose={() => setIsThetaModalOpen(false)}
+        positions={positions || []}
+        netLiq={totalNet}
+        onNavigateToResearch={onNavigateToResearch}
       />
     </div>
   );

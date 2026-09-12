@@ -887,20 +887,58 @@ export async function sendTelegramMessage(
   };
 }
 
+export interface SendTelegramAlertOptions {
+  chatId?: string | number;
+  messageThreadId?: number;
+  parseMode?: 'Markdown' | 'HTML';
+  prisma?: PrismaClient;
+  symbol?: string;
+  title?: string;
+  saveToAlertsFolder?: boolean;
+}
+
 /**
  * Convenient helper to dispatch specific alerts to the Alerts topic
+ * and automatically record them into the ThoughtLog 'Alerts' folder
  */
 export async function sendTelegramAlert(
   text: string,
-  extra?: { chatId?: string | number; messageThreadId?: number; parseMode?: 'Markdown' | 'HTML' }
+  extra?: SendTelegramAlertOptions
 ) {
-  return sendTelegramMessage({
+  const result = await sendTelegramMessage({
     text,
     isAlert: true,
     chatId: extra?.chatId,
     messageThreadId: extra?.messageThreadId,
     parseMode: extra?.parseMode,
   });
+
+  const shouldSave = extra?.saveToAlertsFolder ?? false;
+  const db = extra?.prisma || prisma;
+
+  if (shouldSave && db) {
+    try {
+      const cleanTitle = extra?.title || (extra?.symbol ? `🚨 Alert: ${extra.symbol}` : `🚨 Telegram Alert`);
+      await (db as any).thoughtLog.create({
+        data: {
+          title: cleanTitle,
+          content: text,
+          folder: 'Alerts',
+          tags: 'Telegram, Alert, Price Alert, Triggered',
+          symbols: extra?.symbol || null,
+          sentiment: 'CAUTION',
+          isPinned: false,
+          isFulfilled: false,
+          agentOutput: `🔔 **Telegram Alert Dispatched**\n\nSent to Telegram Alerts Topic.`,
+          agentActionType: 'ADD_CONTEXT',
+        },
+      });
+    } catch (saveErr: any) {
+      console.warn('[TelegramReport] Failed to save dispatched alert to Alerts folder:', saveErr.message);
+    }
+  }
+
+  return result;
 }
 
 /**

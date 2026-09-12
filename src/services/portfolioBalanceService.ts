@@ -169,7 +169,7 @@ export const usePortfolioBalances = () => {
   return useQuery({
     queryKey: ['portfolioBalances'],
     queryFn: fetchPortfolioBalances,
-    refetchInterval: 4000,
+    refetchInterval: 15000,
   });
 };
 

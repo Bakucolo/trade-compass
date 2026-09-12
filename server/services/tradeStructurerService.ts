@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 dotenv.config({ path: '.env.local' });
 import YahooFinance from 'yahoo-finance2';
 import { agentActivityTracker } from './agentActivityService';
+import { generateJsonCompletion } from './llmFallbackRouter';
 
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey', 'ripHistorical'] });
 
@@ -132,13 +133,11 @@ export async function generateTradeStructures(req: StructureTradeRequest): Promi
       ? Number((defaultEntry * 1.08).toFixed(2))
       : Number((defaultEntry * 0.95).toFixed(2));
 
-    // Try AI generation via OpenRouter if key is available
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    // Try AI generation via Multi-Tier Fallback Router (OpenRouter -> Gemini -> Groq)
     let aiApproaches: StructuredTradeApproach[] | null = null;
 
-    if (apiKey) {
-      try {
-        const prompt = `You are an elite quantitative derivatives strategist and execution trader.
+    try {
+      const prompt = `You are an elite quantitative derivatives strategist and execution trader.
 Symbol: ${symbol} (${companyName})
 Current Market Price: $${currentPrice.toFixed(2)}
 52-Week Range: $${fiftyTwoWeekLow.toFixed(2)} - $${fiftyTwoWeekHigh.toFixed(2)}
@@ -186,35 +185,17 @@ Respond with ONLY valid JSON with this schema:
   ]
 }`;
 
-        const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://finance.internal',
-            'X-Title': 'Trade Structurer Agent',
-          },
-          body: JSON.stringify({
-            model: 'anthropic/claude-3.5-sonnet',
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0.2,
-            response_format: { type: 'json_object' },
-          }),
-        });
+      const aiRes = await generateJsonCompletion<any>({
+        userPrompt: prompt,
+        temperature: 0.2,
+        tag: `TradeStructurer-${symbol}`,
+      });
 
-        if (aiRes.ok) {
-          const aiJson = await aiRes.json();
-          const rawContent = aiJson.choices?.[0]?.message?.content;
-          if (rawContent) {
-            const parsed = JSON.parse(rawContent.replace(/```json/gi, '').replace(/```/g, '').trim());
-            if (Array.isArray(parsed.approaches) && parsed.approaches.length > 0) {
-              aiApproaches = parsed.approaches;
-            }
-          }
-        }
-      } catch (aiErr: any) {
-        console.warn(`[TradeStructurer] AI generation failed, using deterministic fallback: ${aiErr.message}`);
+      if (aiRes.data && Array.isArray(aiRes.data.approaches) && aiRes.data.approaches.length > 0) {
+        aiApproaches = aiRes.data.approaches;
       }
+    } catch (aiErr: any) {
+      console.warn(`[TradeStructurer] Fallback router exhausted (${aiErr.message}), using deterministic financial model.`);
     }
 
     // Deterministic fallback generator if AI is unavailable or missed specific approaches

@@ -85,7 +85,8 @@ export async function getPlannedTrades(filter?: { timeframe?: string; status?: s
 /**
  * Creates a new planned trade and assigns the next rank in queue
  */
-export async function createPlannedTrade(dto: CreatePlannedTradeDTO): Promise<PlannedTradeItem> {
+export async function createPlannedTrade(dto: CreatePlannedTradeDTO, customPrisma?: PrismaClient): Promise<PlannedTradeItem> {
+  const db = (customPrisma || prisma) as any;
   const cleanSym = dto.symbol.trim().toUpperCase();
   const cleanAction = (dto.action || 'BUY').trim().toUpperCase();
   const cleanTimeframe = (dto.timeframe || 'DAY').trim().toUpperCase();
@@ -96,14 +97,17 @@ export async function createPlannedTrade(dto: CreatePlannedTradeDTO): Promise<Pl
   // Find max rank to append at the end if rank is not provided
   let nextRank = dto.rank;
   if (nextRank === undefined || nextRank === null) {
-    const highestRankTrade = await (prisma as any).plannedTrade.findFirst({
-      orderBy: { rank: 'desc' },
-      select: { rank: true },
-    });
+    let highestRankTrade: any = null;
+    if (typeof db.plannedTrade?.findFirst === 'function') {
+      highestRankTrade = await db.plannedTrade.findFirst({
+        orderBy: { rank: 'desc' },
+        select: { rank: true },
+      });
+    }
     nextRank = (highestRankTrade?.rank || 0) + 1;
   }
 
-  const newTrade = await (prisma as any).plannedTrade.create({
+  const newTrade = await db.plannedTrade.create({
     data: {
       symbol: cleanSym,
       underlyingSymbol: dto.underlyingSymbol ? dto.underlyingSymbol.trim().toUpperCase() : cleanSym.match(/^[A-Z]+/)?.[0] || cleanSym,

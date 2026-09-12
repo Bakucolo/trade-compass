@@ -1,5 +1,6 @@
 import YahooFinance from 'yahoo-finance2';
 import { agentActivityTracker } from './agentActivityService';
+import { generateTextCompletion } from './llmFallbackRouter';
 
 const logToFile = (msg: string) => console.log(msg);
 
@@ -88,10 +89,12 @@ export function extractSymbolsFromText(text: string): string[] {
     'HOLD', 'FEEL', 'LOOK', 'SEEM', 'TAKE', 'MAKE', 'KNOW', 'CALL', 'PUTS', 'TRADE',
     'TRADES', 'IDEA', 'IDEAS', 'WATCH', 'PRICE', 'LEVEL', 'MONEY', 'RALLY',
 
-    // Financial / Tech Acronyms (not equities)
+    // Financial / Tech Acronyms & Trading Order terms (not equities)
     'PE', 'EPS', 'FCF', 'ROE', 'ROIC', 'ROA', 'EBITDA', 'EBIT', 'NAV', 'CAGR',
     'CPI', 'PPI', 'GDP', 'PMI', 'VIX', 'DXY', 'YTD', 'MTD', 'QOQ', 'YOY',
     'DTE', 'ATM', 'OTM', 'ITM', 'IVR', 'IV', 'HV', 'OI', 'VOL',
+    'SL', 'TP', 'PT', 'BTO', 'BTC', 'STC', 'STO', 'MKT', 'QTY', 'SHARES', 'CONTRACTS',
+    'ENTRY', 'EXIT', 'TARGET', 'LIMIT', 'SWING', 'WEEKLY', 'INTRADAY',
     'AI', 'SAAS', 'EV', 'GPU', 'CPU', 'SMR', 'CEO', 'CFO', 'CTO', 'COO', 'CIO',
     'IPO', 'LLC', 'INC', 'CORP', 'LTD', 'PDF', 'URL', 'API', 'APP', 'BOT', 'MSG', 'SMS',
     'LOG', 'NOTE', 'POST', 'TEXT', 'SYNC', 'EDIT', 'VIEW', 'CHART', 'GRAPH'
@@ -260,57 +263,16 @@ export async function runAgentOnThoughtLog(params: RunAgentOnThoughtParams): Pro
 
     let markdownOutput = '';
 
-    // 4. Query LLM via OpenRouter or Gemini
-    if (process.env.OPENROUTER_API_KEY) {
-      logToFile(`[ThoughtLogAgent] Querying OpenRouter for action: ${actionType}...`);
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'openai/gpt-4o-mini',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-        }),
+    // 4. Query LLM via Multi-Tier Fallback Router (OpenRouter -> Gemini -> Groq)
+    try {
+      logToFile(`[ThoughtLogAgent] Querying LLM via fallback router for action: ${actionType}...`);
+      markdownOutput = await generateTextCompletion({
+        systemPrompt,
+        userPrompt,
+        tag: `ThoughtLogAgent-${actionType}`,
       });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`OpenRouter API error (${response.status}): ${errText}`);
-      }
-
-      const data = await response.json();
-      markdownOutput = data.choices?.[0]?.message?.content || '';
-    } else if (process.env.GEMINI_API_KEY) {
-      logToFile(`[ThoughtLogAgent] Querying Gemini for action: ${actionType}...`);
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
-      const response = await fetch(geminiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }],
-            },
-          ],
-        }),
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Gemini API error (${response.status}): ${errText}`);
-      }
-
-      const data = await response.json();
-      markdownOutput = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    } else {
-      // Algorithmic Fallback when API keys are not yet configured
-      logToFile(`[ThoughtLogAgent] No LLM API key present, using structured financial heuristic template...`);
+    } catch (llmErr: any) {
+      logToFile(`[ThoughtLogAgent] Fallback cascade exhausted (${llmErr?.message || llmErr}), using structured financial heuristic template...`);
       markdownOutput = generateAlgorithmicThoughtAnalysis(params, detectedSymbols, marketData);
     }
 

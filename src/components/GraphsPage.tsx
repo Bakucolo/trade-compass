@@ -30,13 +30,22 @@ import {
   BellRing,
   BellPlus,
   ArrowRight,
-  Zap
+  Zap,
+  Activity,
+  ArrowUpRight,
+  ArrowDownRight,
+  Crosshair,
+  BrainCircuit
 } from 'lucide-react';
 import { Card } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Input } from './ui/input';
 import { TradingViewChart } from './graphs/TradingViewChart';
+import { TechnicalAnalysisModal } from './graphs/TechnicalAnalysisModal';
+import { ImpliedExpectationsModal } from './graphs/ImpliedExpectationsModal';
+import { useTechnicalAnalysis, getStageColor } from '@/services/technicalAnalysisService';
+import { useImpliedExpectations } from '@/services/impliedExpectationsService';
 import { useWatchlists, useWatchlistData, useAddSymbolToWatchlist } from '@/services/watchlistService';
 import { useIBKRPortfolio } from '@/services/ibkr';
 import { useTastytradePositions } from '@/services/tastytrade';
@@ -77,8 +86,16 @@ export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPagePr
     symbol: string;
     price: number;
     name?: string;
+    targetPrice?: number | string;
+    condition?: 'ABOVE' | 'BELOW';
+    notes?: string;
     editAlert?: PriceAlert | null;
   } | null>(null);
+
+  // Technical Analysis Modal State
+  const [isTechModalOpen, setIsTechModalOpen] = useState(false);
+  // Implied Expectations ("What's Priced In?") Modal State
+  const [isExpectationsModalOpen, setIsExpectationsModalOpen] = useState(false);
 
   // Quick Custom Alert Inline State
   const [quickAlertPrice, setQuickAlertPrice] = useState<string>('');
@@ -123,6 +140,12 @@ export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPagePr
   const [selectedSymbol, setSelectedSymbol] = useState<string>(() => {
     return initialSymbol ? initialSymbol.toUpperCase() : 'AAPL';
   });
+
+  // Real-time Technical Analysis Query for selectedSymbol
+  const { data: techAnalysis } = useTechnicalAnalysis(selectedSymbol);
+
+  // Real-time Implied Expectations ("What's Priced In?") Query for selectedSymbol
+  const { data: impliedExpectations } = useImpliedExpectations(selectedSymbol);
 
   // Combined Portfolio Positions
   const portfolioItems = useMemo(() => {
@@ -338,13 +361,21 @@ export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPagePr
     sym: string,
     price?: number,
     name?: string,
-    editAlert?: PriceAlert | null
+    options?: {
+      targetPrice?: number | string;
+      condition?: 'ABOVE' | 'BELOW';
+      notes?: string;
+      editAlert?: PriceAlert | null;
+    }
   ) => {
     setPriceAlertModalStock({
       symbol: sym,
       price: price || 0,
       name,
-      editAlert: editAlert || null,
+      targetPrice: options?.targetPrice,
+      condition: options?.condition,
+      notes: options?.notes,
+      editAlert: options?.editAlert || null,
     });
     setIsPriceAlertModalOpen(true);
   };
@@ -530,6 +561,38 @@ export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPagePr
             {activeStockAlerts.length > 0 && (
               <Badge className="bg-amber-500/30 text-amber-200 border-amber-500/50 text-[9px] px-1.5 py-0 font-mono font-bold">
                 {activeStockAlerts.length}
+              </Badge>
+            )}
+          </Button>
+
+          {/* Technical Analysis Button */}
+          <Button
+            size="sm"
+            onClick={() => setIsTechModalOpen(true)}
+            className="h-9 px-3.5 gap-2 font-bold text-xs bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/35 transition-all cursor-pointer"
+            title={`Technical Analysis, S/R Levels & Market Phase for ${selectedSymbol}`}
+          >
+            <Activity className="w-3.5 h-3.5 text-cyan-200 animate-pulse" />
+            <span>Technical Analysis</span>
+            {techAnalysis && (
+              <Badge className="bg-white/20 text-white text-[9px] px-1.5 py-0 font-bold border-none hidden md:inline-flex">
+                {techAnalysis.marketPhase.stageName.split(':')[0]}
+              </Badge>
+            )}
+          </Button>
+
+          {/* "What's Priced In?" Implied Expectations Agent Button */}
+          <Button
+            size="sm"
+            onClick={() => setIsExpectationsModalOpen(true)}
+            className="h-9 px-3.5 gap-2 font-bold text-xs bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white shadow-lg shadow-indigo-500/20 hover:shadow-purple-500/35 transition-all cursor-pointer"
+            title={`Analyze what growth, margins & valuation the market is implying for ${selectedSymbol}`}
+          >
+            <BrainCircuit className="w-3.5 h-3.5 text-indigo-200 animate-pulse" />
+            <span>What's Priced In?</span>
+            {impliedExpectations && (
+              <Badge className="bg-white/20 text-white text-[9px] px-1.5 py-0 font-bold border-none hidden md:inline-flex">
+                +{impliedExpectations.impliedGrowth.horizon5YGrowthPct}%
               </Badge>
             )}
           </Button>
@@ -958,6 +1021,83 @@ export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPagePr
             </div>
           </div>
 
+          {/* ================= IN-GRAPH KEY LEVELS & STAGE HUD ================= */}
+          {techAnalysis && (
+            <div className="glass-card rounded-2xl p-2.5 px-4 border border-cyan-500/30 bg-slate-950/85 backdrop-blur-xl flex flex-wrap items-center justify-between gap-2 shadow-lg">
+              <div className="flex items-center gap-2 flex-wrap text-xs">
+                {/* Stage Badge */}
+                <div className="flex items-center gap-1.5">
+                  <Badge className={cn("text-[11px] font-bold px-2 py-0.5 border shadow-sm", getStageColor(techAnalysis.marketPhase.stage).badge)}>
+                    ⚡ {techAnalysis.marketPhase.stageName}
+                  </Badge>
+                  <span className="text-[11px] text-cyan-300 font-medium hidden sm:inline">
+                    ({techAnalysis.marketPhase.subPhaseName})
+                  </span>
+                </div>
+
+                <span className="text-muted-foreground/40 hidden md:inline">•</span>
+
+                {/* Immediate Resistance */}
+                {techAnalysis.immediateResistance && (
+                  <button
+                    onClick={() => setIsTechModalOpen(true)}
+                    className="flex items-center gap-1 font-mono text-[11px] bg-rose-950/40 hover:bg-rose-950/60 border border-rose-500/30 px-2 py-0.5 rounded-lg text-rose-300 transition-all cursor-pointer"
+                    title="Click to view all Resistance levels"
+                  >
+                    <ArrowUpRight className="w-3 h-3 text-rose-400" />
+                    <span>Res: <strong>${techAnalysis.immediateResistance.price.toFixed(2)}</strong> (+{techAnalysis.immediateResistance.distancePercent}%)</span>
+                  </button>
+                )}
+
+                {/* Immediate Support */}
+                {techAnalysis.immediateSupport && (
+                  <button
+                    onClick={() => setIsTechModalOpen(true)}
+                    className="flex items-center gap-1 font-mono text-[11px] bg-emerald-950/40 hover:bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-lg text-emerald-300 transition-all cursor-pointer"
+                    title="Click to view all Support levels"
+                  >
+                    <ArrowDownRight className="w-3 h-3 text-emerald-400" />
+                    <span>Supp: <strong>${techAnalysis.immediateSupport.price.toFixed(2)}</strong> ({techAnalysis.immediateSupport.distancePercent}%)</span>
+                  </button>
+                )}
+
+                <span className="text-muted-foreground/40 hidden lg:inline">•</span>
+
+                {/* Dynamic 20 EMA */}
+                <span className="font-mono text-[11px] text-muted-foreground hidden lg:inline">
+                  20 EMA: <strong className="text-white">${techAnalysis.movingAverages.dma20.toFixed(2)}</strong>
+                </span>
+
+                {/* RSI */}
+                <span className="font-mono text-[11px] text-muted-foreground hidden xl:inline">
+                  RSI: <strong className={techAnalysis.oscillators.rsi14 >= 70 ? 'text-rose-400' : techAnalysis.oscillators.rsi14 <= 30 ? 'text-emerald-400' : 'text-cyan-300'}>{techAnalysis.oscillators.rsi14}</strong>
+                </span>
+
+                {/* Implied Expectations HUD Chip */}
+                {impliedExpectations && (
+                  <button
+                    onClick={() => setIsExpectationsModalOpen(true)}
+                    className="flex items-center gap-1.5 font-mono text-[11px] bg-indigo-950/40 hover:bg-indigo-950/60 border border-indigo-500/30 px-2 py-0.5 rounded-lg text-indigo-300 transition-all cursor-pointer"
+                    title="What's Priced In? Reverse Valuation"
+                  >
+                    <BrainCircuit className="w-3 h-3 text-indigo-400" />
+                    <span>Priced: <strong className="text-white">+{impliedExpectations.impliedGrowth.horizon5YGrowthPct}%</strong>/yr</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Action Button to Open Modal */}
+              <Button
+                size="sm"
+                onClick={() => setIsTechModalOpen(true)}
+                className="h-7 px-3 text-xs font-bold bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white shadow-sm gap-1.5 cursor-pointer ml-auto"
+              >
+                <Activity className="w-3.5 h-3.5 text-cyan-200 animate-pulse" />
+                <span>Technical Breakdown</span>
+              </Button>
+            </div>
+          )}
+
           <TradingViewChart
             symbol={selectedSymbol}
             theme="dark"
@@ -983,7 +1123,33 @@ export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPagePr
         initialSymbol={priceAlertModalStock?.symbol || selectedSymbol}
         initialPrice={priceAlertModalStock?.price || activeItemDetails?.price || 0}
         initialStockName={priceAlertModalStock?.name || activeItemDetails?.name}
+        initialTargetPrice={priceAlertModalStock?.targetPrice}
+        initialCondition={priceAlertModalStock?.condition}
+        initialNotes={priceAlertModalStock?.notes}
         editAlert={priceAlertModalStock?.editAlert}
+      />
+
+      {/* Technical Analysis Modal */}
+      <TechnicalAnalysisModal
+        isOpen={isTechModalOpen}
+        onClose={() => setIsTechModalOpen(false)}
+        symbol={selectedSymbol}
+        onSetAlert={(targetPrice, condition, noteLabel) => {
+          openPriceAlertModal(selectedSymbol, activeItemDetails?.price, activeItemDetails?.name, {
+            targetPrice,
+            condition,
+            notes: noteLabel,
+          });
+        }}
+        onNavigateToResearch={onNavigateToResearch}
+      />
+
+      {/* Implied Expectations ("What's Priced In?") Modal */}
+      <ImpliedExpectationsModal
+        isOpen={isExpectationsModalOpen}
+        onClose={() => setIsExpectationsModalOpen(false)}
+        symbol={selectedSymbol}
+        currentPrice={activeItemDetails?.price}
       />
 
       {/* Add To Watchlist Modal */}

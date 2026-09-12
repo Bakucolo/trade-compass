@@ -1,11 +1,12 @@
 import { useState, useMemo } from 'react';
 import { usePortfolioBalances } from '@/services/portfolioBalanceService';
 import { useIBKRPortfolio, useIBKRStatus } from '@/services/ibkr';
-import { useTastytradePositions } from '@/services/tastytrade';
+import { useTastytradePositions, useTastytradeStatus } from '@/services/tastytrade';
 import { useTrading212Status, useTrading212Positions } from '@/services/trading212';
 import { useTradeIdeas } from '@/services/ideaService';
 import { useAgentActivities } from '@/services/agentActivityService';
 import { ExecutiveStatsRibbon } from './dashboard/ExecutiveStatsRibbon';
+import { ThetaBreakdownModal } from './dashboard/ThetaBreakdownModal';
 import { YesterdayRecapCard } from './dashboard/YesterdayRecapCard';
 import { DashboardMoversCard } from './dashboard/DashboardMoversCard';
 import { DashboardAlertsCard } from './dashboard/DashboardAlertsCard';
@@ -66,6 +67,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
   const [advisorPosition, setAdvisorPosition] = useState<any>(null);
   const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
   const [isBalancesOpen, setIsBalancesOpen] = useState(false);
+  const [isThetaModalOpen, setIsThetaModalOpen] = useState(false);
   const sendReportMutation = useSendTelegramReport();
 
   // Queries
@@ -74,6 +76,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
   const { data: tastyPositions = [], isLoading: isTastyLoading } = useTastytradePositions();
   const { data: t212Positions = [], isLoading: isT212Loading } = useTrading212Positions();
   const { data: ibStatus } = useIBKRStatus();
+  const { data: tastyStatus } = useTastytradeStatus();
   const { data: t212Status } = useTrading212Status();
   const { data: agentData } = useAgentActivities(5);
 
@@ -97,7 +100,9 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
     activeSymbols.length > 0 ? activeSymbols : undefined
   );
 
-  const isT212Connected = t212Status?.connected || balancesData?.brokers?.trading212?.status === 'connected' || false;
+  const isIBConnected = Boolean(ibStatus?.connected || balancesData?.brokers?.ibkr?.status === 'connected');
+  const isTastyConnected = Boolean(tastyStatus?.connected || balancesData?.brokers?.tastytrade?.status === 'connected');
+  const isT212Connected = Boolean(t212Status?.connected || balancesData?.brokers?.trading212?.status === 'connected');
 
   const togglePrivacy = () => {
     setIsPrivacyMode((prev) => {
@@ -385,7 +390,6 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
     }).length;
   }, [allPositions]);
 
-  const isIBConnected = ibStatus?.connected ?? true;
   const hasRunningAgent = agentData?.activities?.some((a) => a.status === 'RUNNING');
 
   const goToTab = (tab: string) => {
@@ -445,17 +449,17 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
 
           {/* Broker Connectivity Badges */}
           <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 bg-card/60 rounded-xl border border-border/60 text-[11px] font-mono">
-            <span className="flex items-center gap-1">
+            <span className="flex items-center gap-1" title={`IBKR: ${isIBConnected ? 'Connected' : 'Disconnected'}`}>
               <span className={cn('w-2 h-2 rounded-full', isIBConnected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400')} />
               IBKR
             </span>
             <span className="text-muted-foreground">•</span>
-            <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="flex items-center gap-1" title={`Tastytrade: ${isTastyConnected ? 'Connected' : 'Disconnected'}`}>
+              <span className={cn('w-2 h-2 rounded-full', isTastyConnected ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400')} />
               Tastytrade
             </span>
             <span className="text-muted-foreground">•</span>
-            <span className="flex items-center gap-1">
+            <span className="flex items-center gap-1" title={`Trading 212: ${isT212Connected ? 'Connected' : 'Disconnected'}`}>
               <span className={cn('w-2 h-2 rounded-full', isT212Connected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-400')} />
               Trading 212
             </span>
@@ -582,6 +586,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
             positions={allPositions}
             isPrivacyMode={isPrivacyMode}
             onTogglePrivacy={togglePrivacy}
+            onOpenThetaBreakdown={() => setIsThetaModalOpen(true)}
           />
         </div>
       ) : (
@@ -595,9 +600,16 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
               </span>
             )}
             {portfolioTheta.totalOptionsCount > 0 && !isPrivacyMode && (
-              <span className={cn("font-mono font-bold hidden sm:inline", portfolioTheta.totalDailyTheta >= 0 ? "text-emerald-400" : "text-amber-400")}>
-                • Theta: {portfolioTheta.totalDailyTheta >= 0 ? '+' : ''}${portfolioTheta.totalDailyTheta.toFixed(0)}/d
-              </span>
+              <button
+                type="button"
+                onClick={() => setIsThetaModalOpen(true)}
+                className="hover:underline cursor-pointer transition-transform active:scale-95 focus:outline-none"
+                title="Click to view option positions providing this Theta"
+              >
+                <span className={cn("font-mono font-bold hidden sm:inline", portfolioTheta.totalDailyTheta >= 0 ? "text-emerald-400" : "text-amber-400")}>
+                  • Theta: {portfolioTheta.totalDailyTheta >= 0 ? '+' : ''}${portfolioTheta.totalDailyTheta.toFixed(0)}/d
+                </span>
+              </button>
             )}
           </div>
           <Button
@@ -729,6 +741,19 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
             window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: sym }));
           }
         })}
+      />
+
+      {/* Portfolio Theta Breakdown Modal */}
+      <ThetaBreakdownModal
+        isOpen={isThetaModalOpen}
+        onClose={() => setIsThetaModalOpen(false)}
+        positions={allPositions}
+        netLiq={netLiq}
+        onNavigateToResearch={onNavigateToResearch}
+        onOpenAdvisorForPosition={(pos) => {
+          setAdvisorPosition(pos);
+          setIsAdvisorOpen(true);
+        }}
       />
     </div>
   );

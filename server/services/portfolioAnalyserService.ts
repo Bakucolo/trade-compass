@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { generateJsonCompletion } from './llmFallbackRouter';
 
 export interface PortfolioAuditInput {
   positions: any[];
@@ -214,58 +215,13 @@ Provide a rigorous, mathematically sound, institutional portfolio audit report.`
 
   logToFile(`Running AI Portfolio Analyser Agent on ${positionsCount} positions...`);
 
-  let rawAnalysis = '';
+  const llmRes = await generateJsonCompletion<any>({
+    systemPrompt,
+    userPrompt,
+    tag: 'PortfolioAnalyser',
+  });
 
-  if (process.env.OPENROUTER_API_KEY) {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "openai/gpt-4o-mini",
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ]
-      })
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`OpenRouter API error: ${response.status} ${errText}`);
-    }
-
-    const data = await response.json();
-    rawAnalysis = data.choices?.[0]?.message?.content || "";
-  } else if (process.env.GEMINI_API_KEY) {
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
-    const response = await fetch(geminiUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          { role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }
-        ],
-        generationConfig: { responseMimeType: "application/json" }
-      })
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Gemini API error: ${response.status} ${errText}`);
-    }
-
-    const data = await response.json();
-    rawAnalysis = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  } else {
-    throw new Error('Neither OPENROUTER_API_KEY nor GEMINI_API_KEY found in environment.');
-  }
-
-  const cleanJson = rawAnalysis.replace(/```json/gi, '').replace(/```/g, '').trim();
-  const parsed = JSON.parse(cleanJson);
+  const parsed = llmRes.data || {};
 
   return {
     title: parsed.title || "Portfolio Tactical Audit & Risk Assessment",

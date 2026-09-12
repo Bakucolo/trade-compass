@@ -1,0 +1,840 @@
+{
+  "records": {
+    "Z_27.5_PUT_20260821_10": {
+      "key": "Z_27.5_PUT_20260821_10",
+      "underlyingSymbol": "Z",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.149Z",
+      "dismissedAt": null
+    },
+    "Z_27.5_PUT_20260821_5": {
+      "key": "Z_27.5_PUT_20260821_5",
+      "underlyingSymbol": "Z",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.156Z",
+      "dismissedAt": null
+    },
+    "OUST_20_PUT_20260821_10": {
+      "key": "OUST_20_PUT_20260821_10",
+      "underlyingSymbol": "OUST",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.159Z",
+      "dismissedAt": null
+    },
+    "OUST_20_PUT_20260821_5": {
+      "key": "OUST_20_PUT_20260821_5",
+      "underlyingSymbol": "OUST",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.175Z",
+      "dismissedAt": null
+    },
+    "T_19_PUT_20260821_10": {
+      "key": "T_19_PUT_20260821_10",
+      "underlyingSymbol": "T",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.180Z",
+      "dismissedAt": null
+    },
+    "T_19_PUT_20260821_5": {
+      "key": "T_19_PUT_20260821_5",
+      "underlyingSymbol": "T",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.200Z",
+      "dismissedAt": null
+    },
+    "P_130_CALL_20260821_10": {
+      "key": "P_130_CALL_20260821_10",
+      "underlyingSymbol": "P",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.232Z",
+      "dismissedAt": null
+    },
+    "P_130_CALL_20260821_5": {
+      "key": "P_130_CALL_20260821_5",
+      "underlyingSymbol": "P",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.250Z",
+      "dismissedAt": null
+    },
+    "KVYO_15_PUT_20260821_10": {
+      "key": "KVYO_15_PUT_20260821_10",
+      "underlyingSymbol": "KVYO",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.256Z",
+      "dismissedAt": "2026-09-10T06:28:59.389Z"
+    },
+    "KVYO_15_PUT_20260821_5": {
+      "key": "KVYO_15_PUT_20260821_5",
+      "underlyingSymbol": "KVYO",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.259Z",
+      "dismissedAt": null
+    },
+    "ADEA_22.5_PUT_20260821_10": {
+      "key": "ADEA_22.5_PUT_20260821_10",
+      "underlyingSymbol": "ADEA",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.275Z",
+      "dismissedAt": null
+    },
+    "ADEA_22.5_PUT_20260821_5": {
+      "key": "ADEA_22.5_PUT_20260821_5",
+      "underlyingSymbol": "ADEA",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.279Z",
+      "dismissedAt": null
+    },
+    "RDW_24_CALL_20260220_10": {
+      "key": "RDW_24_CALL_20260220_10",
+      "underlyingSymbol": "RDW",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.293Z",
+      "dismissedAt": null
+    },
+    "RDW_24_CALL_20260220_5": {
+      "key": "RDW_24_CALL_20260220_5",
+      "underlyingSymbol": "RDW",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.298Z",
+      "dismissedAt": null
+    },
+    "CDE_35_CALL_20260220_10": {
+      "key": "CDE_35_CALL_20260220_10",
+      "underlyingSymbol": "CDE",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.301Z",
+      "dismissedAt": null
+    },
+    "CDE_35_CALL_20260220_5": {
+      "key": "CDE_35_CALL_20260220_5",
+      "underlyingSymbol": "CDE",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.317Z",
+      "dismissedAt": null
+    },
+    "SATL_7.5_CALL_20260515_10": {
+      "key": "SATL_7.5_CALL_20260515_10",
+      "underlyingSymbol": "SATL",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.321Z",
+      "dismissedAt": null
+    },
+    "SATL_7.5_CALL_20260515_5": {
+      "key": "SATL_7.5_CALL_20260515_5",
+      "underlyingSymbol": "SATL",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.339Z",
+      "dismissedAt": null
+    },
+    "RDW_27_CALL_20260220_10": {
+      "key": "RDW_27_CALL_20260220_10",
+      "underlyingSymbol": "RDW",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.343Z",
+      "dismissedAt": null
+    },
+    "RDW_27_CALL_20260220_5": {
+      "key": "RDW_27_CALL_20260220_5",
+      "underlyingSymbol": "RDW",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.347Z",
+      "dismissedAt": null
+    },
+    "RKT_27_CALL_20260515_10": {
+      "key": "RKT_27_CALL_20260515_10",
+      "underlyingSymbol": "RKT",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.366Z",
+      "dismissedAt": null
+    },
+    "RKT_27_CALL_20260515_5": {
+      "key": "RKT_27_CALL_20260515_5",
+      "underlyingSymbol": "RKT",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.370Z",
+      "dismissedAt": null
+    },
+    "PYPL_45_PUT_2027-01-15T21:00:00.000+00:00_10": {
+      "key": "PYPL_45_PUT_2027-01-15T21:00:00.000+00:00_10",
+      "underlyingSymbol": "PYPL",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.374Z",
+      "dismissedAt": null
+    },
+    "PYPL_45_PUT_2027-01-15T21:00:00.000+00:00_5": {
+      "key": "PYPL_45_PUT_2027-01-15T21:00:00.000+00:00_5",
+      "underlyingSymbol": "PYPL",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.391Z",
+      "dismissedAt": null
+    },
+    "UUUU_37_CALL_2026-11-20T21:00:00.000+00:00_10": {
+      "key": "UUUU_37_CALL_2026-11-20T21:00:00.000+00:00_10",
+      "underlyingSymbol": "UUUU",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.396Z",
+      "dismissedAt": null
+    },
+    "UUUU_37_CALL_2026-11-20T21:00:00.000+00:00_5": {
+      "key": "UUUU_37_CALL_2026-11-20T21:00:00.000+00:00_5",
+      "underlyingSymbol": "UUUU",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.416Z",
+      "dismissedAt": null
+    },
+    "CDE_30_CALL_2026-09-18T20:00:00.000+00:00_10": {
+      "key": "CDE_30_CALL_2026-09-18T20:00:00.000+00:00_10",
+      "underlyingSymbol": "CDE",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.434Z",
+      "dismissedAt": null
+    },
+    "CDE_30_CALL_2026-09-18T20:00:00.000+00:00_5": {
+      "key": "CDE_30_CALL_2026-09-18T20:00:00.000+00:00_5",
+      "underlyingSymbol": "CDE",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.439Z",
+      "dismissedAt": null
+    },
+    "DLO_9.47_PUT_2027-01-15T21:00:00.000+00:00_10": {
+      "key": "DLO_9.47_PUT_2027-01-15T21:00:00.000+00:00_10",
+      "underlyingSymbol": "DLO",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.442Z",
+      "dismissedAt": null
+    },
+    "DLO_9.47_PUT_2027-01-15T21:00:00.000+00:00_5": {
+      "key": "DLO_9.47_PUT_2027-01-15T21:00:00.000+00:00_5",
+      "underlyingSymbol": "DLO",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.463Z",
+      "dismissedAt": null
+    },
+    "VAL_47.5_PUT_2026-12-18T21:00:00.000+00:00_10": {
+      "key": "VAL_47.5_PUT_2026-12-18T21:00:00.000+00:00_10",
+      "underlyingSymbol": "VAL",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.488Z",
+      "dismissedAt": null
+    },
+    "VAL_47.5_PUT_2026-12-18T21:00:00.000+00:00_5": {
+      "key": "VAL_47.5_PUT_2026-12-18T21:00:00.000+00:00_5",
+      "underlyingSymbol": "VAL",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.505Z",
+      "dismissedAt": null
+    },
+    "OSCR_15_PUT_2027-01-15T21:00:00.000+00:00_10": {
+      "key": "OSCR_15_PUT_2027-01-15T21:00:00.000+00:00_10",
+      "underlyingSymbol": "OSCR",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.529Z",
+      "dismissedAt": null
+    },
+    "OSCR_15_PUT_2027-01-15T21:00:00.000+00:00_5": {
+      "key": "OSCR_15_PUT_2027-01-15T21:00:00.000+00:00_5",
+      "underlyingSymbol": "OSCR",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.533Z",
+      "dismissedAt": null
+    },
+    "NWL_5_PUT_2027-01-15T21:00:00.000+00:00_10": {
+      "key": "NWL_5_PUT_2027-01-15T21:00:00.000+00:00_10",
+      "underlyingSymbol": "NWL",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.558Z",
+      "dismissedAt": null
+    },
+    "NWL_5_PUT_2027-01-15T21:00:00.000+00:00_5": {
+      "key": "NWL_5_PUT_2027-01-15T21:00:00.000+00:00_5",
+      "underlyingSymbol": "NWL",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.579Z",
+      "dismissedAt": null
+    },
+    "NU_12_PUT_2027-01-15T21:00:00.000+00:00_10": {
+      "key": "NU_12_PUT_2027-01-15T21:00:00.000+00:00_10",
+      "underlyingSymbol": "NU",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.582Z",
+      "dismissedAt": null
+    },
+    "NU_12_PUT_2027-01-15T21:00:00.000+00:00_5": {
+      "key": "NU_12_PUT_2027-01-15T21:00:00.000+00:00_5",
+      "underlyingSymbol": "NU",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.585Z",
+      "dismissedAt": null
+    },
+    "OXY_52.5_PUT_2026-09-18T20:00:00.000Z_10": {
+      "key": "OXY_52.5_PUT_2026-09-18T20:00:00.000Z_10",
+      "underlyingSymbol": "OXY",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.601Z",
+      "dismissedAt": null
+    },
+    "OXY_52.5_PUT_2026-09-18T20:00:00.000Z_5": {
+      "key": "OXY_52.5_PUT_2026-09-18T20:00:00.000Z_5",
+      "underlyingSymbol": "OXY",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.606Z",
+      "dismissedAt": null
+    },
+    "HIMS_50_CALL_2026-09-18T20:00:00.000Z_10": {
+      "key": "HIMS_50_CALL_2026-09-18T20:00:00.000Z_10",
+      "underlyingSymbol": "HIMS",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.651Z",
+      "dismissedAt": null
+    },
+    "HIMS_50_CALL_2026-09-18T20:00:00.000Z_5": {
+      "key": "HIMS_50_CALL_2026-09-18T20:00:00.000Z_5",
+      "underlyingSymbol": "HIMS",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.672Z",
+      "dismissedAt": null
+    },
+    "OSCR_39_CALL_2026-09-18T20:00:00.000Z_10": {
+      "key": "OSCR_39_CALL_2026-09-18T20:00:00.000Z_10",
+      "underlyingSymbol": "OSCR",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.675Z",
+      "dismissedAt": null
+    },
+    "OSCR_39_CALL_2026-09-18T20:00:00.000Z_5": {
+      "key": "OSCR_39_CALL_2026-09-18T20:00:00.000Z_5",
+      "underlyingSymbol": "OSCR",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.681Z",
+      "dismissedAt": null
+    },
+    "GOOGL_315_PUT_2027-06-17T20:00:00.000Z_5": {
+      "key": "GOOGL_315_PUT_2027-06-17T20:00:00.000Z_5",
+      "underlyingSymbol": "GOOGL",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.701Z",
+      "dismissedAt": "2026-09-10T06:28:48.747Z"
+    },
+    "SLV_47_PUT_2027-01-15T21:00:00.000Z_10": {
+      "key": "SLV_47_PUT_2027-01-15T21:00:00.000Z_10",
+      "underlyingSymbol": "SLV",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.705Z",
+      "dismissedAt": null
+    },
+    "SLV_47_PUT_2027-01-15T21:00:00.000Z_5": {
+      "key": "SLV_47_PUT_2027-01-15T21:00:00.000Z_5",
+      "underlyingSymbol": "SLV",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.723Z",
+      "dismissedAt": null
+    },
+    "RBRK_60_PUT_2026-09-18T20:00:00.000Z_10": {
+      "key": "RBRK_60_PUT_2026-09-18T20:00:00.000Z_10",
+      "underlyingSymbol": "RBRK",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.749Z",
+      "dismissedAt": null
+    },
+    "RBRK_60_PUT_2026-09-18T20:00:00.000Z_5": {
+      "key": "RBRK_60_PUT_2026-09-18T20:00:00.000Z_5",
+      "underlyingSymbol": "RBRK",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.753Z",
+      "dismissedAt": null
+    },
+    "GOOGL_430_CALL_2027-12-17T21:00:00.000Z_10": {
+      "key": "GOOGL_430_CALL_2027-12-17T21:00:00.000Z_10",
+      "underlyingSymbol": "GOOGL",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.780Z",
+      "dismissedAt": null
+    },
+    "GOOGL_430_CALL_2027-12-17T21:00:00.000Z_5": {
+      "key": "GOOGL_430_CALL_2027-12-17T21:00:00.000Z_5",
+      "underlyingSymbol": "GOOGL",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.798Z",
+      "dismissedAt": null
+    },
+    "SATL_12_CALL_20261120_10": {
+      "key": "SATL_12_CALL_20261120_10",
+      "underlyingSymbol": "SATL",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.843Z",
+      "dismissedAt": null
+    },
+    "SATL_12_CALL_20261120_5": {
+      "key": "SATL_12_CALL_20261120_5",
+      "underlyingSymbol": "SATL",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.848Z",
+      "dismissedAt": null
+    },
+    "RKLB_60_PUT_20260918_5": {
+      "key": "RKLB_60_PUT_20260918_5",
+      "underlyingSymbol": "RKLB",
+      "strikePrice": 60,
+      "optionType": "PUT",
+      "expiryDate": "20260918",
+      "pct": 5,
+      "provisionedAt": "2026-09-09T05:49:04.790Z",
+      "dismissedAt": "2026-09-12T04:29:23.057Z"
+    },
+    "PLTR_125_PUT_20260918_10": {
+      "key": "PLTR_125_PUT_20260918_10",
+      "underlyingSymbol": "PLTR",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-26T08:10:53.871Z",
+      "dismissedAt": null
+    },
+    "PLTR_125_PUT_20260918_5": {
+      "key": "PLTR_125_PUT_20260918_5",
+      "underlyingSymbol": "PLTR",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-26T08:10:53.888Z",
+      "dismissedAt": null
+    },
+    "APP_250_PUT_20261016_10": {
+      "key": "APP_250_PUT_20261016_10",
+      "underlyingSymbol": "APP",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-08-31T05:57:29.844Z",
+      "dismissedAt": null
+    },
+    "APP_250_PUT_20261016_5": {
+      "key": "APP_250_PUT_20261016_5",
+      "underlyingSymbol": "APP",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-08-31T05:57:29.850Z",
+      "dismissedAt": null
+    },
+    "ADUR_12.5_PUT_20261016_5": {
+      "key": "ADUR_12.5_PUT_20261016_5",
+      "underlyingSymbol": "ADUR",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-09-01T00:27:00.445Z",
+      "dismissedAt": "2026-09-12T04:29:23.052Z"
+    },
+    "PATH_23_CALL_2026-11-20T21:00:00.000Z_10": {
+      "key": "PATH_23_CALL_2026-11-20T21:00:00.000Z_10",
+      "underlyingSymbol": "PATH",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-09-03T09:49:01.627Z",
+      "dismissedAt": null
+    },
+    "PATH_23_CALL_2026-11-20T21:00:00.000Z_5": {
+      "key": "PATH_23_CALL_2026-11-20T21:00:00.000Z_5",
+      "underlyingSymbol": "PATH",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-09-03T09:49:01.634Z",
+      "dismissedAt": null
+    },
+    "ZIM_35_CALL_2026-12-18T21:00:00.000Z_10": {
+      "key": "ZIM_35_CALL_2026-12-18T21:00:00.000Z_10",
+      "underlyingSymbol": "ZIM",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-09-05T06:22:47.518Z",
+      "dismissedAt": null
+    },
+    "ZIM_35_CALL_2026-12-18T21:00:00.000Z_5": {
+      "key": "ZIM_35_CALL_2026-12-18T21:00:00.000Z_5",
+      "underlyingSymbol": "ZIM",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-09-05T06:22:47.542Z",
+      "dismissedAt": null
+    },
+    "ZETA_35_CALL_2026-10-16T20:00:00.000Z_10": {
+      "key": "ZETA_35_CALL_2026-10-16T20:00:00.000Z_10",
+      "underlyingSymbol": "ZETA",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-09-05T06:22:47.553Z",
+      "dismissedAt": null
+    },
+    "ZETA_35_CALL_2026-10-16T20:00:00.000Z_5": {
+      "key": "ZETA_35_CALL_2026-10-16T20:00:00.000Z_5",
+      "underlyingSymbol": "ZETA",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-09-05T06:22:47.556Z",
+      "dismissedAt": null
+    },
+    "O_60_PUT_2027-01-15T21:00:00.000+00:00_10": {
+      "key": "O_60_PUT_2027-01-15T21:00:00.000+00:00_10",
+      "underlyingSymbol": "O",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-09-09T02:41:39.170Z",
+      "dismissedAt": "2026-09-10T06:32:26.341Z"
+    },
+    "O_60_PUT_2027-01-15T21:00:00.000+00:00_5": {
+      "key": "O_60_PUT_2027-01-15T21:00:00.000+00:00_5",
+      "underlyingSymbol": "O",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-09-09T02:41:39.177Z",
+      "dismissedAt": "2026-09-10T06:32:26.329Z"
+    },
+    "TDOC_7.5_PUT_2027-01-15T21:00:00.000+00:00_10": {
+      "key": "TDOC_7.5_PUT_2027-01-15T21:00:00.000+00:00_10",
+      "underlyingSymbol": "TDOC",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-09-09T02:41:39.181Z",
+      "dismissedAt": "2026-09-10T06:32:26.323Z"
+    },
+    "BBWI_17.5_PUT_2027-01-15T21:00:00.000+00:00_10": {
+      "key": "BBWI_17.5_PUT_2027-01-15T21:00:00.000+00:00_10",
+      "underlyingSymbol": "BBWI",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-09-09T02:41:39.188Z",
+      "dismissedAt": "2026-09-10T06:32:26.294Z"
+    },
+    "BBWI_17.5_PUT_2027-01-15T21:00:00.000+00:00_5": {
+      "key": "BBWI_17.5_PUT_2027-01-15T21:00:00.000+00:00_5",
+      "underlyingSymbol": "BBWI",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-09-09T02:41:39.192Z",
+      "dismissedAt": null
+    },
+    "SERV_11_PUT_2026-09-18T20:00:00.000Z_10": {
+      "key": "SERV_11_PUT_2026-09-18T20:00:00.000Z_10",
+      "underlyingSymbol": "SERV",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-09-09T02:41:39.197Z",
+      "dismissedAt": "2026-09-10T06:32:26.335Z"
+    },
+    "SERV_11_PUT_2026-09-18T20:00:00.000Z_5": {
+      "key": "SERV_11_PUT_2026-09-18T20:00:00.000Z_5",
+      "underlyingSymbol": "SERV",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-09-09T02:41:39.204Z",
+      "dismissedAt": "2026-09-10T06:32:26.317Z"
+    },
+    "FLNC_12_PUT_2026-09-18T20:00:00.000Z_10": {
+      "key": "FLNC_12_PUT_2026-09-18T20:00:00.000Z_10",
+      "underlyingSymbol": "FLNC",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-09-09T02:41:39.236Z",
+      "dismissedAt": "2026-09-10T06:32:26.302Z"
+    },
+    "FLNC_12_PUT_2026-09-18T20:00:00.000Z_5": {
+      "key": "FLNC_12_PUT_2026-09-18T20:00:00.000Z_5",
+      "underlyingSymbol": "FLNC",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-09-09T02:41:39.240Z",
+      "dismissedAt": "2026-09-10T06:32:26.273Z"
+    },
+    "TDOC_7.5_PUT_2027-01-15T21:00:00.000+00:00_5": {
+      "key": "TDOC_7.5_PUT_2027-01-15T21:00:00.000+00:00_5",
+      "underlyingSymbol": "TDOC",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-09-09T03:25:44.675Z",
+      "dismissedAt": "2026-09-10T06:32:26.255Z"
+    },
+    "GOOGL_315_PUT_2027-06-17T20:00:00.000Z_10": {
+      "key": "GOOGL_315_PUT_2027-06-17T20:00:00.000Z_10",
+      "underlyingSymbol": "GOOGL",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-09-09T03:25:44.687Z",
+      "dismissedAt": "2026-09-10T06:32:26.287Z"
+    },
+    "RBRK_95_CALL_2027-01-15T21:00:00.000Z_10": {
+      "key": "RBRK_95_CALL_2027-01-15T21:00:00.000Z_10",
+      "underlyingSymbol": "RBRK",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-09-09T03:25:44.703Z",
+      "dismissedAt": "2026-09-10T06:32:26.264Z"
+    },
+    "RBRK_95_CALL_2027-01-15T21:00:00.000Z_5": {
+      "key": "RBRK_95_CALL_2027-01-15T21:00:00.000Z_5",
+      "underlyingSymbol": "RBRK",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-09-09T03:25:44.709Z",
+      "dismissedAt": "2026-09-10T06:30:06.906Z"
+    },
+    "ADUR_12.5_PUT_20261016_10": {
+      "key": "ADUR_12.5_PUT_20261016_10",
+      "underlyingSymbol": "ADUR",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-09-09T03:25:44.717Z",
+      "dismissedAt": "2026-09-10T06:28:48.757Z"
+    },
+    "PATH_15_PUT_2026-10-16T20:00:00.000Z_10": {
+      "key": "PATH_15_PUT_2026-10-16T20:00:00.000Z_10",
+      "underlyingSymbol": "PATH",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-09-09T03:25:44.721Z",
+      "dismissedAt": "2026-09-10T06:28:48.733Z"
+    },
+    "PATH_15_PUT_2026-10-16T20:00:00.000Z_5": {
+      "key": "PATH_15_PUT_2026-10-16T20:00:00.000Z_5",
+      "underlyingSymbol": "PATH",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-09-09T03:25:44.725Z",
+      "dismissedAt": "2026-09-10T06:28:48.739Z"
+    },
+    "ONDS_10_PUT_20280121_10": {
+      "key": "ONDS_10_PUT_20280121_10",
+      "underlyingSymbol": "ONDS",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-09-09T03:25:44.731Z",
+      "dismissedAt": "2026-09-10T06:28:48.752Z"
+    },
+    "ONDS_10_PUT_20280121_5": {
+      "key": "ONDS_10_PUT_20280121_5",
+      "underlyingSymbol": "ONDS",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-09-09T03:25:44.735Z",
+      "dismissedAt": "2026-09-10T06:28:48.762Z"
+    },
+    "EQX_12.5_PUT_2028-01-21T21:00:00.000Z_10": {
+      "key": "EQX_12.5_PUT_2028-01-21T21:00:00.000Z_10",
+      "underlyingSymbol": "EQX",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-09-09T05:49:04.774Z",
+      "dismissedAt": "2026-09-10T06:32:26.310Z"
+    },
+    "EQX_12.5_PUT_2028-01-21T21:00:00.000Z_5": {
+      "key": "EQX_12.5_PUT_2028-01-21T21:00:00.000Z_5",
+      "underlyingSymbol": "EQX",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 5,
+      "provisionedAt": "2026-09-09T05:49:04.786Z",
+      "dismissedAt": "2026-09-10T06:32:26.347Z"
+    },
+    "RKLB_60_PUT_20260918_10": {
+      "key": "RKLB_60_PUT_20260918_10",
+      "underlyingSymbol": "RKLB",
+      "strikePrice": 60,
+      "optionType": "PUT",
+      "expiryDate": "20260918",
+      "pct": 10,
+      "provisionedAt": "2026-09-09T05:49:04.790Z",
+      "dismissedAt": "2026-09-10T06:32:26.280Z"
+    },
+    "KVYO_15_PUT_20260918_10": {
+      "key": "KVYO_15_PUT_20260918_10",
+      "underlyingSymbol": "KVYO",
+      "strikePrice": 15,
+      "optionType": "PUT",
+      "expiryDate": "20260918",
+      "pct": 10,
+      "provisionedAt": "2026-09-09T06:01:22.622Z",
+      "dismissedAt": null
+    },
+    "KVYO_15_PUT_20260918_5": {
+      "key": "KVYO_15_PUT_20260918_5",
+      "underlyingSymbol": "KVYO",
+      "strikePrice": 15,
+      "optionType": "PUT",
+      "expiryDate": "20260918",
+      "pct": 5,
+      "provisionedAt": "2026-09-09T06:01:22.622Z",
+      "dismissedAt": null
+    },
+    "SERV_11_PUT_2026-11-20T21:00:00.000Z_10": {
+      "key": "SERV_11_PUT_2026-11-20T21:00:00.000Z_10",
+      "underlyingSymbol": "SERV",
+      "strikePrice": 11,
+      "optionType": "PUT",
+      "expiryDate": "2026-11-20T21:00:00.000Z",
+      "pct": 10,
+      "provisionedAt": "2026-09-12T04:47:46.153Z",
+      "dismissedAt": "2026-09-12T04:59:39.380Z"
+    },
+    "SERV_11_PUT_2026-11-20T21:00:00.000Z_5": {
+      "key": "SERV_11_PUT_2026-11-20T21:00:00.000Z_5",
+      "underlyingSymbol": "SERV",
+      "strikePrice": 11,
+      "optionType": "PUT",
+      "expiryDate": "2026-11-20T21:00:00.000Z",
+      "pct": 5,
+      "provisionedAt": "2026-09-12T04:47:46.161Z",
+      "dismissedAt": "2026-09-12T04:59:39.371Z"
+    },
+    "FLNC_12_PUT_2026-10-16T20:00:00.000Z_10": {
+      "key": "FLNC_12_PUT_2026-10-16T20:00:00.000Z_10",
+      "underlyingSymbol": "FLNC",
+      "strikePrice": 12,
+      "optionType": "PUT",
+      "expiryDate": "2026-10-16T20:00:00.000Z",
+      "pct": 10,
+      "provisionedAt": "2026-09-12T04:47:46.171Z",
+      "dismissedAt": null
+    },
+    "FLNC_12_PUT_2026-10-16T20:00:00.000Z_5": {
+      "key": "FLNC_12_PUT_2026-10-16T20:00:00.000Z_5",
+      "underlyingSymbol": "FLNC",
+      "strikePrice": 12,
+      "optionType": "PUT",
+      "expiryDate": "2026-10-16T20:00:00.000Z",
+      "pct": 5,
+      "provisionedAt": "2026-09-12T04:47:46.178Z",
+      "dismissedAt": null
+    }
+  }
+}

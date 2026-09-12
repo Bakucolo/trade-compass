@@ -523,14 +523,46 @@ export function GrowthAndValuationCard({ symbol }: GrowthAndValuationCardProps) 
                       tickLine={false}
                     />
                     <Tooltip
+                      cursor={{ fill: 'rgba(255, 255, 255, 0.06)' }}
                       contentStyle={{
-                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                        borderColor: 'rgba(51, 65, 85, 0.8)',
+                        backgroundColor: '#0f172a',
+                        borderColor: '#334155',
                         borderRadius: '12px',
-                        fontSize: '11px',
-                        fontFamily: 'monospace',
+                        color: '#f8fafc',
                       }}
-                      formatter={(val: any, name: any) => [formatBillion(Number(val)), name]}
+                      itemStyle={{ color: '#f8fafc', fontWeight: 'bold' }}
+                      labelStyle={{ color: '#f8fafc', fontWeight: 'bold' }}
+                      content={({ active, payload, label }) => {
+                        if (!active || !payload || !payload.length) return null;
+                        return (
+                          <div className="bg-slate-900/98 backdrop-blur-xl border border-slate-700/80 p-3 rounded-xl shadow-2xl text-xs font-mono min-w-[190px] space-y-1.5 ring-1 ring-white/10">
+                            <div className="flex items-center justify-between border-b border-slate-700/60 pb-1.5">
+                              <span className="font-bold text-slate-100 text-xs">
+                                Period: {label}
+                              </span>
+                              {payload[0]?.payload?.isEstimate && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                  ESTIMATE
+                                </span>
+                              )}
+                            </div>
+                            {payload.map((entry, idx) => (
+                              <div key={`tt-${idx}`} className="flex items-center justify-between gap-3 text-xs">
+                                <span className="text-slate-300 flex items-center gap-1.5">
+                                  <span
+                                    className="w-2 h-2 rounded-full inline-block"
+                                    style={{ backgroundColor: entry.color || (entry.dataKey === 'revenue' ? '#38bdf8' : '#c084fc') }}
+                                  />
+                                  {entry.name}:
+                                </span>
+                                <span className="font-black text-slate-100 font-mono">
+                                  {formatBillion(Number(entry.value))}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      }}
                     />
                     <Bar
                       yAxisId="left"
@@ -678,14 +710,46 @@ export function GrowthAndValuationCard({ symbol }: GrowthAndValuationCardProps) 
                       width={140}
                     />
                     <Tooltip
+                      cursor={{ fill: 'rgba(255, 255, 255, 0.06)' }}
                       contentStyle={{
-                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                        borderColor: 'rgba(51, 65, 85, 0.8)',
+                        backgroundColor: '#0f172a',
+                        borderColor: '#334155',
                         borderRadius: '12px',
-                        fontSize: '11px',
-                        fontFamily: 'monospace',
+                        color: '#f8fafc',
                       }}
-                      formatter={(v: any) => [`+${Number(v).toFixed(1)}% Annual Growth`, 'CAGR Rate']}
+                      itemStyle={{ color: '#34d399', fontWeight: 'bold' }}
+                      labelStyle={{ color: '#f8fafc', fontWeight: 'bold' }}
+                      content={({ active, payload }) => {
+                        if (!active || !payload || !payload.length) return null;
+                        const item = payload[0].payload;
+                        const rateNum = Number(item.rate ?? 0);
+                        const isPositive = rateNum >= 0;
+                        return (
+                          <div className="bg-slate-900/98 backdrop-blur-xl border border-slate-700/80 p-3 rounded-xl shadow-2xl text-xs font-mono min-w-[220px] space-y-1.5 ring-1 ring-white/10">
+                            <div className="flex items-center gap-2 border-b border-slate-700/60 pb-1.5">
+                              <span
+                                className="w-2.5 h-2.5 rounded-full shrink-0 shadow-sm"
+                                style={{ backgroundColor: item.fill || '#38bdf8' }}
+                              />
+                              <span className="font-bold text-slate-100 text-xs truncate">
+                                {item.name}
+                              </span>
+                            </div>
+                            <div className="flex items-baseline justify-between gap-3 pt-0.5">
+                              <span className="text-slate-400 text-[11px] font-medium">CAGR Rate:</span>
+                              <span className={cn("font-black text-sm tracking-tight", isPositive ? "text-emerald-400" : "text-rose-400")}>
+                                {isPositive ? '+' : ''}{rateNum.toFixed(1)}% Annual Growth
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-sans border-t border-slate-800/60 pt-1 leading-snug">
+                              {item.name.includes('Historical') && 'Trailing compounded annual growth record'}
+                              {item.name.includes('Consensus') && 'Wall Street consensus forward estimate'}
+                              {item.name.includes('Price Implied') && 'Growth implied by current market valuation (5Y)'}
+                              {item.name.includes('10Y') && 'Long-term terminal DCF priced growth rate (10Y)'}
+                            </div>
+                          </div>
+                        );
+                      }}
                     />
                     <Bar dataKey="rate" radius={[0, 6, 6, 0]}>
                       {['#38bdf8', '#34d399', '#a855f7', '#f59e0b'].map((color, idx) => (

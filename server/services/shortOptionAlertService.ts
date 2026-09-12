@@ -1,4 +1,162 @@
 import { PrismaClient } from '@prisma/client';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+export interface ShortOptionAlertHistoryRecord {
+  key: string;
+  underlyingSymbol: string;
+  strikePrice: number;
+  optionType: 'CALL' | 'PUT';
+  expiryDate?: string;
+  pct: 5 | 10;
+  provisionedAt: string;
+  dismissedAt?: string | null;
+}
+
+export interface ShortOptionAlertHistoryData {
+  records: Record<string, ShortOptionAlertHistoryRecord>;
+}
+
+const DEFAULT_HISTORY_FILE_PATH = path.resolve(__dirname, '..', 'short_option_alerts_history.json');
+let customHistoryFilePath: string | null = null;
+
+export function setShortOptionAlertHistoryFilePath(customPath: string | null): void {
+  customHistoryFilePath = customPath;
+}
+
+export function getShortOptionAlertHistoryFilePath(): string {
+  return customHistoryFilePath || DEFAULT_HISTORY_FILE_PATH;
+}
+
+export function getContractDefenseKey(
+  underlyingSymbol: string,
+  strikePrice: number,
+  optionType: string,
+  expiryDate: string | undefined | null,
+  pct: 5 | 10
+): string {
+  const sym = (underlyingSymbol || '').trim().toUpperCase();
+  const opt = (optionType || '').trim().toUpperCase();
+  const exp = (expiryDate || '').trim();
+  return `${sym}_${strikePrice}_${opt}_${exp || 'PERP'}_${pct}`;
+}
+
+export function loadShortOptionAlertHistory(): Record<string, ShortOptionAlertHistoryRecord> {
+  try {
+    const filePath = getShortOptionAlertHistoryFilePath();
+    if (fs.existsSync(filePath)) {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const parsed = JSON.parse(content);
+      return parsed.records || {};
+    }
+  } catch (err) {
+    console.error('Failed to load short option alert history:', err);
+  }
+  return {};
+}
+
+export function saveShortOptionAlertHistory(records: Record<string, ShortOptionAlertHistoryRecord>): void {
+  try {
+    const filePath = getShortOptionAlertHistoryFilePath();
+    const data: ShortOptionAlertHistoryData = { records };
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Failed to save short option alert history:', err);
+  }
+}
+
+export function recordShortOptionAlertProvisioned(
+  underlyingSymbol: string,
+  strikePrice: number,
+  optionType: 'CALL' | 'PUT',
+  expiryDate: string | undefined | null,
+  pct: 5 | 10
+): void {
+  const key = getContractDefenseKey(underlyingSymbol, strikePrice, optionType, expiryDate, pct);
+  const records = loadShortOptionAlertHistory();
+  records[key] = {
+    key,
+    underlyingSymbol: underlyingSymbol.toUpperCase(),
+    strikePrice,
+    optionType,
+    expiryDate: expiryDate || undefined,
+    pct,
+    provisionedAt: records[key]?.provisionedAt || new Date().toISOString(),
+    dismissedAt: null,
+  };
+  saveShortOptionAlertHistory(records);
+}
+
+export function recordShortOptionAlertDismissedByKey(key: string): void {
+  const records = loadShortOptionAlertHistory();
+  if (records[key]) {
+    records[key].dismissedAt = new Date().toISOString();
+  } else {
+    records[key] = {
+      key,
+      underlyingSymbol: '',
+      strikePrice: 0,
+      optionType: 'PUT',
+      pct: key.endsWith('_5') ? 5 : 10,
+      provisionedAt: new Date().toISOString(),
+      dismissedAt: new Date().toISOString(),
+    };
+  }
+  saveShortOptionAlertHistory(records);
+}
+
+export function extractShortOptionKeyFromNote(notes: string | null | undefined): string | null {
+  if (!notes) return null;
+  const match = notes.match(/\[Short Option (5|10)% Defense\]\s+([A-Z0-9.\-]+)\s+\$([0-9.]+)\s+(CALL|PUT)(?:\s+\(([^)]+)\))?/i);
+  if (!match) return null;
+  const pct = parseInt(match[1], 10) as 5 | 10;
+  const underlying = match[2];
+  const strike = parseFloat(match[3]);
+  const optType = match[4].toUpperCase();
+  const expiry = match[5] || '';
+  return getContractDefenseKey(underlying, strike, optType, expiry, pct);
+}
+
+export async function seedShortOptionAlertHistoryFromDb(prisma: PrismaClient): Promise<void> {
+  try {
+    const existingAlerts = await prisma.priceAlert.findMany({
+      where: {
+        notes: {
+          contains: 'Short Option'
+        }
+      }
+    });
+
+    const records = loadShortOptionAlertHistory();
+    let modified = false;
+
+    for (const alert of existingAlerts) {
+      const key = extractShortOptionKeyFromNote(alert.notes);
+      if (key && !records[key]) {
+        records[key] = {
+          key,
+          underlyingSymbol: alert.symbol,
+          strikePrice: 0,
+          optionType: 'PUT',
+          pct: key.endsWith('_5') ? 5 : 10,
+          provisionedAt: alert.createdAt ? alert.createdAt.toISOString() : new Date().toISOString(),
+          dismissedAt: alert.isMuted ? (alert.mutedAt ? alert.mutedAt.toISOString() : new Date().toISOString()) : null,
+        };
+        modified = true;
+      }
+    }
+
+    if (modified) {
+      saveShortOptionAlertHistory(records);
+    }
+  } catch (err) {
+    console.error('Failed to seed short option alert history from DB:', err);
+  }
+}
 
 export interface ShortOptionDefenseLevels {
   strikePrice: number;
@@ -263,7 +421,9 @@ export async function syncShortOptionAlerts(
       };
     }
 
-    // 2. Fetch existing price alerts to prevent duplicates
+    // 2. Ensure history is seeded from DB & fetch existing price alerts
+    await seedShortOptionAlertHistoryFromDb(prisma);
+    const historyRecords = loadShortOptionAlertHistory();
     const existingAlerts = await prisma.priceAlert.findMany();
 
     const createdAlerts: any[] = [];
@@ -276,9 +436,13 @@ export async function syncShortOptionAlerts(
       const defense = calculateShortOptionDefenseLevels(details.strikePrice, details.optionType);
       const contractLabel = `${details.underlyingSymbol} $${details.strikePrice} ${details.optionType}${details.expiryDate ? ` (${details.expiryDate})` : ''}`;
 
-      // Check / Create 10% Alert
+      const key10 = getContractDefenseKey(details.underlyingSymbol, details.strikePrice, details.optionType, details.expiryDate, 10);
+      const key5 = getContractDefenseKey(details.underlyingSymbol, details.strikePrice, details.optionType, details.expiryDate, 5);
+
+      // Check 10% Alert: Must not have been provisioned in the past AND not currently active
       const target10 = defense.warning10Pct.targetPrice;
       const cond10 = defense.warning10Pct.condition;
+      const alreadyProvisioned10 = Boolean(historyRecords[key10]);
       const existing10 = existingAlerts.find(a => 
         a.symbol.toUpperCase() === details.underlyingSymbol.toUpperCase() &&
         a.condition === cond10 &&
@@ -286,7 +450,7 @@ export async function syncShortOptionAlerts(
         (a.status === 'ACTIVE' || (a.notes && a.notes.includes(details.underlyingSymbol) && a.notes.includes(`${details.strikePrice}`)))
       );
 
-      if (!existing10) {
+      if (!alreadyProvisioned10 && !existing10) {
         const note10 = `[Short Option 10% Defense] ${contractLabel} - Warning: Underlying approaching within 10% of strike $${details.strikePrice}`;
         const newAlert = await prisma.priceAlert.create({
           data: {
@@ -297,16 +461,42 @@ export async function syncShortOptionAlerts(
             notes: note10
           }
         });
+        recordShortOptionAlertProvisioned(details.underlyingSymbol, details.strikePrice, details.optionType, details.expiryDate, 10);
+        historyRecords[key10] = {
+          key: key10,
+          underlyingSymbol: details.underlyingSymbol,
+          strikePrice: details.strikePrice,
+          optionType: details.optionType,
+          expiryDate: details.expiryDate,
+          pct: 10,
+          provisionedAt: new Date().toISOString(),
+          dismissedAt: null
+        };
         createdAlerts.push(newAlert);
         existingAlerts.push(newAlert);
         logToFile(`[Auto Alert Created] 10% short option defense alert for ${details.underlyingSymbol} at $${target10} (${cond10})`);
       } else {
         existingCount++;
+        // Ensure recorded in history so it won't be recreated if user deletes it later
+        if (!alreadyProvisioned10) {
+          recordShortOptionAlertProvisioned(details.underlyingSymbol, details.strikePrice, details.optionType, details.expiryDate, 10);
+          historyRecords[key10] = {
+            key: key10,
+            underlyingSymbol: details.underlyingSymbol,
+            strikePrice: details.strikePrice,
+            optionType: details.optionType,
+            expiryDate: details.expiryDate,
+            pct: 10,
+            provisionedAt: new Date().toISOString(),
+            dismissedAt: null
+          };
+        }
       }
 
-      // Check / Create 5% Alert
+      // Check 5% Alert: Must not have been provisioned in the past AND not currently active
       const target5 = defense.critical5Pct.targetPrice;
       const cond5 = defense.critical5Pct.condition;
+      const alreadyProvisioned5 = Boolean(historyRecords[key5]);
       const existing5 = existingAlerts.find(a => 
         a.symbol.toUpperCase() === details.underlyingSymbol.toUpperCase() &&
         a.condition === cond5 &&
@@ -314,7 +504,7 @@ export async function syncShortOptionAlerts(
         (a.status === 'ACTIVE' || (a.notes && a.notes.includes(details.underlyingSymbol) && a.notes.includes(`${details.strikePrice}`)))
       );
 
-      if (!existing5) {
+      if (!alreadyProvisioned5 && !existing5) {
         const note5 = `[Short Option 5% Defense] ${contractLabel} - CRITICAL: Underlying approaching within 5% of strike $${details.strikePrice}`;
         const newAlert = await prisma.priceAlert.create({
           data: {
@@ -325,11 +515,35 @@ export async function syncShortOptionAlerts(
             notes: note5
           }
         });
+        recordShortOptionAlertProvisioned(details.underlyingSymbol, details.strikePrice, details.optionType, details.expiryDate, 5);
+        historyRecords[key5] = {
+          key: key5,
+          underlyingSymbol: details.underlyingSymbol,
+          strikePrice: details.strikePrice,
+          optionType: details.optionType,
+          expiryDate: details.expiryDate,
+          pct: 5,
+          provisionedAt: new Date().toISOString(),
+          dismissedAt: null
+        };
         createdAlerts.push(newAlert);
         existingAlerts.push(newAlert);
         logToFile(`[Auto Alert Created] 5% short option defense alert for ${details.underlyingSymbol} at $${target5} (${cond5})`);
       } else {
         existingCount++;
+        if (!alreadyProvisioned5) {
+          recordShortOptionAlertProvisioned(details.underlyingSymbol, details.strikePrice, details.optionType, details.expiryDate, 5);
+          historyRecords[key5] = {
+            key: key5,
+            underlyingSymbol: details.underlyingSymbol,
+            strikePrice: details.strikePrice,
+            optionType: details.optionType,
+            expiryDate: details.expiryDate,
+            pct: 5,
+            provisionedAt: new Date().toISOString(),
+            dismissedAt: null
+          };
+        }
       }
     }
 
@@ -539,6 +753,9 @@ export async function createAlertsForSingleShortOption(
   } else {
     createdAlerts.push(existing5);
   }
+
+  recordShortOptionAlertProvisioned(details.underlyingSymbol, details.strikePrice, details.optionType, details.expiryDate, 10);
+  recordShortOptionAlertProvisioned(details.underlyingSymbol, details.strikePrice, details.optionType, details.expiryDate, 5);
 
   logToFile(`[Single Position Alerts] Armed 5% and 10% defense alerts for ${contractLabel}`);
   return { success: true, alerts: createdAlerts };

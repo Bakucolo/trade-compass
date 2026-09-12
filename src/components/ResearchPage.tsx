@@ -9,11 +9,13 @@ import {
   SlidersHorizontal, Settings2, Scale, ExternalLink,
   Layers, ArrowUpRight, ArrowDownRight, ArrowRight, RefreshCw, ShieldCheck, ShieldAlert, Target,
   CheckCircle2, Compass, Zap, Flame, Lightbulb, Bookmark,
-  PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2, FolderPlus
+  PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2, FolderPlus,
+  Cpu, Calculator
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { marketDataService, USE_STREAMING } from '../services/marketData';
+import { getKnownCompanyName } from '../services/commonTickers';
 import { useResearchDossier, useAIAnalysis, useOptionsLiquidity } from '../services/researchData';
 import { tastyStreamer, StreamerData } from '../services/tastytradeStreamer';
 import { useReportPrompts } from '../services/promptService';
@@ -33,6 +35,7 @@ import { OptionsLiquidityCard } from './research/OptionsLiquidityCard';
 import { OptionsChainView } from './research/OptionsChainView';
 import { RedFlagsAndRisksCard } from './research/RedFlagsAndRisksCard';
 import { DilutionAndSbcCard } from './research/DilutionAndSbcCard';
+import { MonteCarloSimulationModal } from './research/MonteCarloSimulationModal';
 import { useOptionsChain } from '@/services/optionsChainService';
 import { TradeStructureModal } from './TradeStructureModal';
 import ReactMarkdown from 'react-markdown';
@@ -61,7 +64,11 @@ interface ResearchPageProps {
 export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps) {
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
-  const debouncedSearch = useDebounceValue(searchQuery, 400);
+  const debouncedSearch = useDebounceValue(searchQuery, 250);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [activeSearchIndex, setActiveSearchIndex] = useState(-1);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+  const splitSearchContainerRef = useRef<HTMLDivElement>(null);
   const [selectedSymbol, setSelectedSymbol] = useState(initialSymbol || 'AAPL');
   const [activeDataTab, setActiveDataTab] = useState('overview');
   const [isTradeStructureModalOpen, setIsTradeStructureModalOpen] = useState(false);
@@ -102,6 +109,7 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
   const [isFitModalOpen, setIsFitModalOpen] = useState(false);
   const [ideaModalState, setIdeaModalState] = useState<{ open: boolean; initialThesis?: string }>({ open: false });
   const [isAddToWatchlistOpen, setIsAddToWatchlistOpen] = useState(false);
+  const [isMonteCarloModalOpen, setIsMonteCarloModalOpen] = useState(false);
 
   // Dossier On-Demand Request State (prevents slow automatic blocking page loads)
   const [requestedSymbols, setRequestedSymbols] = useState<Record<string, boolean>>({});
@@ -113,6 +121,39 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
       setRequestedSymbols((prev) => ({ ...prev, [sym]: true }));
     }
   };
+
+  const handleSelectStock = (symbol: string) => {
+    const clean = symbol.trim().toUpperCase();
+    if (!clean) return;
+    setSelectedSymbol(clean);
+    handleRequestDossier(clean);
+    setSearchQuery('');
+    setIsSearchOpen(false);
+    setActiveSearchIndex(-1);
+  };
+
+  const handleSearchChange = (val: string) => {
+    setSearchQuery(val);
+    if (val.trim().length > 0) {
+      setIsSearchOpen(true);
+      setActiveSearchIndex(-1);
+    } else {
+      setIsSearchOpen(false);
+    }
+  };
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      const inQuick = searchContainerRef.current && searchContainerRef.current.contains(target);
+      const inSplit = splitSearchContainerRef.current && splitSearchContainerRef.current.contains(target);
+      if (!inQuick && !inSplit) {
+        setIsSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   useEffect(() => {
     if (initialSymbol) {
@@ -463,6 +504,18 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
             <span>+ Watchlist</span>
           </Button>
 
+          {/* Simulate Ticker (Monte Carlo Valuation) Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsMonteCarloModalOpen(true)}
+            className="text-xs gap-1.5 h-9 bg-gradient-to-r from-emerald-500/15 via-teal-500/15 to-indigo-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25 shadow-[0_0_12px_rgba(16,185,129,0.18)] font-bold transition-all"
+            title={`Simulate 10,000 stochastic valuation paths for ${selectedSymbol}`}
+          >
+            <Cpu className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+            <span>Simulate {selectedSymbol}</span>
+          </Button>
+
           {/* On-Demand Dossier Request / Refresh Button */}
           {!isDossierRequested ? (
             <Button
@@ -547,25 +600,41 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
 
       {/* ================= FULL PAGE QUICK TICKER RIBBON (When Full Page Mode is ON) ================= */}
       {isFullPageMode && (
-        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 p-3.5 bg-card/70 backdrop-blur-xl border border-border/70 rounded-2xl shadow-sm animate-in fade-in">
-          {/* Quick Search Input */}
-          <div className="relative flex-1 max-w-md group">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
+        <div className="relative z-30 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 p-3.5 bg-card/70 backdrop-blur-xl border border-border/70 rounded-2xl shadow-sm animate-in fade-in">
+          {/* Quick Search Input with Live Autocomplete Popover */}
+          <div ref={searchContainerRef} className="relative z-40 flex-1 max-w-md group">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors z-10 pointer-events-none" />
             <Input
-              placeholder="Search any ticker (e.g. NVDA, PLTR, CCJ, TSLA)..."
+              placeholder="Search ticker or company (e.g. NVDA, PLTR, Apple, TSLA)..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              onFocus={() => {
+                if (searchQuery.trim().length > 0) setIsSearchOpen(true);
+              }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  const trimmed = searchQuery.trim().toUpperCase();
-                  if (trimmed) {
-                    if (searchResults && searchResults.length > 0) {
-                      setSelectedSymbol(searchResults[0].symbol);
-                    } else {
-                      setSelectedSymbol(trimmed);
-                    }
-                    setSearchQuery('');
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  if (searchResults && searchResults.length > 0) {
+                    setActiveSearchIndex((prev) => (prev + 1) % searchResults.length);
+                    setIsSearchOpen(true);
                   }
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  if (searchResults && searchResults.length > 0) {
+                    setActiveSearchIndex((prev) => (prev - 1 + searchResults.length) % searchResults.length);
+                    setIsSearchOpen(true);
+                  }
+                } else if (e.key === 'Enter') {
+                  e.preventDefault();
+                  if (searchResults && searchResults.length > 0 && activeSearchIndex >= 0 && activeSearchIndex < searchResults.length) {
+                    handleSelectStock(searchResults[activeSearchIndex].symbol);
+                  } else if (searchResults && searchResults.length > 0) {
+                    handleSelectStock(searchResults[0].symbol);
+                  } else if (searchQuery.trim()) {
+                    handleSelectStock(searchQuery.trim().toUpperCase());
+                  }
+                } else if (e.key === 'Escape') {
+                  setIsSearchOpen(false);
                 }
               }}
               className="pl-9 pr-12 bg-background/70 border-border/60 focus:border-primary/50 text-xs font-mono uppercase h-8.5 rounded-xl shadow-inner font-bold"
@@ -574,20 +643,90 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
               <button
                 type="button"
                 onClick={() => {
-                  const trimmed = searchQuery.trim().toUpperCase();
-                  if (trimmed) {
-                    if (searchResults && searchResults.length > 0) {
-                      setSelectedSymbol(searchResults[0].symbol);
-                    } else {
-                      setSelectedSymbol(trimmed);
-                    }
-                    setSearchQuery('');
+                  if (searchResults && searchResults.length > 0 && activeSearchIndex >= 0 && activeSearchIndex < searchResults.length) {
+                    handleSelectStock(searchResults[activeSearchIndex].symbol);
+                  } else if (searchResults && searchResults.length > 0) {
+                    handleSelectStock(searchResults[0].symbol);
+                  } else if (searchQuery.trim()) {
+                    handleSelectStock(searchQuery.trim().toUpperCase());
                   }
                 }}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold bg-primary text-primary-foreground px-2 py-0.5 rounded-md hover:opacity-90 transition-opacity"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold bg-primary text-primary-foreground px-2 py-0.5 rounded-md hover:opacity-90 transition-opacity z-10"
               >
                 Go
               </button>
+            )}
+
+            {/* Suggestions Popover Dropdown */}
+            {isSearchOpen && searchQuery.trim().length > 0 && (
+              <div className="absolute left-0 right-0 top-full mt-2 z-50 bg-popover/98 dark:bg-card/98 backdrop-blur-2xl border border-primary/40 shadow-[0_16px_40px_rgba(0,0,0,0.55)] rounded-xl overflow-hidden animate-in fade-in slide-in-from-top-1 max-h-[380px] overflow-y-auto ring-1 ring-border/50 scrollbar-thin">
+                {isSearchLoading ? (
+                  <div className="flex items-center justify-center gap-2 p-4 text-xs text-muted-foreground">
+                    <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                    <span>Searching tickers & company names...</span>
+                  </div>
+                ) : isSearchError ? (
+                  <div className="p-3 text-xs text-destructive text-center bg-destructive/10">
+                    Failed to fetch search results.
+                  </div>
+                ) : searchResults && searchResults.length > 0 ? (
+                  <div className="p-1.5 space-y-1">
+                    <div className="px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/80 flex items-center justify-between border-b border-border/50 pb-1.5 bg-accent/20 rounded-t-lg">
+                      <span>Matching Companies</span>
+                      <span>Click or Enter to select</span>
+                    </div>
+                    {searchResults.map((stock, idx) => {
+                      const isSelected = idx === activeSearchIndex;
+                      const companyName = (stock.name && stock.name !== stock.symbol)
+                        ? stock.name
+                        : (getKnownCompanyName(stock.symbol) || stock.name || stock.symbol);
+                      return (
+                        <div
+                          key={`${stock.symbol}-${idx}`}
+                          data-index={idx}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            handleSelectStock(stock.symbol);
+                          }}
+                          onMouseEnter={() => setActiveSearchIndex(idx)}
+                          className={cn(
+                            "w-full flex items-center justify-between p-2.5 rounded-lg text-left transition-colors cursor-pointer group",
+                            isSelected
+                              ? "bg-primary/20 border border-primary/50 text-foreground shadow-sm"
+                              : "hover:bg-accent/60 text-foreground border border-transparent"
+                          )}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
+                            <span className={cn(
+                              "font-mono font-black text-xs px-2 py-0.5 rounded border shrink-0 transition-colors",
+                              isSelected
+                                ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                                : "bg-muted/80 text-foreground border-border/60 group-hover:bg-primary/20 group-hover:text-primary group-hover:border-primary/40"
+                            )}>
+                              {stock.symbol}
+                            </span>
+                            <span className="text-xs font-semibold text-foreground/90 truncate group-hover:text-foreground">
+                              {companyName}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <Badge variant="outline" className="text-[9px] font-mono px-1.5 h-4 shrink-0 border-border/70 text-muted-foreground">
+                              {stock.stockExchange || stock.exchangeShortName || 'US'}
+                            </Badge>
+                            {isSelected && (
+                              <ArrowRight className="w-3.5 h-3.5 text-primary shrink-0 animate-in fade-in" />
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="p-4 text-center text-xs text-muted-foreground">
+                    No matching companies for "{searchQuery}"
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
@@ -600,7 +739,7 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
               <button
                 key={ticker}
                 type="button"
-                onClick={() => setSelectedSymbol(ticker)}
+                onClick={() => handleSelectStock(ticker)}
                 className={cn(
                   "text-xs px-2.5 py-1 rounded-lg font-mono font-bold transition-all border shrink-0",
                   selectedSymbol === ticker
@@ -617,7 +756,7 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
 
       {/* ================= MAIN DOSSIER LAYOUT (Full Page 100% or Split 2-Column) ================= */}
       <div className={cn(
-        "gap-6 items-start",
+        "relative z-10 gap-6 items-start",
         isFullPageMode ? "w-full space-y-6" : "grid grid-cols-1 xl:grid-cols-4"
       )}>
         {/* Left Sidebar: Asset Search & Quick Tickers (Only visible when Full Page mode is OFF) */}
@@ -633,20 +772,20 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
 
               <CardContent className="p-4 space-y-4">
                 {/* Search Input */}
-                <div className="relative group">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors" />
+                <div ref={splitSearchContainerRef} className="relative group">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground group-focus-within:text-primary transition-colors z-10 pointer-events-none" />
                   <Input
-                    placeholder="Ticker (e.g. NVDA, PLTR, CCJ)"
+                    placeholder="Ticker or company name..."
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => handleSearchChange(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         const trimmed = searchQuery.trim().toUpperCase();
                         if (trimmed) {
                           if (searchResults && searchResults.length > 0) {
-                            setSelectedSymbol(searchResults[0].symbol);
+                            handleSelectStock(searchResults[0].symbol);
                           } else {
-                            setSelectedSymbol(trimmed);
+                            handleSelectStock(trimmed);
                           }
                         }
                       }
@@ -660,13 +799,13 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                         const trimmed = searchQuery.trim().toUpperCase();
                         if (trimmed) {
                           if (searchResults && searchResults.length > 0) {
-                            setSelectedSymbol(searchResults[0].symbol);
+                            handleSelectStock(searchResults[0].symbol);
                           } else {
-                            setSelectedSymbol(trimmed);
+                            handleSelectStock(trimmed);
                           }
                         }
                       }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold bg-primary text-primary-foreground px-2 py-0.5 rounded-md hover:opacity-90 transition-opacity"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold bg-primary text-primary-foreground px-2 py-0.5 rounded-md hover:opacity-90 transition-opacity z-10"
                     >
                       Go
                     </button>
@@ -683,7 +822,7 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                       <button
                         key={ticker}
                         type="button"
-                        onClick={() => setSelectedSymbol(ticker)}
+                        onClick={() => handleSelectStock(ticker)}
                         className={cn(
                           "text-xs px-2.5 py-1 rounded-lg font-mono font-bold transition-all border",
                           selectedSymbol === ticker
@@ -706,30 +845,35 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                       Failed to fetch search results.
                     </div>
                   ) : searchResults && searchResults.length > 0 ? (
-                    searchResults.map((stock) => (
-                      <button
-                        key={stock.symbol}
-                        onClick={() => setSelectedSymbol(stock.symbol)}
-                        className={cn(
-                          "w-full flex items-center justify-between p-2.5 rounded-xl transition-all border text-left group",
-                          selectedSymbol === stock.symbol
-                            ? "bg-primary/10 border-primary/40 shadow-sm ring-1 ring-primary/20"
-                            : "bg-background/40 border-border/40 hover:bg-accent/50 hover:border-border/80"
-                        )}
-                      >
-                        <div>
-                          <p className={cn("font-mono font-black text-xs", selectedSymbol === stock.symbol ? "text-primary" : "text-foreground")}>
-                            {stock.symbol}
-                          </p>
-                          <p className="text-[11px] text-muted-foreground truncate max-w-[130px] leading-tight">
-                            {stock.name}
-                          </p>
-                        </div>
-                        <Badge variant={selectedSymbol === stock.symbol ? "default" : "secondary"} className="text-[9px] font-mono px-1.5 h-4">
-                          {stock.stockExchange}
-                        </Badge>
-                      </button>
-                    ))
+                    searchResults.map((stock) => {
+                      const companyName = (stock.name && stock.name !== stock.symbol)
+                        ? stock.name
+                        : (getKnownCompanyName(stock.symbol) || stock.name || stock.symbol);
+                      return (
+                        <button
+                          key={stock.symbol}
+                          onClick={() => handleSelectStock(stock.symbol)}
+                          className={cn(
+                            "w-full flex items-center justify-between p-2.5 rounded-xl transition-all border text-left group",
+                            selectedSymbol === stock.symbol
+                              ? "bg-primary/10 border-primary/40 shadow-sm ring-1 ring-primary/20"
+                              : "bg-background/40 border-border/40 hover:bg-accent/50 hover:border-border/80"
+                          )}
+                        >
+                          <div className="min-w-0 flex-1 pr-2">
+                            <p className={cn("font-mono font-black text-xs", selectedSymbol === stock.symbol ? "text-primary" : "text-foreground")}>
+                              {stock.symbol}
+                            </p>
+                            <p className="text-[11px] font-medium text-muted-foreground truncate leading-tight group-hover:text-foreground">
+                              {companyName}
+                            </p>
+                          </div>
+                          <Badge variant={selectedSymbol === stock.symbol ? "default" : "secondary"} className="text-[9px] font-mono px-1.5 h-4 shrink-0">
+                            {stock.stockExchange}
+                          </Badge>
+                        </button>
+                      );
+                    })
                   ) : debouncedSearch.length > 0 ? (
                     <div className="text-center text-muted-foreground p-4 text-xs">
                       No matching assets for "{debouncedSearch}"
@@ -798,8 +942,8 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                   </div>
                 </div>
 
-                {/* Main Request Button */}
-                <div className="pt-2">
+                {/* Action Buttons */}
+                <div className="pt-2 flex items-center justify-center gap-3 flex-wrap">
                   <Button
                     size="lg"
                     onClick={() => handleRequestDossier(selectedSymbol)}
@@ -808,6 +952,16 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
                     <Sparkles className="w-4 h-4 text-emerald-200 animate-pulse" />
                     <span>Request Research Dossier for {selectedSymbol}</span>
                     <ArrowRight className="w-4 h-4" />
+                  </Button>
+
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    onClick={() => setIsMonteCarloModalOpen(true)}
+                    className="h-11 px-6 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 font-bold text-sm gap-2 rounded-xl transition-all"
+                  >
+                    <Cpu className="w-4 h-4 text-emerald-400" />
+                    <span>Simulate {selectedSymbol} Valuation</span>
                   </Button>
                 </div>
               </CardContent>
@@ -1003,6 +1157,17 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
 
                     {/* Direct Quick Action Buttons */}
                     <div className="flex items-center gap-2 flex-wrap">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setIsMonteCarloModalOpen(true)}
+                        className="h-8 text-xs font-bold bg-gradient-to-r from-emerald-600/20 via-teal-600/20 to-emerald-600/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30 gap-1.5 shadow-sm"
+                        title={`Run multi-factor stochastic Monte Carlo simulation for ${selectedSymbol}`}
+                      >
+                        <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Simulate Valuation</span>
+                      </Button>
+
                       <Button
                         size="sm"
                         variant="outline"
@@ -1852,6 +2017,14 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
         onClose={() => setIsAddToWatchlistOpen(false)}
         symbol={selectedSymbol}
         companyName={quote?.name || dossier?.header?.shortName || selectedSymbol}
+      />
+
+      {/* Multi-Factor Monte Carlo Simulation Modal */}
+      <MonteCarloSimulationModal
+        isOpen={isMonteCarloModalOpen}
+        onClose={() => setIsMonteCarloModalOpen(false)}
+        symbol={selectedSymbol}
+        currentPrice={currentPrice || quote?.price || 0}
       />
     </div>
   );

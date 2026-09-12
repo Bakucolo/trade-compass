@@ -25,23 +25,36 @@ import {
   VolumeX,
   Volume2,
   Shield,
-  ShieldAlert
+  ShieldAlert,
+  X,
+  FolderPlus,
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Badge } from './ui/badge';
 import { Card, CardContent } from './ui/card';
+import { Checkbox } from './ui/checkbox';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu';
 import {
   useAlerts,
   useDeleteAlert,
   useDeleteMutedAlerts,
   useBulkMuteAlerts,
+  useBulkDeleteAlerts,
   useResetAlert,
   useMuteAlert,
   useUnmuteAlert,
   useSyncShortOptionAlerts,
   PriceAlert,
 } from '@/services/alertService';
+import { useWatchlists, useAddSymbolToWatchlist } from '@/services/watchlistService';
 import { PriceAlertModal } from './PriceAlertModal';
 import { useToast } from './ui/use-toast';
 
@@ -76,10 +89,34 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
   const deleteAlertMutation = useDeleteAlert();
   const deleteMutedMutation = useDeleteMutedAlerts();
   const bulkMuteMutation = useBulkMuteAlerts();
+  const bulkDeleteMutation = useBulkDeleteAlerts();
   const resetAlertMutation = useResetAlert();
   const muteAlertMutation = useMuteAlert();
   const unmuteAlertMutation = useUnmuteAlert();
   const syncShortAlertsMutation = useSyncShortOptionAlerts();
+
+  // Watchlist integration
+  const { data: watchlists = [] } = useWatchlists();
+  const addSymbolMutation = useAddSymbolToWatchlist();
+
+  const handleAddToWatchlist = async (watchlistId: string, symbol: string, watchlistName: string) => {
+    try {
+      await addSymbolMutation.mutateAsync({ watchlistId, symbol });
+      toast({
+        title: "Added to Watchlist",
+        description: `Successfully added ${symbol} to "${watchlistName}".`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Failed to add to Watchlist",
+        description: err.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Multi-select State
+  const [selectedAlertIds, setSelectedAlertIds] = useState<Set<string>>(new Set());
 
   // Metrics
   const activeCount = alerts.filter((a) => a.status === 'ACTIVE').length;
@@ -148,9 +185,97 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
     return list;
   }, [alerts, statusFilter, searchQuery, sortOption]);
 
+  // Selection helpers
+  const handleToggleSelect = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedAlertIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const isAllSelected =
+    processedAlerts.length > 0 &&
+    processedAlerts.every((a) => selectedAlertIds.has(a.id));
+
+  const handleToggleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedAlertIds((prev) => {
+        const next = new Set(prev);
+        processedAlerts.forEach((a) => next.delete(a.id));
+        return next;
+      });
+    } else {
+      setSelectedAlertIds((prev) => {
+        const next = new Set(prev);
+        processedAlerts.forEach((a) => next.add(a.id));
+        return next;
+      });
+    }
+  };
+
+  const handleClearSelection = () => {
+    setSelectedAlertIds(new Set());
+  };
+
+  const handleBulkDeleteSelected = async () => {
+    const count = selectedAlertIds.size;
+    if (count === 0) return;
+    if (!window.confirm(`Are you sure you want to permanently delete ${count} selected alert${count > 1 ? 's' : ''}?`)) {
+      return;
+    }
+
+    try {
+      const res = await bulkDeleteMutation.mutateAsync(Array.from(selectedAlertIds));
+      toast({
+        title: "Alerts Deleted",
+        description: `Successfully deleted ${res.count} price alert${res.count > 1 ? 's' : ''}.`,
+      });
+      setSelectedAlertIds(new Set());
+    } catch (err: any) {
+      toast({
+        title: "Failed to delete alerts",
+        description: err.message,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleBulkMuteSelected = async () => {
+    const count = selectedAlertIds.size;
+    if (count === 0) return;
+    try {
+      const res = await bulkMuteMutation.mutateAsync(Array.from(selectedAlertIds));
+      toast({
+        title: "Alerts Muted",
+        description: `Muted ${res.count} alert${res.count > 1 ? 's' : ''}.`,
+      });
+      setSelectedAlertIds(new Set());
+    } catch (err: any) {
+      toast({
+        title: "Failed to mute alerts",
+        description: err.message,
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleDelete = async (id: string, symbol: string) => {
     try {
       await deleteAlertMutation.mutateAsync(id);
+      setSelectedAlertIds((prev) => {
+        if (prev.has(id)) {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        }
+        return prev;
+      });
       toast({
         title: "Alert Deleted",
         description: `Price alert for ${symbol} was removed.`,
@@ -274,6 +399,11 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
     if (!window.confirm(`Are you sure you want to permanently delete all ${mutedCount} muted alerts?`)) return;
     try {
       const res = await deleteMutedMutation.mutateAsync();
+      setSelectedAlertIds((prev) => {
+        const next = new Set(prev);
+        alerts.filter((a) => a.isMuted || a.status === 'CANCELLED').forEach((a) => next.delete(a.id));
+        return next;
+      });
       toast({
         title: "Muted Alerts Deleted",
         description: `Removed ${res.count} muted alert(s).`,
@@ -325,6 +455,21 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {/* Delete Selected (when checkboxes are checked) */}
+          {selectedAlertIds.size > 0 && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleBulkDeleteSelected}
+              disabled={bulkDeleteMutation.isPending}
+              className="gap-1.5 bg-rose-600 hover:bg-rose-700 text-white shadow-sm shadow-rose-950/40 animate-in fade-in"
+              title={`Permanently delete ${selectedAlertIds.size} selected alert(s)`}
+            >
+              <Trash2 className={cn("w-3.5 h-3.5", bulkDeleteMutation.isPending && "animate-spin")} />
+              <span>Delete Selected ({selectedAlertIds.size})</span>
+            </Button>
+          )}
+
           {/* Mute All Fired */}
           {unmutedTriggeredCount > 0 && (
             <Button
@@ -542,6 +687,84 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
         </div>
       </div>
 
+      {/* Bulk Selection Action Bar */}
+      {processedAlerts.length > 0 && (
+        <div
+          className={cn(
+            "flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-xl border transition-all duration-200",
+            selectedAlertIds.size > 0
+              ? "bg-primary/10 border-primary/40 shadow-sm"
+              : "bg-card/40 border-border/60"
+          )}
+        >
+          <div className="flex items-center gap-2.5">
+            <Checkbox
+              id="select-all-alerts"
+              checked={isAllSelected}
+              onCheckedChange={handleToggleSelectAll}
+              aria-label="Select all visible alerts"
+              className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+            />
+            <label
+              htmlFor="select-all-alerts"
+              className="text-xs font-semibold cursor-pointer select-none flex items-center gap-1.5 text-foreground"
+            >
+              <span>Select All</span>
+              <span className="text-muted-foreground font-normal">
+                ({processedAlerts.length})
+              </span>
+            </label>
+
+            {selectedAlertIds.size > 0 && (
+              <Badge variant="secondary" className="font-mono font-semibold text-xs px-2 py-0.5 ml-1 bg-primary/20 text-primary border-primary/30">
+                {selectedAlertIds.size} selected
+              </Badge>
+            )}
+          </div>
+
+          {selectedAlertIds.size > 0 ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleBulkDeleteSelected}
+                disabled={bulkDeleteMutation.isPending}
+                className="h-8 text-xs font-semibold gap-1.5 bg-rose-600 hover:bg-rose-700 text-white shadow-sm shadow-rose-950/30"
+              >
+                <Trash2 className={cn("w-3.5 h-3.5", bulkDeleteMutation.isPending && "animate-spin")} />
+                <span>Delete Selected ({selectedAlertIds.size})</span>
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleBulkMuteSelected}
+                disabled={bulkMuteMutation.isPending}
+                className="h-8 text-xs font-medium gap-1.5 border-slate-700 bg-slate-800/80 hover:bg-slate-700 text-slate-200"
+                title="Mute selected alerts"
+              >
+                <VolumeX className="w-3.5 h-3.5" />
+                <span>Mute Selected ({selectedAlertIds.size})</span>
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleClearSelection}
+                className="h-8 text-xs text-muted-foreground hover:text-foreground"
+              >
+                <X className="w-3.5 h-3.5 mr-1" />
+                Clear
+              </Button>
+            </div>
+          ) : (
+            <div className="text-[11px] text-muted-foreground hidden sm:block">
+              Check boxes to select alerts for bulk deletion
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Alerts List */}
       <div className="space-y-3">
         {isLoading ? (
@@ -578,13 +801,16 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
             const isTriggered = item.status === 'TRIGGERED';
             const isMuted = Boolean(item.isMuted);
             const isAbove = item.condition === 'ABOVE';
+            const isSelected = selectedAlertIds.has(item.id);
 
             return (
               <Card
                 key={item.id}
                 className={cn(
                   "border transition-all hover:border-primary/40 bg-card/60 backdrop-blur-sm p-4 overflow-hidden",
-                  isTriggered && !isMuted
+                  isSelected
+                    ? "border-primary/70 bg-primary/[0.05] ring-1 ring-primary/40 shadow-sm"
+                    : isTriggered && !isMuted
                     ? "border-rose-500/40 bg-rose-950/15 shadow-[0_0_15px_rgba(244,63,94,0.08)]"
                     : isMuted
                     ? "border-border/40 bg-slate-950/30 opacity-80"
@@ -592,8 +818,22 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
                 )}
               >
                 <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                  {/* Left: Stock Symbol & Condition */}
+                  {/* Left: Checkbox + Stock Symbol & Condition */}
                   <div className="flex items-center gap-3.5">
+                    {/* Checkbox for batch selection */}
+                    <div
+                      className="flex items-center justify-center shrink-0 pr-0.5"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Checkbox
+                        id={`select-alert-${item.id}`}
+                        checked={isSelected}
+                        onCheckedChange={() => handleToggleSelect(item.id)}
+                        aria-label={`Select alert for ${item.symbol}`}
+                        className="w-4 h-4 rounded border-muted-foreground/50 data-[state=checked]:bg-primary data-[state=checked]:border-primary transition-all cursor-pointer"
+                      />
+                    </div>
+
                     <div
                       className={cn(
                         "w-11 h-11 rounded-xl border flex items-center justify-center font-mono font-black text-sm shrink-0",
@@ -752,6 +992,53 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
                       <Plus className="w-3.5 h-3.5 text-primary" />
                       <span>Set Alert</span>
                     </Button>
+
+                    {/* Add to Watchlist Dropdown */}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs gap-1 border-border/70 hover:border-primary/40 text-foreground hover:bg-accent/40"
+                          title={`Add ${item.symbol} to a watchlist`}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <FolderPlus className="w-3.5 h-3.5 text-primary" />
+                          <span>Watchlist</span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="end"
+                        className="w-52 bg-popover/95 backdrop-blur-md border border-border p-1 shadow-xl"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider px-2 py-1">
+                          Add {item.symbol} to Watchlist
+                        </DropdownMenuLabel>
+                        <DropdownMenuSeparator className="my-1" />
+                        {watchlists.map((w) => {
+                          const alreadyInList = (w.items || []).some(
+                            (i) => i.symbol.toUpperCase() === item.symbol.toUpperCase()
+                          );
+                          return (
+                            <DropdownMenuItem
+                              key={w.id}
+                              disabled={alreadyInList}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleAddToWatchlist(w.id, item.symbol, w.name);
+                              }}
+                              className="text-xs cursor-pointer flex items-center justify-between py-1.5 px-2 rounded-md focus:bg-primary/10"
+                            >
+                              <span className="truncate font-medium">{w.name}</span>
+                              {alreadyInList && (
+                                <span className="text-[10px] text-muted-foreground">In list</span>
+                              )}
+                            </DropdownMenuItem>
+                          );
+                        })}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
 
                     {/* Mute / Unmute Button */}
                     {!isMuted ? (

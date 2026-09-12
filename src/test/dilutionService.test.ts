@@ -43,4 +43,25 @@ describe('Stock-Based Compensation & ATM Offerings Dilution Analysis', () => {
     expect(analysis.sharesOutstanding).toBeGreaterThan(10_000_000_000);
     expect(analysis.dilutionRiskTier).toBeDefined();
   }, 25000);
+
+  it('should compile dilution analysis for mega-cap AAPL with buybacks and non-zero SBC', async () => {
+    const analysis = await fetchDilutionAnalysis('AAPL');
+
+    expect(analysis.symbol).toBe('AAPL');
+    expect(analysis.annualSbcUSD).toBeGreaterThan(5_000_000_000); // AAPL SBC > $5B
+    expect(analysis.annualBuybacksUSD).toBeGreaterThan(50_000_000_000); // AAPL Buybacks > $50B
+    expect(analysis.netDilutionRateYoY).toBeLessThan(0); // Net accretive
+    expect(analysis.sharesOutstanding).toBeGreaterThan(10_000_000_000);
+    expect(analysis.sbcHistoryAnnual.length).toBeGreaterThan(0);
+    expect(analysis.sharesHistory.length).toBeGreaterThan(0);
+  }, 25000);
+
+  it('should gracefully compile dilution metrics for foreign ADR (TSM)', async () => {
+    const analysis = await fetchDilutionAnalysis('TSM');
+
+    expect(analysis.symbol).toBe('TSM');
+    expect(analysis.sharesOutstanding).toBeGreaterThan(1_000_000_000);
+    expect(analysis.sharesHistory.length).toBeGreaterThan(0);
+    expect(analysis.dilutionRiskTier).toBeDefined();
+  }, 25000);
 });

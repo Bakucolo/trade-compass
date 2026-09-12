@@ -565,3 +565,172 @@
     50% { opacity: 0.7; }
   }
 }
+
+/* ==========================================================================
+/* ==========================================================================
+   PRINT STYLESHEET: Institutional Financial Memo PDF Export
+   ========================================================================== */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 18mm 15mm 18mm 15mm;
+  }
+
+  html, body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 11pt !important;
+    line-height: 1.6 !important;
+    height: auto !important;
+    min-height: 100% !important;
+    overflow: visible !important;
+    position: static !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Reset modal & radix portal clipping constraints during print */
+  #root,
+  [data-radix-portal],
+  [role="dialog"],
+  [role="dialog"] > div,
+  div[data-state="open"] {
+    position: static !important;
+    transform: none !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+  }
+
+  /* Hide all non-printable application elements */
+  body * {
+    visibility: hidden;
+  }
+
+  .no-print,
+  [data-radix-focus-guard],
+  header.no-print,
+  button,
+  .sheet-overlay,
+  nav,
+  aside {
+    display: none !important;
+  }
+
+  /* Expose and format the copilot report cleanly */
+  #copilot-printable-report,
+  #copilot-printable-report * {
+    visibility: visible !important;
+  }
+
+  #copilot-printable-report {
+    position: static !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+
+  #copilot-printable-report header {
+    border-bottom: 2px solid #0f172a !important;
+    padding-bottom: 12px !important;
+    margin-bottom: 18px !important;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+
+  #copilot-printable-report h1,
+  #copilot-printable-report h2,
+  #copilot-printable-report h3,
+  #copilot-printable-report h4,
+  #copilot-printable-report h5,
+  #copilot-printable-report strong,
+  #copilot-printable-report b {
+    color: #0f172a !important;
+    font-weight: 800 !important;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+
+  #copilot-printable-report p,
+  #copilot-printable-report li,
+  #copilot-printable-report span {
+    color: #1e293b !important;
+  }
+
+  #copilot-printable-report .copilot-prose-body {
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+    color: #1e293b !important;
+  }
+
+  #copilot-printable-report blockquote {
+    border-left: 3px solid #4f46e5 !important;
+    background: #f8fafc !important;
+    color: #334155 !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  #copilot-printable-report table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    margin: 12px 0 !important;
+  }
+
+  #copilot-printable-report th {
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+    border: 1px solid #cbd5e1 !important;
+    font-weight: 700 !important;
+    padding: 6px 10px !important;
+  }
+
+  #copilot-printable-report td {
+    border: 1px solid #cbd5e1 !important;
+    color: #1e293b !important;
+    padding: 6px 10px !important;
+  }
+
+  #copilot-printable-report code {
+    background-color: #f1f5f9 !important;
+    color: #4338ca !important;
+    border: 1px solid #e2e8f0 !important;
+    padding: 1px 4px !important;
+    border-radius: 3px !important;
+  }
+
+  #copilot-printable-report pre {
+    background-color: #f8fafc !important;
+    color: #0f172a !important;
+    border: 1px solid #cbd5e1 !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    padding: 10px !important;
+    border-radius: 6px !important;
+  }
+
+  #copilot-printable-report footer {
+    border-top: 1px solid #cbd5e1 !important;
+    color: #64748b !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    margin-top: 24px !important;
+    padding-top: 10px !important;
+  }
+}
+
+

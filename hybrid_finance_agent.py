@@ -60,6 +60,9 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "inclusionai/ling-3.0-flash-fin
 # Local Ollama model name
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1")
 
+# Global runtime model override (can be set via --model CLI arg)
+SELECTED_MODEL: Optional[str] = os.getenv("CHOSEN_MODEL", None)
+
 
 # -----------------------------------------------------------------------------
 # 2. OpenRouter Chat Wrapper
@@ -269,11 +272,12 @@ def local_worker_node(state: AgentState) -> dict:
 def remote_heavy_lifter_node(state: AgentState) -> dict:
     """The Heavy Lifter (Remote): Handles complex_analysis queries using a frontier model via OpenRouter."""
     call_count = state.get("tool_call_count", 0)
-    print(f"[STEP 2: REMOTE HEAVY LIFTER] Invoking OpenRouter frontier model ({OPENROUTER_MODEL}) (tool loop {call_count})...", flush=True)
+    model_to_use = SELECTED_MODEL or OPENROUTER_MODEL
+    print(f"[STEP 2: REMOTE HEAVY LIFTER] Invoking OpenRouter frontier model ({model_to_use}) (tool loop {call_count})...", flush=True)
     
     base_llm = ChatOpenRouter(
         api_key=OPENROUTER_API_KEY,
-        model=OPENROUTER_MODEL,
+        model=model_to_use,
         temperature=0.2
     )
     # If tool round already ran, encourage direct synthesis without re-calling tools
@@ -311,6 +315,10 @@ def remote_heavy_lifter_node(state: AgentState) -> dict:
 # -----------------------------------------------------------------------------
 def route_after_classification(state: AgentState) -> Literal["local_worker", "remote_heavy_lifter"]:
     """Conditional Edge: Directs task from the router to either Local Worker or Remote Heavy Lifter."""
+    if SELECTED_MODEL in ("ollama", "local", "llama3.1"):
+        return "local_worker"
+    if SELECTED_MODEL and SELECTED_MODEL not in ("auto", "hybrid"):
+        return "remote_heavy_lifter"
     category = state.get("classification")
     if category == "complex_analysis":
         return "remote_heavy_lifter"
@@ -427,8 +435,12 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Hybrid Finance LangGraph Agent")
     parser.add_argument("--query", type=str, help="Financial query to execute via graph")
+    parser.add_argument("--model", type=str, default=None, help="Specific model slug override")
     parser.add_argument("--json", action="store_true", help="Output pure JSON payload for Express API bridge")
     args = parser.parse_args()
+
+    if args.model:
+        SELECTED_MODEL = args.model.strip()
 
     if args.query:
         query_text = args.query.strip()
@@ -449,10 +461,15 @@ if __name__ == "__main__":
         final_msg = last_event["messages"][-1] if last_event else None
         response_text = final_msg.content if final_msg else "No response generated."
 
+        resolved_model = SELECTED_MODEL or (
+            "ollama/llama3.1" if (last_event and last_event.get("classification") == "simple_task") else OPENROUTER_MODEL
+        )
+
         if args.json:
             output_payload = {
                 "success": True,
                 "query": query_text,
+                "model": resolved_model,
                 "classification": last_event.get("classification") if last_event else "simple_task",
                 "router_reasoning": last_event.get("router_reasoning") if last_event else "",
                 "tools_used": last_event.get("tools_used", []) if last_event else [],

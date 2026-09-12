@@ -33,6 +33,7 @@ import {
   Clock,
   Filter,
   Bell,
+  Target,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -77,10 +78,13 @@ import {
   Mail,
   MailOpen,
   CheckCheck,
+  BookmarkCheck,
+  Printer,
 } from 'lucide-react';
 import { AddToWatchlistModal } from './AddToWatchlistModal';
 import { MoveToFolderModal } from './MoveToFolderModal';
 import { TradeStructureModal } from './TradeStructureModal';
+import { CopilotPrintModal, extractPrintableDataFromLog, CopilotPrintableData } from './CopilotPrintModal';
 import { useSendTelegramReport } from '@/services/telegramReportClientService';
 import { useCreateTradeIdea, useTradeIdeas } from '@/services/ideaService';
 import { AppIdeasChecklist } from './AppIdeasChecklist';
@@ -89,9 +93,11 @@ import { AntigravityCodingModal } from './AntigravityCodingModal';
 import { CheckSquare } from 'lucide-react';
 
 interface LogPageProps {
+  initialFolder?: string;
   onNavigateToResearch?: (symbol: string) => void;
   onNavigateToIdeas?: () => void;
   onNavigateToTrades?: () => void;
+  onNavigateToManagement?: () => void;
 }
 
 const SENTIMENT_OPTIONS = [
@@ -152,7 +158,7 @@ const AGENT_ACTION_BUTTONS: Array<{
   },
 ];
 
-export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToTrades }: LogPageProps) {
+export function LogPage({ initialFolder, onNavigateToResearch, onNavigateToIdeas, onNavigateToTrades, onNavigateToManagement }: LogPageProps) {
   const queryClient = useQueryClient();
 
   // Filters & Search
@@ -160,7 +166,13 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
   const [sentimentFilter, setSentimentFilter] = useState('ALL');
   const [selectedTagFilter, setSelectedTagFilter] = useState<string | null>(null);
-  const [selectedFolderFilter, setSelectedFolderFilter] = useState<string>('UNREAD');
+  const [selectedFolderFilter, setSelectedFolderFilter] = useState<string>(initialFolder || 'UNREAD');
+
+  useEffect(() => {
+    if (initialFolder) {
+      setSelectedFolderFilter(initialFolder);
+    }
+  }, [initialFolder]);
 
   // Queries & Mutations
   const isTelegramFilter = sentimentFilter === 'TELEGRAM';
@@ -174,10 +186,25 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
   const { data: foldersData } = useThoughtLogFolders();
   const { data: allLogs = [] } = useThoughtLogs();
   const { data: allIdeas = [] } = useTradeIdeas();
-  const totalTelegramCount = allLogs.filter(
+
+  // Filter helper: never show automated triggered price alerts in Log stream
+  const isTriggeredAlert = (l: ThoughtLogRecord) =>
+    Boolean(
+      l.tags?.toLowerCase().includes('triggered') ||
+      l.title?.toUpperCase().includes('PRICE ALERT TRIGGERED') ||
+      l.content?.toUpperCase().includes('PRICE ALERT TRIGGERED') ||
+      l.title?.includes('Hit $') ||
+      /🚨\s*Alert:.*(?:Fallen Below|Risen Above)/i.test(l.title || '')
+    );
+
+  const nonTriggeredAllLogs = useMemo(() => {
+    return allLogs.filter((l) => !isTriggeredAlert(l));
+  }, [allLogs]);
+
+  const totalTelegramCount = nonTriggeredAllLogs.filter(
     (l) => l.tags?.toLowerCase().includes('telegram') || l.title.includes('📱')
   ).length;
-  const totalUnreadCount = foldersData?.unreadCount ?? allLogs.filter((l) => !l.isRead).length;
+  const totalUnreadCount = foldersData?.unreadCount ?? nonTriggeredAllLogs.filter((l) => !l.isRead).length;
 
   const createLogMutation = useCreateThoughtLog();
   const updateLogMutation = useUpdateThoughtLog();
@@ -250,12 +277,13 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
   // Active Selected Log
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
 
-  // Filter visible logs: if in UNREAD view, only show unread logs or the currently selected log being viewed
+  // Filter visible logs: exclude triggered alerts, and if in UNREAD view, only show unread logs or the currently selected log being viewed
   const displayLogs = useMemo(() => {
+    const nonTriggered = logs.filter((l) => !isTriggeredAlert(l));
     if (selectedFolderFilter === 'UNREAD') {
-      return logs.filter((l) => !l.isRead || l.id === selectedLogId);
+      return nonTriggered.filter((l) => !l.isRead || l.id === selectedLogId);
     }
-    return logs;
+    return nonTriggered;
   }, [logs, selectedFolderFilter, selectedLogId]);
 
   // Workspace Edit States
@@ -278,6 +306,14 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
   const [tradeStructureSymbol, setTradeStructureSymbol] = useState<string>('');
   const [tradeStructureThesis, setTradeStructureThesis] = useState<string>('');
   const [tradeStructureSentiment, setTradeStructureSentiment] = useState<'BULLISH' | 'BEARISH' | 'NEUTRAL'>('BULLISH');
+
+  // Printable Memo State
+  const [printModalData, setPrintModalData] = useState<CopilotPrintableData | null>(null);
+
+  const handlePrintLog = (log: ThoughtLogRecord) => {
+    const printable = extractPrintableDataFromLog(log);
+    setPrintModalData(printable);
+  };
 
   // Drag & Drop and Folder Management State
   const [draggingLog, setDraggingLog] = useState<ThoughtLogRecord | null>(null);
@@ -899,7 +935,7 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                     <span className="truncate">All Notes</span>
                   </div>
                   <Badge variant="outline" className={cn("text-[9.5px] px-1.5 py-0 font-mono shrink-0 ml-1 border-0", selectedFolderFilter === 'ALL' ? "bg-primary-foreground/20 text-primary-foreground" : "bg-accent text-muted-foreground")}>
-                    {allLogs.length}
+                    {nonTriggeredAllLogs.length}
                   </Badge>
                 </button>
 
@@ -980,6 +1016,7 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                 {/* 3. System & Custom Folder Drop Capsules */}
                 {[
                   { name: 'General', icon: Folder, color: 'text-slate-400' },
+                  { name: 'Saved', icon: BookmarkCheck, color: 'text-emerald-400' },
                   { name: 'Ideas', icon: Lightbulb, color: 'text-amber-400' },
                   { name: 'Research', icon: Search, color: 'text-purple-400' },
                   { name: 'Earnings', icon: BarChart2, color: 'text-rose-400' },
@@ -987,15 +1024,16 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                   { name: 'Alerts', icon: Bell, color: 'text-amber-400' },
                   { name: 'Macro', icon: Globe, color: 'text-blue-400' },
                   { name: 'Trading', icon: Zap, color: 'text-orange-400' },
+                  { name: 'Execution', icon: Target, color: 'text-emerald-400' },
                   ...((foldersData?.folders || [])
-                    .filter((f) => !['General', 'Ideas', 'Research', 'Earnings', 'Watchlist', 'Alerts', 'Macro', 'Trading', 'Telegram', 'App'].includes(f.name))
+                    .filter((f) => !['General', 'Saved', 'Ideas', 'Research', 'Earnings', 'Watchlist', 'Alerts', 'Macro', 'Trading', 'Execution', 'Telegram', 'App'].includes(f.name))
                     .map((f) => ({ name: f.name, icon: Folder, color: 'text-indigo-400' }))
                   )
                 ].map((folder) => {
                   const Icon = folder.icon;
                   const count = (foldersData?.folders.find((f) => f.name === folder.name)?.count) ||
-                    (folder.name === 'General' ? (foldersData?.unfiledCount || allLogs.filter(l => !l.folder || l.folder === 'General').length) :
-                    allLogs.filter(l => l.folder === folder.name).length);
+                    (folder.name === 'General' ? (foldersData?.unfiledCount || nonTriggeredAllLogs.filter(l => !l.folder || l.folder === 'General').length) :
+                    nonTriggeredAllLogs.filter(l => l.folder === folder.name).length);
                   const isSelected = selectedFolderFilter === folder.name;
                   const isHoveredDrop = dragOverFolder === folder.name;
 
@@ -1102,6 +1140,26 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                       <p className="text-xs font-bold text-foreground">All caught up! 🎉</p>
                       <p className="text-[11px] text-muted-foreground">
                         You have opened and reviewed all unread messages.
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setSelectedFolderFilter('ALL')}
+                      className="text-xs font-bold text-primary border-primary/40 hover:bg-primary/10"
+                    >
+                      Browse All Notes ({allLogs.length})
+                    </Button>
+                  </>
+                ) : selectedFolderFilter === 'Saved' ? (
+                  <>
+                    <div className="w-10 h-10 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center mx-auto text-emerald-400">
+                      <BookmarkCheck className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-bold text-foreground">No Saved Answers Yet</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Save AI Copilot answers or drag existing notes here to bookmark them for later review.
                       </p>
                     </div>
                     <Button
@@ -1282,9 +1340,53 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                             <span>⚡ Code</span>
                           </button>
                         )}
+
+                        {/* Print PDF Badge Button for Saved notes & Copilot answers */}
+                        {(log.folder === 'Saved' || log.agentActionType === 'COPILOT_SAVED' || log.tags?.includes('Saved Answer') || log.tags?.includes('AI Copilot')) && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handlePrintLog(log);
+                            }}
+                            className="px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 flex items-center gap-1 transition-all shrink-0"
+                            title="Print / Save stylized PDF of this saved answer"
+                          >
+                            <Printer className="w-2.5 h-2.5 text-indigo-400" />
+                            <span>Print PDF</span>
+                          </button>
+                        )}
+
+                        {/* Queue Button for Execution logs */}
+                        {(log.folder === 'Execution' || log.tags?.includes('Execution') || log.tags?.includes('Queue')) && onNavigateToManagement && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onNavigateToManagement();
+                              toast.info('Navigated to Daily & Weekly Trade Execution Queue');
+                            }}
+                            className="px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 flex items-center gap-1 transition-all shrink-0"
+                            title="Open Daily & Weekly Execution Queue in Management"
+                          >
+                            <Target className="w-2.5 h-2.5 text-amber-400" />
+                            <span>Queue</span>
+                          </button>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePrintLog(log);
+                          }}
+                          className="p-1 rounded hover:bg-indigo-500/20 text-muted-foreground hover:text-indigo-300 transition-colors"
+                          title="Print / Save PDF of this note"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           type="button"
                           onClick={(e) => {
@@ -1309,6 +1411,25 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                         >
                           <Bell className="w-3.5 h-3.5" />
                         </button>
+                        {/* Save to Watchlist Option */}
+                        {(log.symbols || log.folder === 'Ideas') && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const sym = log.symbols ? log.symbols.split(',')[0].trim() : (extractSymbolsFromText(`${log.title} ${log.content}`)[0] || '');
+                              if (sym) {
+                                setWatchlistModalSymbol(sym);
+                              } else {
+                                toast.info('No ticker symbol detected in this note to add to a watchlist.');
+                              }
+                            }}
+                            className="p-1 rounded hover:bg-emerald-500/20 text-muted-foreground hover:text-emerald-400 transition-colors"
+                            title="Save symbol directly to a Watchlist"
+                          >
+                            <FolderPlus className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={(e) => handleTogglePin(log, e)}
@@ -1349,19 +1470,24 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                             const clean = sym.trim().toUpperCase();
                             const hasIdea = ideasBySymbol.has(clean);
                             return (
-                              <span
+                              <button
                                 key={clean}
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setWatchlistModalSymbol(clean);
+                                }}
                                 className={cn(
-                                  "px-1.5 py-0.2 rounded font-bold text-foreground inline-flex items-center gap-0.5 text-[9.5px]",
+                                  "px-1.5 py-0.2 rounded font-bold text-foreground inline-flex items-center gap-0.5 text-[9.5px] transition-colors hover:ring-1 hover:ring-emerald-500/50 group/chip cursor-pointer",
                                   hasIdea
                                     ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
-                                    : "bg-accent/40"
+                                    : "bg-accent/40 hover:bg-emerald-500/15 hover:text-emerald-300"
                                 )}
-                                title={hasIdea ? `Active idea in Ideas tab for $${clean}` : undefined}
+                                title={`Click to save $${clean} to Watchlist`}
                               >
-                                {hasIdea && <Lightbulb className="w-2.5 h-2.5 text-amber-300" />}
+                                {hasIdea ? <Lightbulb className="w-2.5 h-2.5 text-amber-300" /> : <FolderPlus className="w-2.5 h-2.5 opacity-60 group-hover/chip:opacity-100 text-emerald-400" />}
                                 ${clean}
-                              </span>
+                              </button>
                             );
                           })}
                         </div>
@@ -1557,6 +1683,28 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                     </span>
                   </Button>
 
+                  {/* Save to Watchlist Button */}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      const symToSave = detectedTickers[0] || (logs.find(l => l.id === selectedLogId)?.symbols?.split(',')[0]?.trim());
+                      if (symToSave) {
+                        setWatchlistModalSymbol(symToSave);
+                      } else {
+                        toast.info('No ticker symbol detected in this note to save to a watchlist.');
+                      }
+                    }}
+                    className="h-8 text-xs font-bold gap-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/35 text-emerald-300 shadow-sm"
+                    title="Save this idea / symbol directly to a Watchlist"
+                  >
+                    <FolderPlus className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>
+                      Save to Watchlist
+                      {detectedTickers.length > 0 ? ` (${detectedTickers[0]})` : ''}
+                    </span>
+                  </Button>
+
                   {/* Save to Trade Ideas Button */}
                   <Button
                     size="sm"
@@ -1572,6 +1720,50 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                       <><Lightbulb className="w-3.5 h-3.5 text-amber-400" /><span>Save to Ideas</span></>
                     )}
                   </Button>
+
+                  {/* Execution Queue Direct Jump Button */}
+                  {onNavigateToManagement && (editFolder === 'Execution' || editTags.includes('Execution') || (selectedLogId && allLogs.find(l => l.id === selectedLogId)?.folder === 'Execution')) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        onNavigateToManagement();
+                        toast.info('Navigated to Daily & Weekly Trade Execution Queue');
+                      }}
+                      className="h-8 text-xs font-bold gap-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-500/40 text-emerald-300 shadow-sm"
+                      title="Open Daily & Weekly Trade Execution Queue in Management"
+                    >
+                      <Target className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Execution Queue</span>
+                    </Button>
+                  )}
+
+                  {/* Print / Save PDF Research Memo Button */}
+                  {selectedLogId && selectedLogId !== 'new_draft' && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        const currentLog = allLogs.find((l) => l.id === selectedLogId);
+                        if (currentLog) {
+                          handlePrintLog(currentLog);
+                        } else {
+                          setPrintModalData({
+                            id: selectedLogId,
+                            query: editTitle || 'Financial Research Memo',
+                            response: currentAgentOutput || editContent,
+                            model: 'AI Copilot',
+                            timestamp: new Date().toLocaleString(),
+                          });
+                        }
+                      }}
+                      className="h-8 text-xs font-bold gap-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 border-indigo-500/35 text-indigo-300 shadow-sm"
+                      title="Print or export stylized PDF research memo"
+                    >
+                      <Printer className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Print PDF</span>
+                    </Button>
+                  )}
 
                   {selectedLogId && selectedLogId !== 'new_draft' && (
                     <Button
@@ -1672,6 +1864,14 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
                               title={alertMatch ? `Set price alert for ${ticker} @ $${alertMatch.targetPrice}` : `Set price alert for ${ticker}`}
                             >
                               <Bell className="w-3 h-3 text-amber-400" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setWatchlistModalSymbol(ticker)}
+                              className="text-emerald-400 hover:text-emerald-300 p-0.5 transition-colors"
+                              title={`Save ${ticker} to Watchlist`}
+                            >
+                              <FolderPlus className="w-3 h-3 text-emerald-400" />
                             </button>
                             {hasIdea && onNavigateToIdeas && (
                               <button
@@ -2090,6 +2290,14 @@ export function LogPage({ onNavigateToResearch, onNavigateToIdeas, onNavigateToT
         }}
         idea={antigravityModalIdea}
         logId={antigravityModalLogId}
+      />
+
+      {/* Executive Research Memo PDF Print & Reader Modal */}
+      <CopilotPrintModal
+        isOpen={Boolean(printModalData)}
+        onClose={() => setPrintModalData(null)}
+        data={printModalData}
+        isSaved={true}
       />
     </div>
   );

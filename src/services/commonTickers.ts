@@ -1,0 +1,258 @@
+/**
+ * Curated dictionary of common stock symbols and their institutional company names & exchanges.
+ * Used for instant autocomplete, fallback name resolution, and offline search.
+ */
+
+export interface KnownTickerInfo {
+  symbol: string;
+  name: string;
+  stockExchange: string;
+  exchangeShortName: string;
+  sector?: string;
+}
+
+export const KNOWN_COMPANY_NAMES: Record<string, { name: string; exchange: string; sector?: string }> = {
+  // Mega-cap & Tech Giants
+  'AAPL': { name: 'Apple Inc.', exchange: 'NASDAQ', sector: 'Technology' },
+  'MSFT': { name: 'Microsoft Corporation', exchange: 'NASDAQ', sector: 'Technology' },
+  'NVDA': { name: 'NVIDIA Corporation', exchange: 'NASDAQ', sector: 'Semiconductors' },
+  'GOOGL': { name: 'Alphabet Inc. (Class A)', exchange: 'NASDAQ', sector: 'Communication' },
+  'GOOG': { name: 'Alphabet Inc. (Class C)', exchange: 'NASDAQ', sector: 'Communication' },
+  'AMZN': { name: 'Amazon.com, Inc.', exchange: 'NASDAQ', sector: 'Consumer Discretionary' },
+  'META': { name: 'Meta Platforms, Inc.', exchange: 'NASDAQ', sector: 'Communication' },
+  'TSLA': { name: 'Tesla, Inc.', exchange: 'NASDAQ', sector: 'Consumer Discretionary' },
+  'AVGO': { name: 'Broadcom Inc.', exchange: 'NASDAQ', sector: 'Semiconductors' },
+  'AMD': { name: 'Advanced Micro Devices, Inc.', exchange: 'NASDAQ', sector: 'Semiconductors' },
+  'INTC': { name: 'Intel Corporation', exchange: 'NASDAQ', sector: 'Semiconductors' },
+  'QCOM': { name: 'QUALCOMM Incorporated', exchange: 'NASDAQ', sector: 'Semiconductors' },
+  'TSM': { name: 'Taiwan Semiconductor Manufacturing Co.', exchange: 'NYSE', sector: 'Semiconductors' },
+  'ASML': { name: 'ASML Holding N.V.', exchange: 'NASDAQ', sector: 'Semiconductors' },
+  'ARM': { name: 'Arm Holdings plc', exchange: 'NASDAQ', sector: 'Semiconductors' },
+  'SMCI': { name: 'Super Micro Computer, Inc.', exchange: 'NASDAQ', sector: 'Technology' },
+  'TXN': { name: 'Texas Instruments Inc.', exchange: 'NASDAQ', sector: 'Semiconductors' },
+  'MU': { name: 'Micron Technology, Inc.', exchange: 'NASDAQ', sector: 'Semiconductors' },
+  'ORCL': { name: 'Oracle Corporation', exchange: 'NYSE', sector: 'Technology' },
+  'CRM': { name: 'Salesforce, Inc.', exchange: 'NYSE', sector: 'Technology' },
+  'ADBE': { name: 'Adobe Inc.', exchange: 'NASDAQ', sector: 'Technology' },
+  'CSCO': { name: 'Cisco Systems, Inc.', exchange: 'NASDAQ', sector: 'Technology' },
+  'IBM': { name: 'International Business Machines Corp.', exchange: 'NYSE', sector: 'Technology' },
+  'NOW': { name: 'ServiceNow, Inc.', exchange: 'NYSE', sector: 'Technology' },
+  'PLTR': { name: 'Palantir Technologies Inc.', exchange: 'NASDAQ', sector: 'Technology' },
+  'SNOW': { name: 'Snowflake Inc.', exchange: 'NYSE', sector: 'Technology' },
+  'PANW': { name: 'Palo Alto Networks, Inc.', exchange: 'NASDAQ', sector: 'Cybersecurity' },
+  'CRWD': { name: 'CrowdStrike Holdings, Inc.', exchange: 'NASDAQ', sector: 'Cybersecurity' },
+  'NET': { name: 'Cloudflare, Inc.', exchange: 'NYSE', sector: 'Technology' },
+  'ZS': { name: 'Zscaler, Inc.', exchange: 'NASDAQ', sector: 'Cybersecurity' },
+  'FTNT': { name: 'Fortinet, Inc.', exchange: 'NASDAQ', sector: 'Cybersecurity' },
+  'KVYO': { name: 'Klaviyo, Inc.', exchange: 'NYSE', sector: 'Software' },
+  'RBRK': { name: 'Rubrik, Inc.', exchange: 'NYSE', sector: 'Cybersecurity' },
+  'PATH': { name: 'UiPath Inc.', exchange: 'NYSE', sector: 'Software' },
+  'ZETA': { name: 'Zeta Global Holdings Corp.', exchange: 'NYSE', sector: 'Software' },
+  'APP': { name: 'AppLovin Corporation', exchange: 'NASDAQ', sector: 'Technology' },
+  'SHOP': { name: 'Shopify Inc.', exchange: 'NYSE', sector: 'Technology' },
+  'SQ': { name: 'Block, Inc.', exchange: 'NYSE', sector: 'Fintech' },
+  'PYPL': { name: 'PayPal Holdings, Inc.', exchange: 'NASDAQ', sector: 'Fintech' },
+  'SOFI': { name: 'SoFi Technologies, Inc.', exchange: 'NASDAQ', sector: 'Fintech' },
+  'AFRM': { name: 'Affirm Holdings, Inc.', exchange: 'NASDAQ', sector: 'Fintech' },
+  'UPST': { name: 'Upstart Holdings, Inc.', exchange: 'NASDAQ', sector: 'Fintech' },
+  'COIN': { name: 'Coinbase Global, Inc.', exchange: 'NASDAQ', sector: 'Crypto / Fintech' },
+  'HOOD': { name: 'Robinhood Markets, Inc.', exchange: 'NASDAQ', sector: 'Fintech' },
+  'MSTR': { name: 'MicroStrategy Incorporated', exchange: 'NASDAQ', sector: 'Technology' },
+  'UBER': { name: 'Uber Technologies, Inc.', exchange: 'NYSE', sector: 'Technology' },
+  'LYFT': { name: 'Lyft, Inc.', exchange: 'NASDAQ', sector: 'Technology' },
+  'ABNB': { name: 'Airbnb, Inc.', exchange: 'NASDAQ', sector: 'Consumer Discretionary' },
+  'DASH': { name: 'DoorDash, Inc.', exchange: 'NASDAQ', sector: 'Consumer Discretionary' },
+  'SPOT': { name: 'Spotify Technology S.A.', exchange: 'NYSE', sector: 'Communication' },
+  'NFLX': { name: 'Netflix, Inc.', exchange: 'NASDAQ', sector: 'Communication' },
+  'DIS': { name: 'The Walt Disney Company', exchange: 'NYSE', sector: 'Communication' },
+  'ROKU': { name: 'Roku, Inc.', exchange: 'NASDAQ', sector: 'Communication' },
+  'SNAP': { name: 'Snap Inc.', exchange: 'NYSE', sector: 'Communication' },
+  'PINS': { name: 'Pinterest, Inc.', exchange: 'NYSE', sector: 'Communication' },
+  'RDDT': { name: 'Reddit, Inc.', exchange: 'NYSE', sector: 'Communication' },
+
+  // Nuclear, Uranium & Clean Energy
+  'CCJ': { name: 'Cameco Corporation', exchange: 'NYSE', sector: 'Energy / Uranium' },
+  'SMR': { name: 'NuScale Power Corporation', exchange: 'NYSE', sector: 'Nuclear Energy' },
+  'UUUU': { name: 'Energy Fuels Inc.', exchange: 'NYSE American', sector: 'Uranium / Critical Minerals' },
+  'NXE': { name: 'NexGen Energy Ltd.', exchange: 'NYSE', sector: 'Uranium Exploration' },
+  'UROY': { name: 'Uranium Royalty Corp.', exchange: 'NASDAQ', sector: 'Uranium Royalty' },
+  'DNN': { name: 'Denison Mines Corp.', exchange: 'NYSE American', sector: 'Uranium' },
+  'LEU': { name: 'Centrus Energy Corp.', exchange: 'NYSE American', sector: 'Nuclear Fuel' },
+  'BWXT': { name: 'BWX Technologies, Inc.', exchange: 'NYSE', sector: 'Nuclear Manufacturing' },
+  'CEG': { name: 'Constellation Energy Corp.', exchange: 'NASDAQ', sector: 'Clean Energy' },
+  'VST': { name: 'Vistra Corp.', exchange: 'NYSE', sector: 'Power Utilities' },
+  'OKLO': { name: 'Oklo Inc.', exchange: 'NYSE', sector: 'Advanced Nuclear' },
+  'RUN': { name: 'Sunrun Inc.', exchange: 'NASDAQ', sector: 'Solar Energy' },
+  'FSLR': { name: 'First Solar, Inc.', exchange: 'NASDAQ', sector: 'Solar Technology' },
+  'ENPH': { name: 'Enphase Energy, Inc.', exchange: 'NASDAQ', sector: 'Solar Energy' },
+  'SEDG': { name: 'SolarEdge Technologies, Inc.', exchange: 'NASDAQ', sector: 'Solar Energy' },
+  'FLNC': { name: 'Fluence Energy, Inc.', exchange: 'NASDAQ', sector: 'Energy Storage' },
+  'PLUG': { name: 'Plug Power Inc.', exchange: 'NASDAQ', sector: 'Hydrogen Fuel Cells' },
+  'FTCI': { name: 'FTC Solar, Inc.', exchange: 'NASDAQ', sector: 'Solar Tracking' },
+
+  // Healthcare, Biotech & Telehealth
+  'HIMS': { name: 'Hims & Hers Health, Inc.', exchange: 'NYSE', sector: 'Digital Health' },
+  'OSCR': { name: 'Oscar Health, Inc.', exchange: 'NYSE', sector: 'Healthcare' },
+  'TDOC': { name: 'Teladoc Health, Inc.', exchange: 'NYSE', sector: 'Telehealth' },
+  'UNH': { name: 'UnitedHealth Group Inc.', exchange: 'NYSE', sector: 'Healthcare' },
+  'LLY': { name: 'Eli Lilly and Company', exchange: 'NYSE', sector: 'Pharmaceuticals' },
+  'NVO': { name: 'Novo Nordisk A/S', exchange: 'NYSE', sector: 'Pharmaceuticals' },
+  'JNJ': { name: 'Johnson & Johnson', exchange: 'NYSE', sector: 'Healthcare' },
+  'PFE': { name: 'Pfizer Inc.', exchange: 'NYSE', sector: 'Pharmaceuticals' },
+  'MRK': { name: 'Merck & Co., Inc.', exchange: 'NYSE', sector: 'Pharmaceuticals' },
+  'ABBV': { name: 'AbbVie Inc.', exchange: 'NYSE', sector: 'Biopharmaceuticals' },
+  'ISRG': { name: 'Intuitive Surgical, Inc.', exchange: 'NASDAQ', sector: 'Medical Devices' },
+
+  // Space & Aerospace
+  'JOBY': { name: 'Joby Aviation, Inc.', exchange: 'NYSE', sector: 'eVTOL / Aerospace' },
+  'ACHR': { name: 'Archer Aviation Inc.', exchange: 'NYSE', sector: 'eVTOL / Aerospace' },
+  'RKLB': { name: 'Rocket Lab USA, Inc.', exchange: 'NASDAQ', sector: 'Aerospace & Defense' },
+  'RDW': { name: 'Redwire Corporation', exchange: 'NYSE', sector: 'Space Infrastructure' },
+  'SATL': { name: 'Satellogic Inc.', exchange: 'NASDAQ', sector: 'Earth Observation' },
+  'BA': { name: 'The Boeing Company', exchange: 'NYSE', sector: 'Aerospace & Defense' },
+  'LMT': { name: 'Lockheed Martin Corporation', exchange: 'NYSE', sector: 'Aerospace & Defense' },
+  'RTX': { name: 'RTX Corporation', exchange: 'NYSE', sector: 'Aerospace & Defense' },
+
+  // Real Estate & REITs
+  'O': { name: 'Realty Income Corporation', exchange: 'NYSE', sector: 'Real Estate / Monthly Dividend' },
+  'MPW': { name: 'Medical Properties Trust, Inc.', exchange: 'NYSE', sector: 'Healthcare REIT' },
+  'MPT': { name: 'Medical Properties Trust, Inc.', exchange: 'NYSE', sector: 'Healthcare REIT' },
+  'VICI': { name: 'VICI Properties Inc.', exchange: 'NYSE', sector: 'Experiential REIT' },
+  'PLD': { name: 'Prologis, Inc.', exchange: 'NYSE', sector: 'Industrial REIT' },
+  'AMT': { name: 'American Tower Corporation', exchange: 'NYSE', sector: 'Cell Tower REIT' },
+  'ARE': { name: 'Alexandria Real Estate Equities', exchange: 'NYSE', sector: 'Life Science REIT' },
+
+  // Financials, Banking & Brokers
+  'JPM': { name: 'JPMorgan Chase & Co.', exchange: 'NYSE', sector: 'Financial Services' },
+  'BAC': { name: 'Bank of America Corporation', exchange: 'NYSE', sector: 'Banking' },
+  'WFC': { name: 'Wells Fargo & Company', exchange: 'NYSE', sector: 'Banking' },
+  'C': { name: 'Citigroup Inc.', exchange: 'NYSE', sector: 'Banking' },
+  'MS': { name: 'Morgan Stanley', exchange: 'NYSE', sector: 'Investment Banking' },
+  'GS': { name: 'The Goldman Sachs Group, Inc.', exchange: 'NYSE', sector: 'Investment Banking' },
+  'BLK': { name: 'BlackRock, Inc.', exchange: 'NYSE', sector: 'Asset Management' },
+  'SCHW': { name: 'The Charles Schwab Corporation', exchange: 'NYSE', sector: 'Brokerage' },
+  'IBKR': { name: 'Interactive Brokers Group, Inc.', exchange: 'NASDAQ', sector: 'Electronic Brokerage' },
+  'V': { name: 'Visa Inc.', exchange: 'NYSE', sector: 'Payment Processing' },
+  'MA': { name: 'Mastercard Incorporated', exchange: 'NYSE', sector: 'Payment Processing' },
+  'AXP': { name: 'American Express Company', exchange: 'NYSE', sector: 'Consumer Finance' },
+
+  // Energy, Oil & Gas
+  'XOM': { name: 'Exxon Mobil Corporation', exchange: 'NYSE', sector: 'Energy' },
+  'CVX': { name: 'Chevron Corporation', exchange: 'NYSE', sector: 'Energy' },
+  'OXY': { name: 'Occidental Petroleum Corporation', exchange: 'NYSE', sector: 'Energy' },
+  'COP': { name: 'ConocoPhillips', exchange: 'NYSE', sector: 'Energy' },
+  'VAL': { name: 'Valaris Limited', exchange: 'NYSE', sector: 'Offshore Drilling' },
+  'HAL': { name: 'Halliburton Company', exchange: 'NYSE', sector: 'Energy Services' },
+  'SLB': { name: 'Schlumberger Limited', exchange: 'NYSE', sector: 'Energy Services' },
+  'NFE': { name: 'New Fortress Energy Inc.', exchange: 'NASDAQ', sector: 'LNG Infrastructure' },
+
+  // Mining, Metals & Commodities
+  'CDE': { name: 'Coeur Mining, Inc.', exchange: 'NYSE', sector: 'Precious Metals Mining' },
+  'EXK': { name: 'Endeavour Silver Corp.', exchange: 'NYSE', sector: 'Silver Mining' },
+  'PAAS': { name: 'Pan American Silver Corp.', exchange: 'NYSE', sector: 'Silver Mining' },
+  'NEM': { name: 'Newmont Corporation', exchange: 'NYSE', sector: 'Gold Mining' },
+  'GOLD': { name: 'Barrick Gold Corporation', exchange: 'NYSE', sector: 'Gold Mining' },
+  'AEM': { name: 'Agnico Eagle Mines Limited', exchange: 'NYSE', sector: 'Gold Mining' },
+  'GLD': { name: 'SPDR Gold Shares', exchange: 'NYSE Arca', sector: 'Commodity ETF' },
+  'SLV': { name: 'iShares Silver Trust', exchange: 'NYSE Arca', sector: 'Commodity ETF' },
+
+  // Portfolio Holdings & Active Watchlist Equities
+  'PSTG': { name: 'Pure Storage, Inc.', exchange: 'NYSE', sector: 'Enterprise Data Storage' },
+  'DLO': { name: 'DLocal Limited', exchange: 'NASDAQ', sector: 'Emerging Payments' },
+  'TFLO': { name: 'iShares Treasury Floating Rate Bond ETF', exchange: 'NYSE Arca', sector: 'Fixed Income ETF' },
+  'CRON': { name: 'Cronos Group Inc.', exchange: 'NASDAQ', sector: 'Consumer Goods' },
+  'SPCB': { name: 'SuperCom Ltd.', exchange: 'NASDAQ', sector: 'IoT Security' },
+  'ALAR': { name: 'Alarum Technologies Ltd.', exchange: 'NASDAQ', sector: 'Cybersecurity' },
+  'FTHM': { name: 'Fathom Holdings Inc.', exchange: 'NASDAQ', sector: 'Real Estate Services' },
+  'HYLN': { name: 'Hyliion Holdings Corp.', exchange: 'NYSE', sector: 'Clean Powertrain' },
+  'PGY': { name: 'Pagaya Technologies Ltd.', exchange: 'NASDAQ', sector: 'AI Fintech' },
+  'ZIM': { name: 'ZIM Integrated Shipping Services', exchange: 'NYSE', sector: 'Container Shipping' },
+  'BBWI': { name: 'Bath & Body Works, Inc.', exchange: 'NYSE', sector: 'Specialty Retail' },
+  'NWL': { name: 'Newell Brands Inc.', exchange: 'NASDAQ', sector: 'Consumer Products' },
+  'SERV': { name: 'Serve Robotics Inc.', exchange: 'NASDAQ', sector: 'Autonomous Delivery' },
+  'ZDGE': { name: 'Zedge, Inc.', exchange: 'NYSE American', sector: 'Digital Publishing' },
+  'FOA': { name: 'Finance of America Companies Inc.', exchange: 'NYSE', sector: 'Specialty Lending' },
+  'NU': { name: 'Nu Holdings Ltd. (Nubank)', exchange: 'NYSE', sector: 'Digital Banking' },
+  'GRPN': { name: 'Groupon, Inc.', exchange: 'NASDAQ', sector: 'E-commerce' },
+  'EQX': { name: 'Equinox Gold Corp.', exchange: 'NYSE American', sector: 'Gold Mining' },
+  'MBLY': { name: 'Mobileye Global Inc.', exchange: 'NASDAQ', sector: 'Autonomous Driving' },
+  'BTG': { name: 'B2Gold Corp.', exchange: 'NYSE American', sector: 'Gold Mining' },
+  'ADEA': { name: 'Adea Inc.', exchange: 'NASDAQ', sector: 'Media IP & Licensing' },
+  'UNRY': { name: 'Uni-Select Inc. / United Energy', exchange: 'US OTC', sector: 'Diversified' },
+  'URC': { name: 'Uranium Royalty Corp.', exchange: 'NASDAQ', sector: 'Uranium Royalty' },
+  'ORLA': { name: 'Orla Mining Ltd.', exchange: 'NYSE American', sector: 'Precious Metals' },
+  'RKT': { name: 'Rocket Companies, Inc.', exchange: 'NYSE', sector: 'Consumer Lending' },
+  'AES': { name: 'The AES Corporation', exchange: 'NYSE', sector: 'Electric Utilities' },
+  'SBUX': { name: 'Starbucks Corporation', exchange: 'NASDAQ', sector: 'Consumer' },
+  'NKE': { name: 'NIKE, Inc.', exchange: 'NYSE', sector: 'Apparel' },
+  'COST': { name: 'Costco Wholesale Corporation', exchange: 'NASDAQ', sector: 'Retail' },
+  'WMT': { name: 'Walmart Inc.', exchange: 'NYSE', sector: 'Retail' },
+  'HD': { name: 'The Home Depot, Inc.', exchange: 'NYSE', sector: 'Retail' },
+  'T': { name: 'AT&T Inc.', exchange: 'NYSE', sector: 'Telecommunications' },
+  'VZ': { name: 'Verizon Communications Inc.', exchange: 'NYSE', sector: 'Telecommunications' },
+  'TMUS': { name: 'T-Mobile US, Inc.', exchange: 'NASDAQ', sector: 'Telecommunications' },
+};
+
+/**
+ * Returns clean company name for a ticker symbol, or undefined if unknown.
+ */
+export function getKnownCompanyName(symbol: string): string | undefined {
+  if (!symbol) return undefined;
+  const clean = symbol.trim().toUpperCase();
+  return KNOWN_COMPANY_NAMES[clean]?.name;
+}
+
+/**
+ * Instant local search through known ticker universe for instantaneous dropdown autocomplete.
+ */
+export function searchKnownTickers(query: string, limit = 8): KnownTickerInfo[] {
+  const q = (query || '').trim().toUpperCase();
+  if (!q) return [];
+
+  const matches: KnownTickerInfo[] = [];
+
+  // Exact symbol match first
+  if (KNOWN_COMPANY_NAMES[q]) {
+    const info = KNOWN_COMPANY_NAMES[q];
+    matches.push({
+      symbol: q,
+      name: info.name,
+      stockExchange: info.exchange,
+      exchangeShortName: info.exchange,
+      sector: info.sector,
+    });
+  }
+
+  // Prefix symbol matches
+  for (const [sym, info] of Object.entries(KNOWN_COMPANY_NAMES)) {
+    if (sym === q) continue;
+    if (sym.startsWith(q)) {
+      matches.push({
+        symbol: sym,
+        name: info.name,
+        stockExchange: info.exchange,
+        exchangeShortName: info.exchange,
+        sector: info.sector,
+      });
+      if (matches.length >= limit) return matches;
+    }
+  }
+
+  // Name matches (e.g. searching "Apple" or "Tesla" or "Cameco")
+  const qLower = query.trim().toLowerCase();
+  for (const [sym, info] of Object.entries(KNOWN_COMPANY_NAMES)) {
+    if (matches.some((m) => m.symbol === sym)) continue;
+    if (info.name.toLowerCase().includes(qLower)) {
+      matches.push({
+        symbol: sym,
+        name: info.name,
+        stockExchange: info.exchange,
+        exchangeShortName: info.exchange,
+        sector: info.sector,
+      });
+      if (matches.length >= limit) return matches;
+    }
+  }
+
+  return matches;
+}

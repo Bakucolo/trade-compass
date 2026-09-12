@@ -15,6 +15,20 @@ export interface TastytradeAccount {
     'authority-level': string;
 }
 
+export interface TastytradeStatus {
+    connected: boolean;
+    user?: TastytradeUser;
+    accountNumber?: string;
+}
+
+export const fetchTastytradeStatus = async (): Promise<TastytradeStatus> => {
+    const response = await fetch(`${API_BASE}/status`);
+    if (!response.ok) {
+        return { connected: false };
+    }
+    return response.json();
+};
+
 export const loginToTastytrade = async (credentials: { username: string; password: string; isSandbox?: boolean }) => {
     const response = await fetch(`${API_BASE}/login`, {
         method: 'POST',
@@ -43,7 +57,7 @@ export const fetchPositions = async (): Promise<any[]> => {
     const response = await fetch(`${API_BASE}/positions/default`);
     if (!response.ok) throw new Error('Failed to fetch positions');
     const data = await response.json();
-    return data.data;
+    return data.items || data.data || [];
 };
 
 export const useTastytradeLogin = () => {
@@ -65,5 +79,13 @@ export const useTastytradePositions = () => {
         queryKey: ['tastytradePositions'],
         queryFn: fetchPositions,
         retry: false,
+    });
+};
+
+export const useTastytradeStatus = () => {
+    return useQuery<TastytradeStatus>({
+        queryKey: ['tastytradeStatus'],
+        queryFn: fetchTastytradeStatus,
+        refetchInterval: 10000,
     });
 };

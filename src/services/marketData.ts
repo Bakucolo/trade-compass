@@ -1,4 +1,5 @@
 import { tastytradeAuthService } from './tastytradeAuth';
+import { KNOWN_COMPANY_NAMES, getKnownCompanyName, searchKnownTickers } from './commonTickers';
 
 export const USE_STREAMING = false;
 
@@ -146,21 +147,47 @@ const fetchFromTastytrade = async (symbol: string) => {
 const quoteCache = new Map<string, { promise: Promise<StockQuote | null>, timestamp: number }>();
 const CACHE_TTL_MS = 60000; // 1 minute cache to avoid rate limits
 
+const clientSearchCache = new Map<string, { data: StockSearchResult[], timestamp: number }>();
+const CLIENT_SEARCH_CACHE_TTL = 3 * 60 * 1000;
+
 export const marketDataService = {
     searchSymbols: async (query: string): Promise<StockSearchResult[]> => {
         const trimmed = (query || '').trim();
         if (!trimmed) return [];
 
+        const cacheKey = trimmed.toLowerCase();
+        const cached = clientSearchCache.get(cacheKey);
+        if (cached && Date.now() - cached.timestamp < CLIENT_SEARCH_CACHE_TTL && cached.data.length > 0) {
+            return cached.data;
+        }
+
         try {
-            const response = await fetchWithTimeout(`${API_URL}/research/search?query=${encodeURIComponent(trimmed)}`, {}, 8000);
+            const response = await fetchWithTimeout(`${API_URL}/research/search?query=${encodeURIComponent(trimmed)}`, {}, 6000);
             if (response.ok) {
                 const data = await response.json();
                 if (Array.isArray(data) && data.length > 0) {
-                    return data;
+                    const enriched = data.map((item: StockSearchResult) => {
+                        const sym = (item.symbol || '').toUpperCase();
+                        const knownName = getKnownCompanyName(sym);
+                        const cleanName = (item.name && item.name !== sym) ? item.name : (knownName || item.name || sym);
+                        return {
+                            ...item,
+                            name: cleanName
+                        };
+                    });
+                    clientSearchCache.set(cacheKey, { data: enriched, timestamp: Date.now() });
+                    return enriched;
                 }
             }
         } catch (e) {
             console.warn("Backend search failed, trying client-side fallback:", e);
+        }
+
+        // Instant fallback: Known ticker universe match
+        const localKnown = searchKnownTickers(trimmed, 8);
+        if (localKnown.length > 0) {
+            clientSearchCache.set(cacheKey, { data: localKnown, timestamp: Date.now() });
+            return localKnown;
         }
 
         // Direct Finnhub fallback from client side
@@ -171,16 +198,22 @@ export const marketDataService = {
                 if (fhRes.ok) {
                     const data = await fhRes.json();
                     if (data?.result && Array.isArray(data.result) && data.result.length > 0) {
-                        return data.result
+                        const fhResults = data.result
                             .filter((r: any) => r && r.symbol && !r.symbol.includes('.'))
                             .slice(0, 10)
-                            .map((r: any) => ({
-                                symbol: r.symbol,
-                                name: r.description || r.displaySymbol || r.symbol,
-                                currency: 'USD',
-                                stockExchange: r.type || 'US',
-                                exchangeShortName: r.type || 'US'
-                            }));
+                            .map((r: any) => {
+                                const sym = (r.symbol || '').toUpperCase();
+                                const knownName = getKnownCompanyName(sym);
+                                return {
+                                    symbol: sym,
+                                    name: r.description || knownName || r.displaySymbol || sym,
+                                    currency: 'USD',
+                                    stockExchange: r.type || 'US',
+                                    exchangeShortName: r.type || 'US'
+                                };
+                            });
+                        clientSearchCache.set(cacheKey, { data: fhResults, timestamp: Date.now() });
+                        return fhResults;
                     }
                 }
             } catch (fhErr) {
@@ -191,13 +224,16 @@ export const marketDataService = {
         // Direct ticker synthesis fallback (e.g. user typed AAPL or NVDA)
         if (/^[A-Za-z0-9\.\-\=]{1,10}$/.test(trimmed)) {
             const sym = trimmed.toUpperCase();
-            return [{
+            const knownName = getKnownCompanyName(sym);
+            const fallbackResult = [{
                 symbol: sym,
-                name: sym,
+                name: knownName || sym,
                 currency: 'USD',
                 stockExchange: 'US',
                 exchangeShortName: 'US'
             }];
+            clientSearchCache.set(cacheKey, { data: fallbackResult, timestamp: Date.now() });
+            return fallbackResult;
         }
 
         return [];

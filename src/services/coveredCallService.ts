@@ -27,6 +27,20 @@ export type CoverageStatus =
   | 'FULLY_COVERED'
   | 'DELTA_DEFICIT';
 
+export interface ActiveCoveredCallPosition {
+  contractSymbol: string;
+  strike: number;
+  expiration: string;
+  dte: number;
+  quantity: number;
+  currentPrice: number;
+  marketValue: number;
+  unrealizedPL?: number;
+  unrealizedPLPercent?: number;
+  broker?: string;
+  account?: string;
+}
+
 export interface CoveredCallPositionCandidate {
   symbol: string;
   companyName: string;
@@ -34,21 +48,17 @@ export interface CoveredCallPositionCandidate {
   currentPrice: number;
   totalMarketValue: number;
   shareCount: number;
+  totalCapacity: number; // Gross capacity (shares/100 + long calls)
+  coveredCallCapacity: number; // Real remaining UNCOVERED call capacity (totalCapacity - activeCalls)
+  coveredSharesCount: number; // Shares currently pledged to active calls (activeCalls * 100)
+  uncoveredSharesCount: number; // Shares truly free and unhedged (shareCount - coveredSharesCount)
+  hasActiveCalls: boolean; // Convenience flag: true if shortCallsCount > 0
   longCallsCount: number;
   shortCallsCount: number;
   netPositionDelta: number;
   unhedgedDelta: number;
-  coveredCallCapacity: number;
   coverageStatus: CoverageStatus;
-  activeCoveredCalls: Array<{
-    contractSymbol: string;
-    strike: number;
-    expiration: string;
-    dte: number;
-    quantity: number;
-    currentPrice: number;
-    marketValue: number;
-  }>;
+  activeCoveredCalls: ActiveCoveredCallPosition[];
   proposedCalls: {
     conservative: ProposedCallStrike;
     balanced: ProposedCallStrike;
@@ -68,6 +78,8 @@ export interface CoveredCallsAnalysisResult {
   uncoveredPositionsCount: number;
   partiallyCoveredCount: number;
   fullyCoveredCount: number;
+  activePositionsCount: number; // Number of underlying stocks with active short call positions
+  totalActiveCallsCount: number; // Total active short call contracts currently open across the portfolio
   totalUncoveredCallCapacity: number;
   potentialMonthlyIncomeEstimate: number;
   potentialAnnualizedYieldEstimate: number;

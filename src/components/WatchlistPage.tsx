@@ -29,13 +29,21 @@ import {
   Globe,
   LineChart,
   Bell,
-  Zap
+  Zap,
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Badge } from './ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu';
 import {
   Sheet,
   SheetContent,
@@ -260,6 +268,25 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
       });
     } catch (err: any) {
       alert(`Failed to remove ${symbol}: ${err.message}`);
+    }
+  };
+
+  // Add symbol to another specific watchlist
+  const handleAddSymbolToOtherWatchlist = async (
+    targetWatchlistId: string,
+    symbol: string,
+    targetName: string,
+    e: React.MouseEvent
+  ) => {
+    e.stopPropagation();
+    try {
+      await addSymbolMutation.mutateAsync({
+        watchlistId: targetWatchlistId,
+        symbol,
+      });
+      toast.success(`Added ${symbol} to "${targetName}"!`);
+    } catch (err: any) {
+      toast.error(`Failed to add ${symbol} to ${targetName}: ${err.message}`);
     }
   };
 
@@ -1052,6 +1079,56 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
                             <Bell className={cn("w-4 h-4", activeAlert && "fill-amber-400/30")} />
                           </Button>
 
+                          {/* Add to another Watchlist Dropdown */}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                                onClick={(e) => e.stopPropagation()}
+                                title={`Add ${item.symbol} to another Watchlist`}
+                              >
+                                <FolderPlus className="w-4 h-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent
+                              align="end"
+                              className="w-52 bg-popover/95 backdrop-blur-md border border-border p-1 shadow-xl"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider px-2 py-1">
+                                Add {item.symbol} to Watchlist
+                              </DropdownMenuLabel>
+                              <DropdownMenuSeparator className="my-1" />
+                              {watchlists.map((w) => {
+                                const isCurrent = w.id === selectedWatchlistId;
+                                const hasStock = (w.items || []).some(
+                                  (i) => i.symbol.toUpperCase() === item.symbol.toUpperCase()
+                                );
+                                return (
+                                  <DropdownMenuItem
+                                    key={w.id}
+                                    disabled={hasStock}
+                                    onClick={(e) =>
+                                      handleAddSymbolToOtherWatchlist(w.id, item.symbol, w.name, e)
+                                    }
+                                    className="text-xs cursor-pointer flex items-center justify-between py-1.5 px-2 rounded-md focus:bg-primary/10"
+                                  >
+                                    <span className="truncate font-medium">{w.name}</span>
+                                    {isCurrent ? (
+                                      <Badge variant="secondary" className="text-[9px] py-0 px-1 font-mono">
+                                        Current
+                                      </Badge>
+                                    ) : hasStock ? (
+                                      <span className="text-[10px] text-muted-foreground">In list</span>
+                                    ) : null}
+                                  </DropdownMenuItem>
+                                );
+                              })}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+
                           <Button
                             variant="ghost"
                             size="icon"
@@ -1515,6 +1592,7 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
             initialSymbol={alertModalStock?.symbol || ''}
             initialPrice={alertModalStock?.price || 0}
             initialStockName={alertModalStock?.name || ''}
+            currentWatchlistId={selectedWatchlistId}
           />
 
           {/* Stock Note Modal */}

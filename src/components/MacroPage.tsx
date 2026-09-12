@@ -24,7 +24,8 @@ import {
   Info,
   BarChart3,
   Building2,
-  PieChart
+  PieChart,
+  ShieldCheck
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
 import { Button } from './ui/button';
@@ -38,7 +39,7 @@ import {
   DialogDescription
 } from './ui/dialog';
 import { useMacroOverview, MacroAssetItem } from '@/services/macroService';
-import { useMacroDossiers } from '@/services/macroDossierService';
+import { useMacroDossiers, isDossierFromToday } from '@/services/macroDossierService';
 import { MacroDossierModal } from './macro/MacroDossierModal';
 import { TradingViewChart } from './graphs/TradingViewChart';
 import { YieldsBondsChartCard } from './macro/YieldsBondsChartCard';
@@ -72,6 +73,10 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
   const [activeTab, setActiveTab] = useState<MacroCategoryTab>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isDossierModalOpen, setIsDossierModalOpen] = useState(false);
+
+  const hasTodayDossier = useMemo(() => {
+    return dossiers.some(d => isDossierFromToday(d.createdAt));
+  }, [dossiers]);
 
   // Selected Macro Instrument for TradingView Modal
   const [chartModalSymbol, setChartModalSymbol] = useState<MacroAssetItem | null>(null);
@@ -242,15 +247,29 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
             {/* Autonomous Macro Dossier Agent Trigger Button */}
             <Button
               onClick={() => setIsDossierModalOpen(true)}
-              className="h-10 px-4 rounded-2xl bg-gradient-to-r from-primary via-cyan-600 to-purple-600 hover:opacity-95 text-white font-bold text-xs gap-2 shadow-lg shadow-primary/20 shrink-0 border border-white/10"
+              className={cn(
+                "h-10 px-4 rounded-2xl font-bold text-xs gap-2 shadow-lg shrink-0 border border-white/10 transition-all",
+                hasTodayDossier
+                  ? "bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-700 hover:opacity-95 text-white shadow-emerald-900/30"
+                  : "bg-gradient-to-r from-primary via-cyan-600 to-purple-600 hover:opacity-95 text-white shadow-primary/20"
+              )}
+              title={hasTodayDossier ? "Today's dossier is saved in database (0 compute used)" : "AI Macro Dossier ready to run"}
             >
-              <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+              {hasTodayDossier ? (
+                <ShieldCheck className="w-4 h-4 text-emerald-300" />
+              ) : (
+                <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+              )}
               <span>AI Macro Dossier</span>
-              {dossiers.length > 0 && (
+              {hasTodayDossier ? (
+                <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-black/30 text-emerald-200 border border-emerald-400/30">
+                  Saved Today
+                </span>
+              ) : dossiers.length > 0 ? (
                 <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-black/30 text-cyan-200">
                   {dossiers.length}
                 </span>
-              )}
+              ) : null}
             </Button>
           </div>
         </div>

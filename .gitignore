@@ -25,3 +25,4 @@ temp_audio/
 cloudflare-telegram-buffer/.wrangler/
 .venv/
 venv/
+.cache/

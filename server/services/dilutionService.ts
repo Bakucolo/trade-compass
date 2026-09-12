@@ -105,6 +105,23 @@ let secCikMapLastFetched = 0;
 const DILUTION_CACHE = new Map<string, { data: DilutionAnalysisData; timestamp: number }>();
 const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
+export function clearDilutionCache(): void {
+  DILUTION_CACHE.clear();
+}
+
+async function fetchWithTimeout(url: string, options: RequestInit = {}, ms: number = 4000): Promise<Response> {
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Fetch timed out after ${ms}ms: ${url}`)), ms);
+    if (typeof (timer as any)?.unref === 'function') {
+      (timer as any).unref();
+    }
+  });
+  return Promise.race([
+    fetch(url, options),
+    timeoutPromise,
+  ]);
+}
+
 const SEC_HEADERS = {
   'User-Agent': 'TradeCompass Research info@tradecompass.app',
   'Accept-Encoding': 'gzip, deflate',
@@ -120,7 +137,9 @@ export async function getSecCikForSymbol(symbol: string): Promise<{ cik: string;
   }
 
   try {
-    const res = await fetch('https://www.sec.gov/files/company_tickers.json', { headers: SEC_HEADERS });
+    const res = await fetchWithTimeout('https://www.sec.gov/files/company_tickers.json', {
+      headers: SEC_HEADERS,
+    }, 4000);
     if (res.ok) {
       const data = await res.json();
       const map: Record<string, { cik: string; title: string }> = {};
@@ -138,7 +157,7 @@ export async function getSecCikForSymbol(symbol: string): Promise<{ cik: string;
       return secCikMapCache[cleanSymbol] || null;
     }
   } catch (err) {
-    console.error('Failed to fetch SEC company_tickers.json:', err);
+    console.warn(`Failed to fetch SEC company_tickers.json: ${err instanceof Error ? err.message : err}`);
   }
 
   return null;
@@ -154,199 +173,215 @@ export async function fetchDilutionAnalysis(symbol: string): Promise<DilutionAna
     return cached.data;
   }
 
-  // 1. Fetch live Yahoo Finance fundamental context (spot price, revenue, market cap)
-  let yfQuote: any = null;
-  try {
-    yfQuote = await yahooFinance.quoteSummary(cleanSymbol, {
+  // 1. Parallel ingestion: Quote Summary, Annual Fundamentals, Quarterly Fundamentals, and SEC CIK lookup
+  const [quoteSummary, annualTsRaw, quarterlyTsRaw, cikInfo] = await Promise.all([
+    yahooFinance.quoteSummary(cleanSymbol, {
       modules: ['price', 'defaultKeyStatistics', 'financialData', 'summaryDetail']
-    }, { validateResult: false });
-  } catch (e) {
-    // continue
-  }
+    }, { validateResult: false }).catch((e) => {
+      console.warn(`[Dilution] quoteSummary failed for ${cleanSymbol}: ${e.message}`);
+      return null;
+    }),
+    yahooFinance.fundamentalsTimeSeries(cleanSymbol, {
+      period1: '2019-01-01',
+      module: 'all',
+      type: 'annual'
+    }).catch((e) => {
+      console.warn(`[Dilution] annual fundamentalsTimeSeries failed for ${cleanSymbol}: ${e.message}`);
+      return [];
+    }),
+    yahooFinance.fundamentalsTimeSeries(cleanSymbol, {
+      period1: '2022-01-01',
+      module: 'all',
+      type: 'quarterly'
+    }).catch((e) => {
+      console.warn(`[Dilution] quarterly fundamentalsTimeSeries failed for ${cleanSymbol}: ${e.message}`);
+      return [];
+    }),
+    getSecCikForSymbol(cleanSymbol).catch(() => null),
+  ]);
 
-  const spotPrice = yfQuote?.price?.regularMarketPrice || 0;
-  const marketCap = yfQuote?.price?.marketCap || yfQuote?.summaryDetail?.marketCap || 0;
-  const totalRevenue = yfQuote?.financialData?.totalRevenue || 0;
-  const yfSharesOut = yfQuote?.defaultKeyStatistics?.sharesOutstanding || 0;
-  const yfDilutedShares = yfQuote?.defaultKeyStatistics?.impliedSharesOutstanding || yfSharesOut;
-  const companyName = yfQuote?.price?.shortName || yfQuote?.price?.longName || cleanSymbol;
-
-  // 2. Lookup SEC CIK
-  const cikInfo = await getSecCikForSymbol(cleanSymbol);
+  const spotPrice = quoteSummary?.price?.regularMarketPrice || quoteSummary?.summaryDetail?.regularMarketPrice || 0;
+  const marketCap = quoteSummary?.price?.marketCap || quoteSummary?.summaryDetail?.marketCap || 0;
+  let totalRevenue = quoteSummary?.financialData?.totalRevenue || 0;
+  const yfSharesOut = quoteSummary?.defaultKeyStatistics?.sharesOutstanding || 0;
+  const yfDilutedShares = quoteSummary?.defaultKeyStatistics?.impliedSharesOutstanding || yfSharesOut;
+  const companyName = quoteSummary?.price?.shortName || quoteSummary?.price?.longName || cleanSymbol;
   const cik = cikInfo?.cik || '0000000000';
 
-  let sbcHistoryQuarterly: SbcRecord[] = [];
-  let sbcHistoryAnnual: SbcRecord[] = [];
-  let sharesHistory: ShareCountRecord[] = [];
-  let equityIssuances: EquityIssuanceRecord[] = [];
-  let shareBuybacks: ShareBuybackRecord[] = [];
-  let recentFilings: DilutionSecFiling[] = [];
+  const sbcHistoryAnnual: SbcRecord[] = [];
+  const sbcHistoryQuarterly: SbcRecord[] = [];
+  const sharesHistory: ShareCountRecord[] = [];
+  const equityIssuances: EquityIssuanceRecord[] = [];
+  const shareBuybacks: ShareBuybackRecord[] = [];
+  const recentFilings: DilutionSecFiling[] = [];
 
-  if (cik && cik !== '0000000000') {
-    try {
-      // 3. Fetch SEC XBRL Company Facts
-      const factsRes = await fetch(`https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`, {
-        headers: SEC_HEADERS
-      });
+  const annualTs = Array.isArray(annualTsRaw) ? annualTsRaw : [];
+  const quarterlyTs = Array.isArray(quarterlyTsRaw) ? quarterlyTsRaw : [];
 
-      if (factsRes.ok) {
-        const factsData = await factsRes.json();
-        const usGaap = factsData.facts?.['us-gaap'] || {};
+  // --- 2. Process Annual Series from fundamentalsTimeSeries ---
+  for (const item of annualTs) {
+    if (!item.date) continue;
+    const d = new Date(item.date);
+    const yr = d.getFullYear();
+    const dateStr = d.toISOString().split('T')[0];
 
-        // --- A. Stock-Based Compensation (SBC) ---
-        const sbcConcept = usGaap['AllocatedShareBasedCompensationExpense'] ||
-          usGaap['ShareBasedCompensation'] ||
-          usGaap['ShareBasedCompensationArrangementByShareBasedPaymentAwardExpense'] ||
-          usGaap['ShareBasedCompensationArrangementsByShareBasedPaymentAwardOptionsGrantsInPeriodWeightedAverageExercisePrice'];
+    const sbc = item.stockBasedCompensation || 0;
+    const rev = item.totalRevenue || 0;
+    const shares = item.ordinarySharesNumber || item.dilutedAverageShares || item.shareIssued || 0;
+    const buyback = Math.abs(item.repurchaseOfCapitalStock || 0);
+    const issuance = Math.abs(item.issuanceOfCapitalStock || 0);
 
-        if (sbcConcept?.units?.USD) {
-          const sbcUnits: any[] = sbcConcept.units.USD;
-          
-          // Quarterly units (duration ~3 months or frame like CY2024Q1)
-          const qMap = new Map<string, SbcRecord>();
-          const aMap = new Map<number, SbcRecord>();
-
-          for (const u of sbcUnits) {
-            if (!u.val || u.val <= 0) continue;
-            
-            // Check if annual (FY or duration >= 300 days)
-            let isAnnual = u.fp === 'FY' || u.form === '10-K';
-            if (u.start && u.end) {
-              const diffDays = (new Date(u.end).getTime() - new Date(u.start).getTime()) / (1000 * 3600 * 24);
-              if (diffDays > 270) isAnnual = true;
-              else if (diffDays < 130) isAnnual = false;
-            }
-
-            if (isAnnual) {
-              const yr = u.fy || new Date(u.end).getFullYear();
-              if (!aMap.has(yr) || u.form === '10-K') {
-                aMap.set(yr, {
-                  fiscalYear: yr,
-                  fiscalPeriod: 'FY',
-                  startDate: u.start,
-                  endDate: u.end,
-                  amountUSD: u.val,
-                  form: u.form,
-                  filedDate: u.filed,
-                });
-              }
-            } else {
-              const key = `${u.fy || new Date(u.end).getFullYear()}-${u.fp || 'Q'}`;
-              qMap.set(key, {
-                fiscalYear: u.fy || new Date(u.end).getFullYear(),
-                fiscalPeriod: u.fp || 'Q',
-                startDate: u.start,
-                endDate: u.end,
-                amountUSD: u.val,
-                form: u.form,
-                filedDate: u.filed,
-              });
-            }
-          }
-
-          sbcHistoryQuarterly = Array.from(qMap.values())
-            .sort((a, b) => new Date(a.endDate).getTime() - new Date(b.endDate).getTime())
-            .slice(-12);
-
-          sbcHistoryAnnual = Array.from(aMap.values())
-            .sort((a, b) => a.fiscalYear - b.fiscalYear)
-            .slice(-5);
-        }
-
-        // --- B. Shares Outstanding History ---
-        const sharesConcept = usGaap['CommonStockSharesOutstanding'] ||
-          usGaap['WeightedAverageNumberOfDilutedSharesOutstanding'] ||
-          usGaap['WeightedAverageNumberOfSharesOutstandingBasic'];
-
-        if (sharesConcept?.units?.shares) {
-          const shareUnits: any[] = sharesConcept.units.shares;
-          const shareMap = new Map<string, ShareCountRecord>();
-
-          for (const u of shareUnits) {
-            if (!u.val || u.val <= 0) continue;
-            const key = u.end;
-            shareMap.set(key, {
-              fiscalYear: u.fy || new Date(u.end).getFullYear(),
-              fiscalPeriod: u.fp || 'Q',
-              endDate: u.end,
-              sharesOutstanding: u.val,
-              dilutedShares: u.val,
-              form: u.form,
-              filedDate: u.filed,
-            });
-          }
-
-          sharesHistory = Array.from(shareMap.values())
-            .sort((a, b) => new Date(a.endDate).getTime() - new Date(b.endDate).getTime())
-            .slice(-16);
-        }
-
-        // --- C. Stock Issuance & ATM Offerings ---
-        const issuanceConcept = usGaap['ProceedsFromIssuanceOfCommonStock'] ||
-          usGaap['StockIssuedDuringPeriodValueNewIssues'] ||
-          usGaap['ProceedsFromIssuanceOrSaleOfEquity'];
-
-        if (issuanceConcept?.units?.USD) {
-          const issUnits: any[] = issuanceConcept.units.USD;
-          const issMap = new Map<string, EquityIssuanceRecord>();
-
-          for (const u of issUnits) {
-            if (u.val === undefined || u.val === null) continue;
-            const key = `${u.end}-${u.form}`;
-            issMap.set(key, {
-              fiscalYear: u.fy || new Date(u.end).getFullYear(),
-              fiscalPeriod: u.fp || (u.form === '10-K' ? 'FY' : 'Q'),
-              startDate: u.start,
-              endDate: u.end,
-              proceedsUSD: u.val,
-              form: u.form,
-              filedDate: u.filed,
-              type: 'ATM_OFFERING_OR_PUBLIC_OFFERING',
-            });
-          }
-
-          equityIssuances = Array.from(issMap.values())
-            .sort((a, b) => new Date(b.endDate).getTime() - new Date(a.endDate).getTime())
-            .slice(0, 8);
-        }
-
-        // --- D. Share Buybacks / Repurchases ---
-        const buybackConcept = usGaap['PaymentsForRepurchaseOfCommonStock'] ||
-          usGaap['StockRepurchasedDuringPeriodValue'] ||
-          usGaap['StockRepurchasedAndRetiredDuringPeriodValue'];
-
-        if (buybackConcept?.units?.USD) {
-          const bbUnits: any[] = buybackConcept.units.USD;
-          const bbMap = new Map<string, ShareBuybackRecord>();
-
-          for (const u of bbUnits) {
-            if (!u.val || u.val <= 0) continue;
-            const key = `${u.end}-${u.form}`;
-            bbMap.set(key, {
-              fiscalYear: u.fy || new Date(u.end).getFullYear(),
-              fiscalPeriod: u.fp || (u.form === '10-K' ? 'FY' : 'Q'),
-              startDate: u.start,
-              endDate: u.end,
-              amountUSD: u.val,
-              form: u.form,
-              filedDate: u.filed,
-            });
-          }
-
-          shareBuybacks = Array.from(bbMap.values())
-            .sort((a, b) => new Date(b.endDate).getTime() - new Date(a.endDate).getTime())
-            .slice(0, 8);
-        }
-      }
-    } catch (e) {
-      console.error(`SEC XBRL Company facts fetch failed for ${cleanSymbol}:`, e);
+    if (rev > 0 && totalRevenue === 0) {
+      totalRevenue = rev;
     }
 
-    try {
-      // 4. Fetch SEC Submissions to inspect recent ATM prospectus supplements (424B5), Shelf registrations (S-3), and S-8 filings
-      const subRes = await fetch(`https://data.sec.gov/submissions/CIK${cik}.json`, {
-        headers: SEC_HEADERS
+    if (sbc > 0) {
+      sbcHistoryAnnual.push({
+        fiscalYear: yr,
+        fiscalPeriod: 'FY',
+        startDate: `${yr}-01-01`,
+        endDate: dateStr,
+        amountUSD: sbc,
+        revenueUSD: rev > 0 ? rev : undefined,
+        sbcPercentOfRevenue: rev > 0 ? Number(((sbc / rev) * 100).toFixed(2)) : undefined,
+        form: '10-K',
+        filedDate: dateStr,
       });
+    }
+
+    if (shares > 0) {
+      sharesHistory.push({
+        fiscalYear: yr,
+        fiscalPeriod: 'FY',
+        endDate: dateStr,
+        sharesOutstanding: shares,
+        dilutedShares: item.dilutedAverageShares || shares,
+        form: '10-K',
+        filedDate: dateStr,
+      });
+    }
+
+    if (buyback > 0) {
+      shareBuybacks.push({
+        fiscalYear: yr,
+        fiscalPeriod: 'FY',
+        startDate: `${yr}-01-01`,
+        endDate: dateStr,
+        amountUSD: buyback,
+        form: '10-K',
+        filedDate: dateStr,
+      });
+    }
+
+    if (issuance > 0) {
+      equityIssuances.push({
+        fiscalYear: yr,
+        fiscalPeriod: 'FY',
+        startDate: `${yr}-01-01`,
+        endDate: dateStr,
+        proceedsUSD: issuance,
+        form: '10-K',
+        filedDate: dateStr,
+        type: 'ATM_OFFERING_OR_PUBLIC_OFFERING',
+      });
+    }
+  }
+
+  // --- 3. Process Quarterly Series from fundamentalsTimeSeries ---
+  const quarterlyShares: ShareCountRecord[] = [];
+  for (const item of quarterlyTs) {
+    if (!item.date) continue;
+    const d = new Date(item.date);
+    const yr = d.getFullYear();
+    const month = d.getMonth() + 1;
+    const qPeriod = month <= 3 ? 'Q1' : month <= 6 ? 'Q2' : month <= 9 ? 'Q3' : 'Q4';
+    const dateStr = d.toISOString().split('T')[0];
+
+    const sbc = item.stockBasedCompensation || 0;
+    const rev = item.totalRevenue || 0;
+    const shares = item.ordinarySharesNumber || item.dilutedAverageShares || item.shareIssued || 0;
+    const buyback = Math.abs(item.repurchaseOfCapitalStock || 0);
+    const issuance = Math.abs(item.issuanceOfCapitalStock || 0);
+
+    if (sbc > 0) {
+      sbcHistoryQuarterly.push({
+        fiscalYear: yr,
+        fiscalPeriod: qPeriod,
+        endDate: dateStr,
+        amountUSD: sbc,
+        revenueUSD: rev > 0 ? rev : undefined,
+        sbcPercentOfRevenue: rev > 0 ? Number(((sbc / rev) * 100).toFixed(2)) : undefined,
+        form: '10-Q',
+        filedDate: dateStr,
+      });
+    }
+
+    if (shares > 0) {
+      quarterlyShares.push({
+        fiscalYear: yr,
+        fiscalPeriod: qPeriod,
+        endDate: dateStr,
+        sharesOutstanding: shares,
+        dilutedShares: item.dilutedAverageShares || shares,
+        form: '10-Q',
+        filedDate: dateStr,
+      });
+    }
+
+    if (buyback > 0) {
+      shareBuybacks.push({
+        fiscalYear: yr,
+        fiscalPeriod: qPeriod,
+        endDate: dateStr,
+        amountUSD: buyback,
+        form: '10-Q',
+        filedDate: dateStr,
+      });
+    }
+
+    if (issuance > 0) {
+      equityIssuances.push({
+        fiscalYear: yr,
+        fiscalPeriod: qPeriod,
+        endDate: dateStr,
+        proceedsUSD: issuance,
+        form: '10-Q',
+        filedDate: dateStr,
+        type: 'ATM_OFFERING_OR_PUBLIC_OFFERING',
+      });
+    }
+  }
+
+  // Merge recent quarterly shares into sharesHistory so users get the most current quarterly count
+  if (quarterlyShares.length > 0) {
+    const latestAnnualDate = sharesHistory.length > 0 ? sharesHistory[sharesHistory.length - 1].endDate : '';
+    for (const q of quarterlyShares) {
+      if (q.endDate > latestAnnualDate) {
+        sharesHistory.push(q);
+      }
+    }
+  }
+
+  // If sharesHistory is still empty, populate with current quote data
+  if (sharesHistory.length === 0 && yfSharesOut > 0) {
+    const todayStr = new Date().toISOString().split('T')[0];
+    sharesHistory.push({
+      fiscalYear: new Date().getFullYear(),
+      fiscalPeriod: 'TTM',
+      endDate: todayStr,
+      sharesOutstanding: yfSharesOut,
+      dilutedShares: yfDilutedShares,
+      form: 'QUOTE',
+      filedDate: todayStr,
+    });
+  }
+
+  // --- 4. SEC EDGAR Submissions (Form 144, S-8, S-3 ATM Offerings Radar) ---
+  if (cik && cik !== '0000000000') {
+    try {
+      const subRes = await fetchWithTimeout(`https://data.sec.gov/submissions/CIK${cik}.json`, {
+        headers: SEC_HEADERS,
+      }, 3500);
 
       if (subRes.ok) {
         const subData = await subRes.json();
@@ -395,84 +430,152 @@ export async function fetchDilutionAnalysis(symbol: string): Promise<DilutionAna
         }
       }
     } catch (e) {
-      console.error(`SEC submissions fetch failed for ${cleanSymbol}:`, e);
+      // SEC submissions fetch failed or timed out; non-blocking
+      console.warn(`[Dilution] SEC Submissions fetch aborted for ${cleanSymbol}: ${e instanceof Error ? e.message : e}`);
+    }
+
+    // --- 5. Optional SEC XBRL Company Facts Enrichment (Fast 2.5s timeout, non-blocking) ---
+    // Only attempt if quarterly SBC history was empty from YF
+    if (sbcHistoryQuarterly.length === 0) {
+      try {
+        const factsRes = await fetchWithTimeout(`https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`, {
+          headers: SEC_HEADERS,
+        }, 2500);
+
+        if (factsRes.ok) {
+          const factsData = await factsRes.json();
+          const usGaap = factsData.facts?.['us-gaap'] || {};
+          const sbcConcept = usGaap['AllocatedShareBasedCompensationExpense'] ||
+            usGaap['ShareBasedCompensation'] ||
+            usGaap['ShareBasedCompensationArrangementByShareBasedPaymentAwardExpense'];
+
+          if (sbcConcept?.units?.USD) {
+            const sbcUnits: any[] = sbcConcept.units.USD;
+            const qMap = new Map<string, SbcRecord>();
+
+            for (const u of sbcUnits) {
+              if (!u.val || u.val <= 0) continue;
+              let isQuarter = u.fp && u.fp.startsWith('Q');
+              if (u.start && u.end) {
+                const diffDays = (new Date(u.end).getTime() - new Date(u.start).getTime()) / (1000 * 3600 * 24);
+                if (diffDays < 130) isQuarter = true;
+              }
+              if (isQuarter) {
+                const key = `${u.fy || new Date(u.end).getFullYear()}-${u.fp || 'Q'}`;
+                qMap.set(key, {
+                  fiscalYear: u.fy || new Date(u.end).getFullYear(),
+                  fiscalPeriod: u.fp || 'Q',
+                  startDate: u.start,
+                  endDate: u.end,
+                  amountUSD: u.val,
+                  form: u.form || '10-Q',
+                  filedDate: u.filed || u.end,
+                });
+              }
+            }
+
+            if (qMap.size > 0) {
+              sbcHistoryQuarterly.push(...Array.from(qMap.values())
+                .sort((a, b) => new Date(a.endDate).getTime() - new Date(b.endDate).getTime())
+                .slice(-12));
+            }
+          }
+        }
+      } catch (e) {
+        // Non-blocking fallback
+      }
     }
   }
 
-  // --- Derived Calculations ---
+  // --- 6. Derived Calculations ---
 
-  // 1. Annual SBC Amount
+  // A. Current Shares Outstanding
+  const latestQuarterlyShares = quarterlyShares.length > 0 ? quarterlyShares[quarterlyShares.length - 1].sharesOutstanding : 0;
+  const latestAnnualShares = sharesHistory.length > 0 ? sharesHistory[sharesHistory.length - 1].sharesOutstanding : 0;
+  const currentShares = latestQuarterlyShares > 0 ? latestQuarterlyShares : (latestAnnualShares > 0 ? latestAnnualShares : (yfSharesOut || 1));
+
+  // B. Annual SBC Amount
+  const trailing4QSbc = sbcHistoryQuarterly.slice(-4).reduce((acc, q) => acc + q.amountUSD, 0);
   const latestAnnualSbc = sbcHistoryAnnual.length > 0 ? sbcHistoryAnnual[sbcHistoryAnnual.length - 1].amountUSD : 0;
-  const trailing4QSbc = sbcHistoryQuarterly.slice(-4).reduce((sum, r) => sum + r.amountUSD, 0);
-  const annualSbcUSD = latestAnnualSbc > 0 ? latestAnnualSbc : trailing4QSbc;
+  const annualSbcUSD = trailing4QSbc > 0 ? trailing4QSbc : latestAnnualSbc;
 
-  // 2. SBC % of Revenue
+  // C. SBC % of Revenue
   const sbcPercentOfRevenue = totalRevenue > 0 ? (annualSbcUSD / totalRevenue) * 100 : 0;
 
-  // 3. Current Shares Outstanding
-  const latestSharesRecord = sharesHistory.length > 0 ? sharesHistory[sharesHistory.length - 1].sharesOutstanding : yfSharesOut;
-  const currentShares = latestSharesRecord > 0 ? latestSharesRecord : (yfSharesOut || 1);
+  // D. SBC Per Share Drag
   const sbcPerShareUSD = currentShares > 0 ? annualSbcUSD / currentShares : 0;
 
-  // 4. Annual ATM Proceeds & Buybacks
-  const annualAtmProceedsUSD = equityIssuances
-    .filter(r => r.fiscalPeriod === 'FY' || (new Date().getFullYear() - r.fiscalYear <= 1))
-    .reduce((sum, r) => sum + r.proceedsUSD, 0);
+  // E. Annual Buybacks & ATM Proceeds (Latest full year or trailing 4 quarters)
+  const annualBuybackRecords = shareBuybacks.filter(b => b.fiscalPeriod === 'FY');
+  const annualBuybacksUSD = annualBuybackRecords.length > 0
+    ? annualBuybackRecords[annualBuybackRecords.length - 1].amountUSD
+    : shareBuybacks.filter(b => b.fiscalPeriod !== 'FY').slice(-4).reduce((acc, b) => acc + b.amountUSD, 0);
 
-  const annualBuybacksUSD = shareBuybacks
-    .filter(r => r.fiscalPeriod === 'FY' || (new Date().getFullYear() - r.fiscalYear <= 1))
-    .reduce((sum, r) => sum + r.amountUSD, 0);
+  const annualIssuanceRecords = equityIssuances.filter(i => i.fiscalPeriod === 'FY');
+  const annualAtmProceedsUSD = annualIssuanceRecords.length > 0
+    ? annualIssuanceRecords[annualIssuanceRecords.length - 1].proceedsUSD
+    : equityIssuances.filter(i => i.fiscalPeriod !== 'FY').slice(-4).reduce((acc, i) => acc + i.proceedsUSD, 0);
 
-  // 5. Historical Share Dilution Velocity (YoY, 3-Yr CAGR, 5-Yr CAGR)
+  // F. Historical Share Dilution Velocity (YoY, 3-Yr CAGR, 5-Yr CAGR)
   let netDilutionRateYoY = 0;
-  if (sharesHistory.length >= 5) {
-    const latest = sharesHistory[sharesHistory.length - 1].sharesOutstanding;
-    const priorYear = sharesHistory[Math.max(0, sharesHistory.length - 5)].sharesOutstanding;
-    if (priorYear > 0) {
-      netDilutionRateYoY = ((latest - priorYear) / priorYear) * 100;
+  if (quarterlyShares.length >= 5) {
+    const latestQ = quarterlyShares[quarterlyShares.length - 1].sharesOutstanding;
+    const prior4Q = quarterlyShares[quarterlyShares.length - 5].sharesOutstanding;
+    if (prior4Q > 0) {
+      netDilutionRateYoY = ((latestQ - prior4Q) / prior4Q) * 100;
     }
   } else if (sharesHistory.length >= 2) {
     const latest = sharesHistory[sharesHistory.length - 1].sharesOutstanding;
-    const oldest = sharesHistory[0].sharesOutstanding;
-    if (oldest > 0) {
-      netDilutionRateYoY = ((latest - oldest) / oldest) * 100;
+    const prior = sharesHistory[Math.max(0, sharesHistory.length - 2)].sharesOutstanding;
+    if (prior > 0) {
+      netDilutionRateYoY = ((latest - prior) / prior) * 100;
     }
   }
 
+  // 3-Yr CAGR
   let threeYearCagrDilution = 0;
-  if (sharesHistory.length >= 12) {
-    const latest = sharesHistory[sharesHistory.length - 1].sharesOutstanding;
-    const threeYearsAgo = sharesHistory[Math.max(0, sharesHistory.length - 12)].sharesOutstanding;
-    if (threeYearsAgo > 0 && latest > 0) {
-      threeYearCagrDilution = (Math.pow(latest / threeYearsAgo, 1 / 3) - 1) * 100;
+  const annualSharesList = sharesHistory.filter(s => s.fiscalPeriod === 'FY');
+  if (annualSharesList.length >= 4) {
+    const latestA = annualSharesList[annualSharesList.length - 1].sharesOutstanding;
+    const threeYrsAgo = annualSharesList[annualSharesList.length - 4].sharesOutstanding;
+    if (threeYrsAgo > 0 && latestA > 0) {
+      threeYearCagrDilution = (Math.pow(latestA / threeYrsAgo, 1 / 3) - 1) * 100;
+    }
+  } else if (quarterlyShares.length >= 12) {
+    const latestQ = quarterlyShares[quarterlyShares.length - 1].sharesOutstanding;
+    const twelveQAgo = quarterlyShares[quarterlyShares.length - 12].sharesOutstanding;
+    if (twelveQAgo > 0 && latestQ > 0) {
+      threeYearCagrDilution = (Math.pow(latestQ / twelveQAgo, 1 / 3) - 1) * 100;
     }
   } else {
     threeYearCagrDilution = netDilutionRateYoY;
   }
 
+  // 5-Yr CAGR
   let fiveYearCagrDilution = 0;
-  if (sharesHistory.length >= 16) {
-    const latest = sharesHistory[sharesHistory.length - 1].sharesOutstanding;
-    const fiveYearsAgo = sharesHistory[0].sharesOutstanding;
-    if (fiveYearsAgo > 0 && latest > 0) {
-      const years = Math.max(1, (new Date(sharesHistory[sharesHistory.length - 1].endDate).getFullYear() - new Date(sharesHistory[0].endDate).getFullYear()));
-      fiveYearCagrDilution = (Math.pow(latest / fiveYearsAgo, 1 / years) - 1) * 100;
+  if (annualSharesList.length >= 6) {
+    const latestA = annualSharesList[annualSharesList.length - 1].sharesOutstanding;
+    const fiveYrsAgo = annualSharesList[0].sharesOutstanding;
+    const spanYears = Math.max(1, annualSharesList.length - 1);
+    if (fiveYrsAgo > 0 && latestA > 0) {
+      fiveYearCagrDilution = (Math.pow(latestA / fiveYrsAgo, 1 / spanYears) - 1) * 100;
     }
   } else {
     fiveYearCagrDilution = threeYearCagrDilution;
   }
 
-  // 6. Shareholder Yield (Buyback Yield - Net Share Dilution)
+  // G. Shareholder Yield (Buyback Yield - Net Share Dilution)
   const buybackYield = marketCap > 0 ? (annualBuybacksUSD / marketCap) * 100 : 0;
   const shareholderYieldPercent = buybackYield - netDilutionRateYoY;
 
-  // 7. Active ATM Offerings Detection
+  // H. Active ATM Shelf Offerings Detection
   const hasActiveAtmShelf = recentFilings.some(f => f.category === 'ATM_SHELF_OFFERING');
+  const activeAtmFiling = recentFilings.find(f => f.category === 'ATM_SHELF_OFFERING');
   const activeAtmDetails = hasActiveAtmShelf
-    ? `Active Shelf / Prospectus Supplement filed (${recentFilings.find(f => f.category === 'ATM_SHELF_OFFERING')?.form || 'S-3'} on ${recentFilings.find(f => f.category === 'ATM_SHELF_OFFERING')?.filingDate || 'recent'})`
-    : 'No active ATM shelf prospectus detected in recent SEC filings.';
+    ? `Active Shelf / Prospectus Supplement filed (${activeAtmFiling?.form || 'S-3'} on ${activeAtmFiling?.filingDate || 'recent'})`
+    : 'No active ATM shelf prospectus detected in recent SEC registrations.';
 
-  // 8. Dilution Risk Rating & Health Score
+  // I. Dilution Risk Rating & Health Score
   let dilutionRiskScore = 75; // 0 to 100
   let dilutionRiskTier: 'ACCRETIVE' | 'LOW' | 'MODERATE' | 'ELEVATED' | 'SEVERE' = 'MODERATE';
   let riskBadgeColor: 'emerald' | 'cyan' | 'amber' | 'orange' | 'rose' = 'cyan';
@@ -482,7 +585,7 @@ export async function fetchDilutionAnalysis(symbol: string): Promise<DilutionAna
     dilutionRiskTier = 'ACCRETIVE';
     riskBadgeColor = 'emerald';
     dilutionRiskScore = Math.min(100, 85 + Math.abs(netDilutionRateYoY) * 3);
-    dilutionVerdict = `Highly accretive capital allocation: share count is shrinking at ${Math.abs(netDilutionRateYoY).toFixed(1)}% annually due to aggressive stock repurchases that far outpace any SBC.`;
+    dilutionVerdict = `Highly accretive capital allocation (negative net dilution): share count is shrinking at ${Math.abs(netDilutionRateYoY).toFixed(1)}% annually due to aggressive stock repurchases that outpace any SBC grants.`;
   } else if (netDilutionRateYoY <= 1.5 && sbcPercentOfRevenue < 5.0) {
     dilutionRiskTier = 'LOW';
     riskBadgeColor = 'emerald';
@@ -526,17 +629,21 @@ export async function fetchDilutionAnalysis(symbol: string): Promise<DilutionAna
     threeYearCagrDilution: Number(threeYearCagrDilution.toFixed(2)),
     fiveYearCagrDilution: Number(fiveYearCagrDilution.toFixed(2)),
     shareholderYieldPercent: Number(shareholderYieldPercent.toFixed(2)),
-    sbcHistoryQuarterly,
-    sbcHistoryAnnual,
-    sharesHistory,
-    equityIssuances,
-    shareBuybacks,
+    sbcHistoryQuarterly: sbcHistoryQuarterly.slice(-12),
+    sbcHistoryAnnual: sbcHistoryAnnual.slice(-5),
+    sharesHistory: sharesHistory.slice(-16),
+    equityIssuances: equityIssuances.slice(0, 8),
+    shareBuybacks: shareBuybacks.slice(0, 8),
     recentDilutionFilings: recentFilings.slice(0, 15),
     hasActiveAtmShelf,
     activeAtmDetails,
     analyzedAt: new Date().toISOString(),
   };
 
-  DILUTION_CACHE.set(cleanSymbol, { data: result, timestamp: now });
+  // Only cache if we got meaningful data
+  if (result.sharesOutstanding > 0 || result.sbcHistoryAnnual.length > 0 || result.sbcHistoryQuarterly.length > 0) {
+    DILUTION_CACHE.set(cleanSymbol, { data: result, timestamp: now });
+  }
+
   return result;
 }

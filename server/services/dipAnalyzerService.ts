@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import YahooFinance from 'yahoo-finance2';
 import { agentActivityTracker } from './agentActivityService';
+import { generateJsonCompletion } from './llmFallbackRouter';
 
 const yahooFinance = new YahooFinance({
   suppressNotices: ['yahooSurvey', 'ripHistorical'],
@@ -1096,60 +1097,15 @@ REQUIRED JSON STRUCTURE:
     let parsedResponse: any = null;
 
     try {
-      if (process.env.OPENROUTER_API_KEY) {
-        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            model: "openai/gpt-4o-mini",
-            response_format: { type: "json_object" },
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: userPrompt }
-            ]
-          })
-        });
-
-        if (!response.ok) {
-          const errText = await response.text();
-          logToFile(`[Dip Diagnostic] OpenRouter API warning (${response.status}): ${errText}`);
-        } else {
-          const data = await response.json();
-          const raw = data.choices?.[0]?.message?.content || "";
-          const clean = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
-          parsedResponse = JSON.parse(clean);
-        }
-      }
+      logToFile(`[Dip Diagnostic] Querying LLM fallback router (OpenRouter -> Gemini -> Groq) for ${cleanSymbol}...`);
+      const llmResult = await generateJsonCompletion<any>({
+        systemPrompt,
+        userPrompt,
+        tag: `DipDiagnostic-${cleanSymbol}`,
+      });
+      parsedResponse = llmResult.data;
     } catch (llmErr: any) {
-      logToFile(`[Dip Diagnostic] OpenRouter invocation note: ${llmErr?.message || llmErr}`);
-    }
-
-    try {
-      if (!parsedResponse && process.env.GEMINI_API_KEY) {
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
-        const response = await fetch(geminiUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [
-              { role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }
-            ],
-            generationConfig: { responseMimeType: "application/json" }
-          })
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          const clean = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
-          parsedResponse = JSON.parse(clean);
-        }
-      }
-    } catch (gemErr: any) {
-      logToFile(`[Dip Diagnostic] Gemini invocation note: ${gemErr?.message || gemErr}`);
+      logToFile(`[Dip Diagnostic] LLM fallback cascade warning (${llmErr?.message || llmErr})`);
     }
 
     // Fallback heuristic generator if LLM response unavailable

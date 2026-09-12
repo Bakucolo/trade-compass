@@ -48,6 +48,76 @@ describe('ThoughtLog & Telegram Auto Price Alert Parsing & Creation', () => {
     expect(casualCandidates).toHaveLength(0);
   });
 
+  it('ignores narrative analysis and does not extract false positives like XCEEDS, OACHES, CLOSE, FINAL, GAINS, A', () => {
+    const sentences = [
+      'Roll down & out if stock approaches $145 (delta rising toward 30)',
+      'Stop-loss: If unrealized loss exceeds 2× premium collected',
+      'Time decay works in seller\'s favor; accelerates in final 30 days',
+      'Close at 21 DTE to avoid gamma risk acceleration',
+      'remains profitable if PLTR closes above the breakeven at expiration',
+      'Calculated as roughly 2 × Delta for a touch probability approximation',
+      'Position gains $0.20 per $1 decline in PLTR (bullish bias)',
+      'A 20-delta PLTR short put offers an ~80% probability of profit',
+      'CALX short put top line growth 15% 22 forward PE',
+      'MDB AI winner 30% growth, expensive, alert 1 year out',
+      'AEHR 40-50 short put, 200% growth, forward EPS 0.75'
+    ];
+
+    for (const s of sentences) {
+      const candidates = extractPriceAlertCandidates(s);
+      expect(candidates).toHaveLength(0);
+    }
+  });
+
+  it('rejects full financial analysis / Copilot markdown reports without explicit alert directives', () => {
+    const copilotReport = `
+### Financial Inquiry
+> provide metrics and probabilities of a 20 delta PLTR short put
+**AI Model**: \`inclusionai/ling-3.0-flash-fin:free\` • **Timestamp**: 00:26
+---
+### Copilot Analysis
+# 20-Delta PLTR Short Put: Comprehensive Metrics & Probabilities
+## Current Market Context
+| Metric | Value |
+|--------|-------|
+| **PLTR Spot Price** | $174.33 |
+| **52-Week Range** | $106.37 – $207.52 |
+| **Trailing P/E** | 149.0x |
+| **Forward P/E** | 74.9x |
+| **Implied Volatility (Nov 2026)** | ~76% |
+| **IV Percentile** | Elevated (earnings-driven spikes to ~88%) |
+| **Max Pain (Nov 20)** | ~$170 |
+---
+## Identifying the 20-Delta Strike by Expiration
+| Expiration | Days to Expiry | 20-Delta Strike | Approx. Premium |
+|------------|---------------|-----------------|-----------------|
+| **Sep 11, 2026** | ~13 days | **~$156** | ~$3.00 |
+| **Oct 16, 2026** | ~45 days | **~$144** | ~$5.90 |
+| **Nov 20, 2026** | ~120 days | **~$133** | ~$10.70 |
+---
+## Core Probability Metrics
+### 1. **Probability of Expiring In-The-Money (ITM)**
+- **≈ 20%**
+### 2. **Probability of Profit (POP)**
+- **≈ 80%**
+### 3. **Probability of Touching Strike (POT)**
+- **≈ 35–40%**
+- Calculated as roughly 2 × Delta
+### 4. **Probability of Maximum Loss**
+- **≈ 20%**
+- Tail risk: stock below breakeven ($133 – $10.70 = **$122.30**)
+---
+## Management Rules
+- Take profit at 50% of max premium (~$5.35)
+- Roll down & out if stock approaches $145 (delta rising toward 30)
+- Close at 21 DTE to avoid gamma risk acceleration
+- Stop-loss: If unrealized loss exceeds 2× premium collected
+    `;
+
+    const candidates = extractPriceAlertCandidates(copilotReport);
+    expect(candidates).toHaveLength(0);
+  });
+
   it('automatically creates active PriceAlert in database via autoCreateAlertsFromText', async () => {
     const mockCreatedAlerts: any[] = [];
     const mockPrisma: any = {

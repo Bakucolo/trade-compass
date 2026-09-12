@@ -556,12 +556,15 @@ export function OptionsChainView({
                           />
                           <Tooltip
                             contentStyle={{
-                              backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                              borderColor: 'rgba(51, 65, 85, 0.8)',
+                              backgroundColor: '#0f172a',
+                              borderColor: '#334155',
                               borderRadius: '12px',
                               fontSize: '11px',
                               fontFamily: 'monospace',
+                              color: '#f8fafc',
                             }}
+                            itemStyle={{ color: '#f8fafc', fontWeight: 'bold' }}
+                            labelStyle={{ color: '#38bdf8', fontWeight: 'bold', marginBottom: '4px' }}
                             formatter={(val: any, name: any) => [`${Number(val).toLocaleString()} contracts`, name === 'callOI' ? 'Call Open Interest' : 'Put Open Interest']}
                             labelFormatter={(strike: any) => `Strike $${strike}`}
                           />
