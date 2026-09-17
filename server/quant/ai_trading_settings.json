@@ -1,0 +1,16 @@
+{
+  "accountMode": "PAPER",
+  "masterKillSwitch": false,
+  "sizingMode": "FIXED_DOLLAR",
+  "fixedDollarAmount": 1000,
+  "portfolioPercent": 5,
+  "fixedShares": 10,
+  "maxSinglePositionDollar": 5000,
+  "maxOpenPositions": 3,
+  "maxDailyLossDollar": 2500,
+  "executionMode": "MANUAL_APPROVAL",
+  "defaultStopLossPercent": 3,
+  "defaultTakeProfitPercent": 6,
+  "trailingStopPercent": 2.5,
+  "updatedAt": "2026-09-17T10:01:04.155Z"
+}

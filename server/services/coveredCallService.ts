@@ -1,6 +1,8 @@
 import { PrismaClient } from '@prisma/client';
 import YahooFinance from 'yahoo-finance2';
 import { calculateBlackScholesPrice, OptionQuoteItem } from './optionDefenseService';
+import { lookupSymbolEarnings } from './earningsService';
+import { LIQUID_OPTIONS_UNIVERSE } from './optionsTradeAgentService';
 
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
@@ -69,6 +71,16 @@ export interface CoveredCallPositionCandidate {
     aggressive: ProposedCallStrike;
   };
   ivRankPercentile?: number;
+  impliedVolatility?: number; // Annualized IV in %, e.g. 42.5
+  ivRank?: number; // 0 - 100%
+  ivPercentile?: number; // 0 - 100%
+  isOptimalToSellCalls?: boolean; // true if ivRank >= 50 or ivPercentile >= 55
+  callSellingEnvironment?: 'OPTIMAL' | 'FAIR' | 'SUBOPTIMAL' | 'EXTREME';
+  optimalSellingVerdict?: string;
+  nextEarningsDate?: string; // Formatted date e.g. "Nov 17, 2026"
+  daysUntilEarnings?: number; // Days until e.g. 14
+  earningsBeforeExpiration?: boolean; // True if earnings occurs before proposed call expiration
+  earningsTiming?: 'BMO' | 'AMC' | 'UNSPECIFIED';
   dividendYieldPercent?: number;
   fiftyTwoWeekHigh?: number;
   distanceFrom52WHigh?: number;
@@ -511,9 +523,10 @@ export async function analyzePortfolioCoveredCalls(
     let dividendYield = 0;
     let liveOptions: OptionQuoteItem[] = [];
 
+    let quote: any = null;
     // Fetch live price quote and quick option chain
     try {
-      const quote = await fetchWithTimeout(yahooFinance.quote(underlying), 2500);
+      quote = await fetchWithTimeout(yahooFinance.quote(underlying), 2500);
       if (quote) {
         if (quote.regularMarketPrice) price = quote.regularMarketPrice;
         if (quote.fiftyTwoWeekHigh) {
@@ -560,8 +573,79 @@ export async function analyzePortfolioCoveredCalls(
       }
     }
 
+    // Extract live ATM Implied Volatility
+    let liveAtmIV: number | undefined = undefined;
+    if (liveOptions.length > 0) {
+      const atmCall = liveOptions.reduce((closest, curr) =>
+        Math.abs(curr.strike - price) < Math.abs(closest.strike - price) ? curr : closest,
+        liveOptions[0]
+      );
+      if (atmCall && atmCall.impliedVolatility > 0) {
+        liveAtmIV = atmCall.impliedVolatility;
+      }
+    }
+
+    // Volatility Matrix (IV, IVR, IVP & Optimality Verdict)
+    const knownMeta = LIQUID_OPTIONS_UNIVERSE.find((u) => u.symbol === underlying);
+    const baseIV = liveAtmIV ?? (knownMeta ? knownMeta.baseIV : 0.35);
+    const impliedVolatility = Math.round(baseIV * 1000) / 10; // in percentage e.g. 42.5
+
+    let ivRank = knownMeta ? knownMeta.ivRank : Math.min(95, Math.max(10, Math.round(((baseIV - 0.15) / (0.75 - 0.15)) * 100)));
+    let ivPercentile = knownMeta ? knownMeta.ivp : Math.min(98, Math.max(8, ivRank + 4));
+
+    if (liveAtmIV && knownMeta && knownMeta.baseIV > 0) {
+      const ratio = liveAtmIV / knownMeta.baseIV;
+      ivRank = Math.min(99, Math.max(5, Math.round(knownMeta.ivRank * ratio)));
+      ivPercentile = Math.min(99, Math.max(5, Math.round(knownMeta.ivp * ratio)));
+    }
+
+    const isOptimalToSellCalls = ivRank >= 50 || ivPercentile >= 55;
+    let callSellingEnvironment: 'OPTIMAL' | 'FAIR' | 'SUBOPTIMAL' | 'EXTREME' = 'FAIR';
+    let optimalSellingVerdict = '';
+
+    if (ivRank >= 80) {
+      callSellingEnvironment = 'EXTREME';
+      optimalSellingVerdict = 'Extreme IV (Peak Premium): Maximizes option price, but check earnings and binary catalyst exposure.';
+    } else if (isOptimalToSellCalls) {
+      callSellingEnvironment = 'OPTIMAL';
+      optimalSellingVerdict = 'Optimal Call Selling: Elevated IV Rank provides rich option premiums, rapid theta decay, and strong upside cushion.';
+    } else if (ivRank >= 30) {
+      callSellingEnvironment = 'FAIR';
+      optimalSellingVerdict = 'Moderate IV: Steady baseline option pricing with standard theta decay; balanced strikes recommended.';
+    } else {
+      callSellingEnvironment = 'SUBOPTIMAL';
+      optimalSellingVerdict = 'Sub-Optimal IV: Options are cheap/underpriced. Call premiums are relatively low for the risk taken.';
+    }
+
     // Generate the 3 proposed call strike tiers
-    const proposedCalls = buildProposedCallStrikes(price, effectiveProposeContracts, liveOptions, 0.35);
+    const proposedCalls = buildProposedCallStrikes(price, effectiveProposeContracts, liveOptions, baseIV);
+
+    // Next Earnings Catalyst Resolution
+    let nextEarningsDate: string | undefined = undefined;
+    let daysUntilEarnings: number | undefined = undefined;
+    let earningsTiming: 'BMO' | 'AMC' | 'UNSPECIFIED' | undefined = undefined;
+
+    if (quote?.earningsTimestamp) {
+      const d = new Date(quote.earningsTimestamp * 1000);
+      if (!isNaN(d.getTime())) {
+        nextEarningsDate = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        daysUntilEarnings = Math.round((d.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+      }
+    }
+
+    if (!nextEarningsDate) {
+      try {
+        const eItem = await fetchWithTimeout(lookupSymbolEarnings(underlying), 1500);
+        if (eItem && eItem.earningsDateFormatted && eItem.earningsDateFormatted !== 'Date Pending') {
+          nextEarningsDate = eItem.earningsDateFormatted;
+          daysUntilEarnings = eItem.daysUntil ?? undefined;
+          earningsTiming = eItem.timing;
+        }
+      } catch {}
+    }
+
+    const targetDte = proposedCalls?.balanced?.dte || 35;
+    const earningsBeforeExpiration = Boolean(daysUntilEarnings !== undefined && daysUntilEarnings > 0 && daysUntilEarnings <= targetDte);
 
     const activeCoveredCalls: ActiveCoveredCallPosition[] = group.shortCalls.map((sc) => {
       let dte = 20;
@@ -605,6 +689,17 @@ export async function analyzePortfolioCoveredCalls(
       coverageStatus,
       activeCoveredCalls,
       proposedCalls,
+      ivRankPercentile: ivPercentile,
+      impliedVolatility,
+      ivRank,
+      ivPercentile,
+      isOptimalToSellCalls,
+      callSellingEnvironment,
+      optimalSellingVerdict,
+      nextEarningsDate,
+      daysUntilEarnings,
+      earningsBeforeExpiration,
+      earningsTiming,
       dividendYieldPercent: dividendYield ? parseFloat(dividendYield.toFixed(2)) : undefined,
       fiftyTwoWeekHigh: fiftyTwoHigh ? parseFloat(fiftyTwoHigh.toFixed(2)) : undefined,
       distanceFrom52WHigh: distFrom52WHigh ? parseFloat(distFrom52WHigh.toFixed(1)) : undefined,

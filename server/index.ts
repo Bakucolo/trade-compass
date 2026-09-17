@@ -19,7 +19,8 @@ process.on('uncaughtException', (err) => {
 });
 
 import { PrismaClient } from '@prisma/client';
-import { fetchTastyPositions, fetchTastyBalances, fetchTastyAccountInfo } from './services/tastytradeService';
+import { fetchTastyPositions, fetchTastyBalances, fetchTastyAccountInfo, getTastyConfigSummary } from './services/tastytradeService';
+import { executeApprovedDraft, cancelDraft, getDraftOrder, getAllDraftOrders, runTastyCopilotAgent } from './services/tastytradeToolService';
 import { fetchLiveOptionChains, buildOptionPricingContext, validateAndEnforcePlanPricing } from './services/optionDefenseService';
 import { runPortfolioAuditAgent, savePortfolioAuditToDb, listPortfolioAuditsFromDb, getPortfolioAuditByIdFromDb, deletePortfolioAuditFromDb } from './services/portfolioAnalyserService';
 import { agentActivityTracker } from './services/agentActivityService';
@@ -49,6 +50,7 @@ import { optionsTradeAgentService } from './services/optionsTradeAgentService';
 import { shortCandidateService } from './services/shortCandidateService';
 import { optionsLiquidityService } from './services/optionsLiquidityService';
 import { optionsChainService } from './services/optionsChainService';
+import { optionsSkewAgentService } from './services/optionsSkewAgentService';
 import { volatilityMacroService } from './services/volatilityMacroService';
 import { trendFinderService } from './services/trendFinderService';
 import { technicalAnalysisService } from './services/technicalAnalysisService';
@@ -117,6 +119,7 @@ import {
 } from './services/telegramBufferConsumerService';
 import { createAppIdeaRouter } from './routes/appIdeaRoutes';
 import { createMonteCarloRouter } from './routes/monteCarloRoutes';
+import { createAiTradingRouter } from './routes/aiTradingRoutes';
 import { autoCreateAlertsFromText } from './services/thoughtLogAlertService';
 import { SYMBOL_ALIASES, resolveYahooFinanceSymbol } from './services/tickerResolutionService';
 import { KNOWN_COMPANY_NAMES, getKnownCompanyName } from './services/commonTickers';
@@ -169,6 +172,7 @@ app.use((req, res, next) => {
 // Quantitative Analytics: Multi-Factor Monte Carlo Equity Valuation Engine
 app.use('/api/quant/monte-carlo', createMonteCarloRouter());
 app.use('/api/app-ideas', createAppIdeaRouter(prisma));
+app.use('/api/ai-trading', createAiTradingRouter());
 
 // IBKR Connection Settings & Account Numbers
 export const IBKR_ISA_ACCOUNT = 'U14522424';
@@ -1515,6 +1519,55 @@ app.get('/api/tastytrade/positions/:accountNumber', async (req, res) => {
 });
 
 // ==========================================
+// TASTYTRADE TOOL-CALLING & DRAFT ORDER ROUTES
+// ==========================================
+
+// GET /api/tastytrade/environment - Sandbox / Live config status
+app.get('/api/tastytrade/environment', (req, res) => {
+  res.json(getTastyConfigSummary());
+});
+
+// GET /api/tastytrade/orders/drafts - List all staged drafts
+app.get('/api/tastytrade/orders/drafts', (req, res) => {
+  res.json({ drafts: getAllDraftOrders() });
+});
+
+// POST /api/tastytrade/orders/execute-draft - Physical UI approval endpoint (Human-in-the-Loop)
+app.post('/api/tastytrade/orders/execute-draft', async (req, res) => {
+  try {
+    const { draftId, price, quantity } = req.body || {};
+    if (!draftId) {
+      return res.status(400).json({ error: 'draftId is required.' });
+    }
+    logToFile(`[Human-in-the-Loop] Received user approval to execute draft ${draftId} (price: ${price}, qty: ${quantity})...`);
+    const overrides = (price !== undefined || quantity !== undefined) ? {
+      price: typeof price === 'number' ? price : (price ? parseFloat(price) : undefined),
+      quantity: typeof quantity === 'number' ? quantity : (quantity ? parseInt(quantity, 10) : undefined)
+    } : undefined;
+    const result = await executeApprovedDraft(draftId, overrides);
+    logToFile(`[Human-in-the-Loop] Draft ${draftId} successfully submitted! Order ID: ${result.orderId}`);
+    res.json(result);
+  } catch (err: any) {
+    logToFile(`[Human-in-the-Loop Error] Execution failed for draft ${req.body?.draftId}: ${err.message}`);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// POST /api/tastytrade/orders/cancel-draft - Discard draft
+app.post('/api/tastytrade/orders/cancel-draft', (req, res) => {
+  try {
+    const { draftId } = req.body || {};
+    if (!draftId) {
+      return res.status(400).json({ error: 'draftId is required.' });
+    }
+    const result = cancelDraft(draftId);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ==========================================
 // TRADING 212 REST API INTEGRATION
 // ==========================================
 app.get('/api/trading212/status', async (req, res) => {
@@ -2687,6 +2740,20 @@ app.get('/api/research/options-chain/:ticker', async (req, res) => {
     res.json(chainData);
   } catch (error: any) {
     logToFile(`[Options Chain] Error for ${req.params.ticker}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/research/options-chain/:ticker/skew-agent - AI Agent & Quantitative Options Skew, Equidistance & Upside Bias Analysis
+app.get('/api/research/options-chain/:ticker/skew-agent', async (req, res) => {
+  try {
+    const { ticker } = req.params;
+    const targetDate = req.query.date as string | undefined;
+    logToFile(`[Options Skew Agent] Analyzing options skew for ${ticker} (Expiration: ${targetDate || 'FRONT'})...`);
+    const skewData = await optionsSkewAgentService.analyzeOptionsSkew(ticker, targetDate);
+    res.json(skewData);
+  } catch (error: any) {
+    logToFile(`[Options Skew Agent] Error for ${req.params.ticker}: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -4243,16 +4310,25 @@ async function runHybridFinancialAgent(query: string, model?: string) {
   });
 }
 
-// POST /api/agent/hybrid-query - Run query through LangGraph hybrid agent
+// POST /api/agent/hybrid-query - Run query through Tool-Calling Copilot Agent with Tastytrade integration
 app.post('/api/agent/hybrid-query', async (req, res) => {
   try {
-    const { query, model } = req.body || {};
+    const { query, model, history, broker } = req.body || {};
     if (!query || typeof query !== 'string' || !query.trim()) {
       return res.status(400).json({ error: 'Query parameter is required.' });
     }
 
-    const result = await runHybridFinancialAgent(query, model);
-    res.json(result);
+    logToFile(`[Copilot Engine] Incoming query (Broker: ${broker || 'tastytrade'}, Model: ${model || 'auto'}): "${query.trim().slice(0, 60)}..."`);
+
+    // Execute through multi-turn function calling engine with active broker tools
+    try {
+      const result = await runTastyCopilotAgent(query, model, history, broker || 'tastytrade');
+      return res.json(result);
+    } catch (agentErr: any) {
+      logToFile(`[Copilot Engine] Tool-calling engine note: ${agentErr.message}. Attempting python hybrid fallback.`);
+      const result = await runHybridFinancialAgent(query, model);
+      return res.json(result);
+    }
   } catch (error: any) {
     logToFile(`Error in POST /api/agent/hybrid-query: ${error.message}`);
     res.status(500).json({ error: error.message });

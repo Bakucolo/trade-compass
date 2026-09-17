@@ -65,6 +65,16 @@ export interface CoveredCallPositionCandidate {
     aggressive: ProposedCallStrike;
   };
   ivRankPercentile?: number;
+  impliedVolatility?: number; // Annualized IV in %, e.g. 42.5
+  ivRank?: number; // 0 - 100%
+  ivPercentile?: number; // 0 - 100%
+  isOptimalToSellCalls?: boolean; // true if ivRank >= 50 or ivPercentile >= 55
+  callSellingEnvironment?: 'OPTIMAL' | 'FAIR' | 'SUBOPTIMAL' | 'EXTREME';
+  optimalSellingVerdict?: string;
+  nextEarningsDate?: string; // Formatted date e.g. "Nov 17, 2026"
+  daysUntilEarnings?: number; // Days until e.g. 14
+  earningsBeforeExpiration?: boolean; // True if earnings occurs before proposed call expiration
+  earningsTiming?: 'BMO' | 'AMC' | 'UNSPECIFIED';
   dividendYieldPercent?: number;
   fiftyTwoWeekHigh?: number;
   distanceFrom52WHigh?: number;

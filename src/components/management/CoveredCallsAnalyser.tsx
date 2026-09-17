@@ -23,7 +23,12 @@ import {
   Sliders,
   Flame,
   Clock,
-  ArrowUpRight
+  ArrowUpRight,
+  Eye,
+  EyeOff,
+  RotateCcw,
+  Activity,
+  AlertCircle
 } from 'lucide-react';
 import {
   useCoveredCallsAnalysis,
@@ -57,11 +62,70 @@ export function CoveredCallsAnalyser({
 }: CoveredCallsAnalyserProps) {
   const { data: analysisData, isLoading, isFetching, refetch } = useCoveredCallsAnalysis();
 
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'UNCOVERED' | 'PARTIAL' | 'COVERED' | 'ACTIVE_CALLS'>('UNCOVERED');
+  const COVERED_CALLS_HIDDEN_STORAGE_KEY = 'coveredCalls_hidden_symbols';
+
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'UNCOVERED' | 'PARTIAL' | 'COVERED' | 'ACTIVE_CALLS' | 'HIDDEN'>('UNCOVERED');
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState<'CAPACITY' | 'ACTIVE_CALLS' | 'YIELD' | 'MARKET_VALUE' | 'DELTA'>('CAPACITY');
+  const [sortBy, setSortBy] = useState<'CAPACITY' | 'ACTIVE_CALLS' | 'YIELD' | 'MARKET_VALUE' | 'DELTA' | 'IVR' | 'IV' | 'EARNINGS'>('CAPACITY');
+  const [onlyOptimalIV, setOnlyOptimalIV] = useState(false);
   const [selectedChainSymbol, setSelectedChainSymbol] = useState<string | null>(null);
   const [expandedPositionId, setExpandedPositionId] = useState<string | null>(null);
+
+  // Hidden Stocks Persistence (LocalStorage)
+  const [hiddenSymbols, setHiddenSymbols] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(COVERED_CALLS_HIDDEN_STORAGE_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          return new Set(arr);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to parse hidden symbols from localStorage', e);
+    }
+    return new Set<string>();
+  });
+
+  const handleHideStock = (symbol: string) => {
+    setHiddenSymbols((prev) => {
+      const next = new Set(prev);
+      next.add(symbol);
+      try {
+        localStorage.setItem(COVERED_CALLS_HIDDEN_STORAGE_KEY, JSON.stringify(Array.from(next)));
+      } catch (e) {}
+      return next;
+    });
+
+    toast.info(`${symbol} hidden from Covered Call Harvester`, {
+      description: `Temporarily paused call-selling proposals on ${symbol}.`,
+      action: {
+        label: 'Undo',
+        onClick: () => handleUnhideStock(symbol),
+      },
+      duration: 5000,
+    });
+  };
+
+  const handleUnhideStock = (symbol: string) => {
+    setHiddenSymbols((prev) => {
+      const next = new Set(prev);
+      next.delete(symbol);
+      try {
+        localStorage.setItem(COVERED_CALLS_HIDDEN_STORAGE_KEY, JSON.stringify(Array.from(next)));
+      } catch (e) {}
+      return next;
+    });
+    toast.success(`${symbol} restored to Covered Call Harvester`);
+  };
+
+  const handleUnhideAll = () => {
+    setHiddenSymbols(new Set());
+    try {
+      localStorage.removeItem(COVERED_CALLS_HIDDEN_STORAGE_KEY);
+    } catch (e) {}
+    toast.success('All hidden stocks restored to Covered Call Harvester');
+  };
 
   const { data: chainData, isLoading: isChainLoading } = useDetailedOptionChain(
     selectedChainSymbol || undefined
@@ -71,15 +135,69 @@ export function CoveredCallsAnalyser({
     ? analysisData.candidates.filter(Boolean)
     : [];
 
+  const activeCandidates = useMemo(() => {
+    return allCandidates.filter((c) => !hiddenSymbols.has(c.symbol));
+  }, [allCandidates, hiddenSymbols]);
+
+  const hiddenCandidates = useMemo(() => {
+    return allCandidates.filter((c) => hiddenSymbols.has(c.symbol));
+  }, [allCandidates, hiddenSymbols]);
+
+  // Dynamically compute KPI summary metrics from active (unhidden) positions
+  const displayMetrics = useMemo(() => {
+    if (allCandidates.length === 0) {
+      return {
+        totalEligiblePositionsCount: analysisData?.totalEligiblePositionsCount ?? 0,
+        uncoveredPositionsCount: analysisData?.uncoveredPositionsCount ?? 0,
+        partiallyCoveredCount: analysisData?.partiallyCoveredCount ?? 0,
+        fullyCoveredCount: analysisData?.fullyCoveredCount ?? 0,
+        activePositionsCount: analysisData?.activePositionsCount ?? 0,
+        totalUncoveredCallCapacity: analysisData?.totalUncoveredCallCapacity ?? 0,
+        potentialMonthlyIncomeEstimate: analysisData?.potentialMonthlyIncomeEstimate ?? 0,
+        totalPortfolioNetDelta: analysisData?.totalPortfolioNetDelta ?? 0,
+      };
+    }
+
+    const uncoveredPositions = activeCandidates.filter((c) => c.coverageStatus === 'UNCOVERED_OPPORTUNITY');
+    const partiallyCoveredPositions = activeCandidates.filter((c) => c.coverageStatus === 'PARTIALLY_COVERED');
+    const fullyCoveredPositions = activeCandidates.filter((c) => c.coverageStatus === 'FULLY_COVERED');
+    const activePositions = activeCandidates.filter(
+      (c) => c.hasActiveCalls || (c.shortCallsCount || 0) > 0 || (c.activeCoveredCalls && c.activeCoveredCalls.length > 0)
+    );
+
+    const totalUncoveredCallCapacity = activeCandidates.reduce((sum, c) => sum + (c.coveredCallCapacity || 0), 0);
+    const potentialMonthlyIncomeEstimate = activeCandidates.reduce(
+      (sum, c) => sum + (c.proposedCalls?.balanced?.totalPotentialIncome || 0),
+      0
+    );
+    const totalPortfolioNetDelta = activeCandidates.reduce((sum, c) => sum + (c.netPositionDelta || 0), 0);
+
+    return {
+      totalEligiblePositionsCount: activeCandidates.length,
+      uncoveredPositionsCount: uncoveredPositions.length,
+      partiallyCoveredCount: partiallyCoveredPositions.length,
+      fullyCoveredCount: fullyCoveredPositions.length,
+      activePositionsCount: activePositions.length,
+      totalUncoveredCallCapacity,
+      potentialMonthlyIncomeEstimate,
+      totalPortfolioNetDelta,
+    };
+  }, [allCandidates, activeCandidates, analysisData]);
+
   // Filter and sort candidates
   const filteredCandidates = useMemo(() => {
-    return allCandidates
+    const candidatePool = statusFilter === 'HIDDEN' ? hiddenCandidates : activeCandidates;
+
+    return candidatePool
       .filter((c) => {
         // Status filter
         if (statusFilter === 'UNCOVERED' && c.coverageStatus !== 'UNCOVERED_OPPORTUNITY') return false;
         if (statusFilter === 'PARTIAL' && c.coverageStatus !== 'PARTIALLY_COVERED') return false;
         if (statusFilter === 'COVERED' && c.coverageStatus !== 'FULLY_COVERED') return false;
         if (statusFilter === 'ACTIVE_CALLS' && !c.hasActiveCalls && (c.shortCallsCount || 0) === 0 && (!c.activeCoveredCalls || c.activeCoveredCalls.length === 0)) return false;
+
+        // Optional Optimal IV filter
+        if (onlyOptimalIV && !c.isOptimalToSellCalls && (c.ivRank || 0) < 50) return false;
 
         // Search query
         if (searchQuery.trim()) {
@@ -94,6 +212,17 @@ export function CoveredCallsAnalyser({
       .sort((a, b) => {
         if (sortBy === 'CAPACITY') {
           return (b.coveredCallCapacity || 0) - (a.coveredCallCapacity || 0) || (b.totalMarketValue || 0) - (a.totalMarketValue || 0);
+        }
+        if (sortBy === 'IVR') {
+          return (b.ivRank || 0) - (a.ivRank || 0) || (b.impliedVolatility || 0) - (a.impliedVolatility || 0);
+        }
+        if (sortBy === 'IV') {
+          return (b.impliedVolatility || 0) - (a.impliedVolatility || 0) || (b.ivRank || 0) - (a.ivRank || 0);
+        }
+        if (sortBy === 'EARNINGS') {
+          const daysA = a.daysUntilEarnings !== undefined && a.daysUntilEarnings >= 0 ? a.daysUntilEarnings : 999;
+          const daysB = b.daysUntilEarnings !== undefined && b.daysUntilEarnings >= 0 ? b.daysUntilEarnings : 999;
+          return daysA - daysB;
         }
         if (sortBy === 'ACTIVE_CALLS') {
           return (b.shortCallsCount || 0) - (a.shortCallsCount || 0) || (b.totalMarketValue || 0) - (a.totalMarketValue || 0);
@@ -111,7 +240,7 @@ export function CoveredCallsAnalyser({
         }
         return 0;
       });
-  }, [allCandidates, statusFilter, searchQuery, sortBy]);
+  }, [statusFilter, hiddenCandidates, activeCandidates, searchQuery, sortBy, onlyOptimalIV]);
 
   const handleCopyPlan = (candidate: CoveredCallPositionCandidate, strike: ProposedCallStrike) => {
     const text = `Covered Call Plan for ${candidate.symbol}:\nSell ${candidate.coveredCallCapacity || 1}x ${candidate.symbol} $${strike.strike} Call exp ${strike.expiration} (${strike.dte} DTE)\nEstimated Mid: $${strike.estimatedMid.toFixed(2)} ($${strike.premiumPerContract} / contract)\nTotal Est. Premium: $${strike.totalPotentialIncome.toFixed(2)}\nAnnualized Yield: ${strike.annualizedYieldPercent}% APY\nOTM Buffer: +${strike.otmBufferPercent}% | POP: ${strike.probabilityOfProfitPercent}%`;
@@ -178,12 +307,12 @@ export function CoveredCallsAnalyser({
           <div className="mt-3">
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-black font-mono text-emerald-300">
-                {analysisData?.totalUncoveredCallCapacity ?? 0}
+                {displayMetrics.totalUncoveredCallCapacity}
               </span>
               <span className="text-xs text-emerald-400/80 font-medium">Contracts Available</span>
             </div>
             <p className="text-[11px] text-muted-foreground mt-1">
-              Across {analysisData?.uncoveredPositionsCount ?? 0} unhedged stock/LEAPs positions with &ge;100 Delta
+              Across {displayMetrics.uncoveredPositionsCount} unhedged stock/LEAPs positions with &ge;100 Delta
             </p>
           </div>
         </div>
@@ -201,7 +330,7 @@ export function CoveredCallsAnalyser({
           <div className="mt-3">
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-black font-mono text-foreground">
-                +${analysisData?.potentialMonthlyIncomeEstimate ? analysisData.potentialMonthlyIncomeEstimate.toLocaleString() : '0'}
+                +${displayMetrics.potentialMonthlyIncomeEstimate ? Math.round(displayMetrics.potentialMonthlyIncomeEstimate).toLocaleString() : '0'}
               </span>
               <span className="text-xs text-muted-foreground font-medium">/ 30-day cycle</span>
             </div>
@@ -224,12 +353,17 @@ export function CoveredCallsAnalyser({
           <div className="mt-3">
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-black font-mono text-foreground">
-                {analysisData?.totalEligiblePositionsCount ?? 0}
+                {displayMetrics.totalEligiblePositionsCount}
               </span>
               <span className="text-xs text-muted-foreground font-medium">Holdings</span>
+              {hiddenSymbols.size > 0 && (
+                <span className="text-[10px] text-rose-400 font-mono font-semibold ml-1">
+                  ({hiddenSymbols.size} hidden)
+                </span>
+              )}
             </div>
             <p className="text-[11px] text-muted-foreground mt-1">
-              {analysisData?.uncoveredPositionsCount ?? 0} Uncovered • {analysisData?.partiallyCoveredCount ?? 0} Partial • {analysisData?.fullyCoveredCount ?? 0} Fully Covered
+              {displayMetrics.uncoveredPositionsCount} Uncovered • {displayMetrics.partiallyCoveredCount} Partial • {displayMetrics.fullyCoveredCount} Fully Covered
             </p>
           </div>
         </div>
@@ -253,7 +387,7 @@ export function CoveredCallsAnalyser({
           <div className="mt-3">
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-black font-mono text-foreground">
-                +{analysisData?.totalPortfolioNetDelta ? Math.round(analysisData.totalPortfolioNetDelta).toLocaleString() : '0'} &Delta;
+                +{displayMetrics.totalPortfolioNetDelta ? Math.round(displayMetrics.totalPortfolioNetDelta).toLocaleString() : '0'} &Delta;
               </span>
             </div>
             <p className="text-[11px] text-muted-foreground mt-1">
@@ -279,7 +413,7 @@ export function CoveredCallsAnalyser({
             )}
           >
             <Flame className="w-3.5 h-3.5" />
-            <span>Uncovered Opportunities ({analysisData?.uncoveredPositionsCount ?? 0})</span>
+            <span>Uncovered Opportunities ({displayMetrics.uncoveredPositionsCount})</span>
           </Button>
 
           <Button
@@ -293,7 +427,7 @@ export function CoveredCallsAnalyser({
                 : 'border-border/70 text-amber-400/90 hover:bg-accent'
             )}
           >
-            <span>Partially Covered ({analysisData?.partiallyCoveredCount ?? 0})</span>
+            <span>Partially Covered ({displayMetrics.partiallyCoveredCount})</span>
           </Button>
 
           <Button
@@ -307,7 +441,7 @@ export function CoveredCallsAnalyser({
                 : 'border-border/70 text-blue-400/90 hover:bg-accent'
             )}
           >
-            <span>Fully Covered ({analysisData?.fullyCoveredCount ?? 0})</span>
+            <span>Fully Covered ({displayMetrics.fullyCoveredCount})</span>
           </Button>
 
           <Button
@@ -322,7 +456,7 @@ export function CoveredCallsAnalyser({
             )}
           >
             <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
-            <span>Active Calls Open ({analysisData?.activePositionsCount ?? 0})</span>
+            <span>Active Calls Open ({displayMetrics.activePositionsCount})</span>
           </Button>
 
           <Button
@@ -334,13 +468,46 @@ export function CoveredCallsAnalyser({
               statusFilter === 'ALL' ? 'bg-primary text-primary-foreground' : 'border-border/70 text-muted-foreground'
             )}
           >
-            All Holdings ({allCandidates.length})
+            All Holdings ({activeCandidates.length})
           </Button>
+
+          {hiddenSymbols.size > 0 && (
+            <Button
+              variant={statusFilter === 'HIDDEN' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setStatusFilter('HIDDEN')}
+              className={cn(
+                'h-8 text-xs font-semibold gap-1.5 transition-all',
+                statusFilter === 'HIDDEN'
+                  ? 'bg-rose-600 text-white shadow-sm'
+                  : 'border-rose-500/40 text-rose-300 bg-rose-950/20 hover:bg-rose-950/40'
+              )}
+            >
+              <EyeOff className="w-3.5 h-3.5 text-rose-400" />
+              <span>Hidden ({hiddenCandidates.length})</span>
+            </Button>
+          )}
         </div>
 
         {/* Search & Sort Controls */}
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1 md:w-56">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant={onlyOptimalIV ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setOnlyOptimalIV(!onlyOptimalIV)}
+            className={cn(
+              'h-8 text-xs font-semibold gap-1.5 transition-all',
+              onlyOptimalIV
+                ? 'bg-amber-600 text-white shadow-sm'
+                : 'border-amber-500/40 text-amber-300 bg-amber-950/20 hover:bg-amber-950/40'
+            )}
+            title="Filter to only positions with IV Rank >= 50% (optimal call selling)"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <span>Optimal IV (IVR &ge; 50%)</span>
+          </Button>
+
+          <div className="relative flex-1 md:w-48">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={searchQuery}
@@ -356,6 +523,9 @@ export function CoveredCallsAnalyser({
             className="h-8 text-xs font-semibold bg-card/80 border border-border/70 rounded-xl px-2.5 text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer"
           >
             <option value="CAPACITY">Sort: Real Capacity (High &rarr; Low)</option>
+            <option value="IVR">Sort: IV Rank (IVR High &rarr; Low)</option>
+            <option value="IV">Sort: Implied Volatility (IV High &rarr; Low)</option>
+            <option value="EARNINGS">Sort: Next Earnings Date</option>
             <option value="ACTIVE_CALLS">Sort: Active Short Calls First</option>
             <option value="YIELD">Sort: APY Yield (% High &rarr; Low)</option>
             <option value="MARKET_VALUE">Sort: Position Market Value</option>
@@ -380,9 +550,13 @@ export function CoveredCallsAnalyser({
       ) : filteredCandidates.length === 0 ? (
         <div className="glass-card rounded-2xl p-12 text-center space-y-3">
           <ShieldCheck className="w-12 h-12 text-muted-foreground/40 mx-auto" />
-          <h3 className="font-bold text-foreground text-base">No Matching Positions Found</h3>
+          <h3 className="font-bold text-foreground text-base">
+            {statusFilter === 'HIDDEN' ? 'No Hidden Stocks' : 'No Matching Positions Found'}
+          </h3>
           <p className="text-xs text-muted-foreground max-w-md mx-auto">
-            {statusFilter === 'UNCOVERED'
+            {statusFilter === 'HIDDEN'
+              ? 'All eligible covered call candidates are currently active. If there are stocks you temporarily don\'t want to sell calls against, click "Don\'t Sell Calls" on their card.'
+              : statusFilter === 'UNCOVERED'
               ? 'Great job! You have no unhedged positions with 100+ Delta without short call coverage, or your current positions have fewer than 100 shares.'
               : 'Try clearing your filters or adding positions with 100+ shares to analyze covered call income opportunities.'}
           </p>
@@ -390,27 +564,57 @@ export function CoveredCallsAnalyser({
             variant="outline"
             size="sm"
             onClick={() => {
-              setStatusFilter('ALL');
+              setStatusFilter('UNCOVERED');
               setSearchQuery('');
             }}
             className="text-xs"
           >
-            Reset Filters
+            {statusFilter === 'HIDDEN' ? 'View Uncovered Opportunities' : 'Reset Filters'}
           </Button>
         </div>
       ) : (
         <div className="space-y-4">
+          {/* Top Banner when viewing Hidden Tab */}
+          {statusFilter === 'HIDDEN' && (
+            <div className="rounded-2xl border border-rose-500/30 bg-rose-950/15 p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+              <div className="flex items-center gap-2.5">
+                <EyeOff className="w-5 h-5 text-rose-400 shrink-0" />
+                <div>
+                  <h4 className="text-sm font-bold text-foreground flex items-center gap-2">
+                    Temporarily Excluded Stocks ({hiddenCandidates.length})
+                  </h4>
+                  <p className="text-xs text-muted-foreground">
+                    These positions are temporarily hidden from covered call selling. Click &quot;Unhide Stock&quot; to restore them to active proposals.
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleUnhideAll}
+                disabled={hiddenCandidates.length === 0}
+                className="h-8 text-xs font-semibold border-rose-500/40 text-rose-300 hover:bg-rose-950/40 gap-1.5 shrink-0"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Restore All ({hiddenCandidates.length})</span>
+              </Button>
+            </div>
+          )}
+
           {filteredCandidates.map((candidate) => {
             const isExpanded = expandedPositionId === candidate.symbol;
             const hasCapacity = candidate.coveredCallCapacity >= 1;
             const isUncovered = candidate.coverageStatus === 'UNCOVERED_OPPORTUNITY';
+            const isHidden = hiddenSymbols.has(candidate.symbol);
 
             return (
               <div
                 key={candidate.symbol}
                 className={cn(
                   'glass-card rounded-2xl border transition-all duration-200 overflow-hidden shadow-sm hover:border-primary/40',
-                  isUncovered && hasCapacity
+                  isHidden
+                    ? 'border-rose-500/30 bg-rose-950/10'
+                    : isUncovered && hasCapacity
                     ? 'border-emerald-500/40 bg-emerald-950/10'
                     : 'border-border/60 bg-card/60'
                 )}
@@ -418,16 +622,16 @@ export function CoveredCallsAnalyser({
                 {/* Main Card Header / Bar */}
                 <div className="p-5 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
                   {/* Left: Ticker & Position Telemetry */}
-                  <div className="flex items-center gap-3.5 min-w-0">
+                  <div className="flex items-start gap-3.5 min-w-0 flex-1">
                     <div
                       onClick={() => handleRowClick(candidate.symbol)}
-                      className="w-11 h-11 rounded-2xl bg-primary/10 border border-primary/30 flex items-center justify-center font-mono font-black text-sm text-primary shrink-0 cursor-pointer hover:bg-primary/20 transition-colors shadow-sm"
+                      className="w-11 h-11 rounded-2xl bg-primary/10 border border-primary/30 flex items-center justify-center font-mono font-black text-sm text-primary shrink-0 cursor-pointer hover:bg-primary/20 transition-colors shadow-sm mt-0.5"
                       title="Open in Research Suite"
                     >
                       {candidate.symbol.slice(0, 4)}
                     </div>
 
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span
                           onClick={() => handleRowClick(candidate.symbol)}
@@ -437,6 +641,13 @@ export function CoveredCallsAnalyser({
                         </span>
 
                         {getStatusBadge(candidate.coverageStatus, candidate.coveredCallCapacity, candidate.shortCallsCount)}
+
+                        {isHidden && (
+                          <Badge variant="outline" className="text-rose-300 border-rose-500/40 text-xs font-bold gap-1 bg-rose-950/30">
+                            <EyeOff className="w-3.5 h-3.5 text-rose-400" />
+                            <span>Call Selling Paused</span>
+                          </Badge>
+                        )}
 
                         {candidate.hasActiveCalls && (
                           <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/40 text-xs font-bold gap-1 shadow-xs">
@@ -500,6 +711,89 @@ export function CoveredCallsAnalyser({
                           </>
                         )}
                       </div>
+
+                      {/* ================= VOLATILITY (IV / IVR / IVP) & EARNINGS CATALYST BAR ================= */}
+                      <div className="mt-2.5 pt-2 border-t border-border/40 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+                        {/* Left: Volatility Matrix & Optimal Verdict */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {/* IV */}
+                          <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-900/60 border border-border/50 font-mono text-[11px]" title="Current 30-day / Front-Month Implied Volatility">
+                            <Activity className="w-3 h-3 text-cyan-400" />
+                            <span className="text-muted-foreground">IV:</span>
+                            <span className="text-foreground font-bold">{candidate.impliedVolatility !== undefined ? `${candidate.impliedVolatility}%` : '---'}</span>
+                          </div>
+
+                          {/* IVR (IV Rank) */}
+                          <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-900/60 border border-border/50 font-mono text-[11px]" title="Implied Volatility Rank: where current IV sits within 52-week range (0-100%)">
+                            <span className="text-muted-foreground">IVR:</span>
+                            <span className={cn(
+                              "font-bold",
+                              (candidate.ivRank || 0) >= 50 ? "text-emerald-400" : (candidate.ivRank || 0) >= 30 ? "text-amber-300" : "text-muted-foreground"
+                            )}>
+                              {candidate.ivRank !== undefined ? `${candidate.ivRank}%` : '---'}
+                            </span>
+                          </div>
+
+                          {/* IVP (IV Percentile) */}
+                          <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-900/60 border border-border/50 font-mono text-[11px]" title="Implied Volatility Percentile: % of days in the past year IV was lower than today">
+                            <span className="text-muted-foreground">IVP:</span>
+                            <span className={cn(
+                              "font-bold",
+                              (candidate.ivPercentile || 0) >= 50 ? "text-emerald-400" : (candidate.ivPercentile || 0) >= 30 ? "text-amber-300" : "text-muted-foreground"
+                            )}>
+                              {candidate.ivPercentile !== undefined ? `${candidate.ivPercentile}%` : '---'}
+                            </span>
+                          </div>
+
+                          {/* Optimal Call Selling Verdict Badge */}
+                          {candidate.callSellingEnvironment === 'OPTIMAL' || (candidate.ivRank !== undefined && candidate.ivRank >= 50) ? (
+                            <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 text-[10px] font-bold gap-1 shadow-xs" title={candidate.optimalSellingVerdict || "Elevated IV: High options premium provides optimal call selling environment"}>
+                              <Sparkles className="w-3 h-3 text-emerald-400" />
+                              <span>Optimal to Sell Calls (High IV Premia)</span>
+                            </Badge>
+                          ) : candidate.callSellingEnvironment === 'EXTREME' ? (
+                            <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/40 text-[10px] font-bold gap-1 shadow-xs" title={candidate.optimalSellingVerdict || "Extreme IV: Peak options premium, watch for binary catalyst"}>
+                              <Flame className="w-3 h-3 text-purple-400 animate-pulse" />
+                              <span>Peak IV (Max Premium • Event Risk)</span>
+                            </Badge>
+                          ) : candidate.callSellingEnvironment === 'SUBOPTIMAL' || (candidate.ivRank !== undefined && candidate.ivRank < 30) ? (
+                            <Badge variant="outline" className="text-muted-foreground border-border/70 text-[10px] font-medium gap-1 bg-slate-900/40" title={candidate.optimalSellingVerdict || "Low IV: Options are cheap/underpriced"}>
+                              <AlertCircle className="w-3 h-3 text-amber-400/80" />
+                              <span>Sub-Optimal (Low IV / Cheap Calls)</span>
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-cyan-300 border-cyan-500/30 text-[10px] font-medium gap-1 bg-cyan-950/20" title={candidate.optimalSellingVerdict || "Moderate IV: Normal options pricing"}>
+                              <span>Moderate IV (Steady Harvest)</span>
+                            </Badge>
+                          )}
+                        </div>
+
+                        {/* Right: Next Earnings Catalyst */}
+                        <div className="flex items-center gap-2 font-mono text-[11px] flex-wrap">
+                          <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-card/80 border border-border/60" title="Next corporate quarterly earnings announcement date">
+                            <Calendar className="w-3 h-3 text-indigo-400" />
+                            <span className="text-muted-foreground">Next Earnings:</span>
+                            <span className="text-foreground font-semibold">
+                              {candidate.nextEarningsDate || 'Date Pending'}
+                            </span>
+                            {candidate.daysUntilEarnings !== undefined && candidate.daysUntilEarnings >= 0 && (
+                              <span className="text-muted-foreground">({candidate.daysUntilEarnings}d)</span>
+                            )}
+                          </div>
+
+                          {candidate.earningsBeforeExpiration ? (
+                            <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/40 text-[10px] font-bold gap-1" title={`Earnings falls within proposed expiration (${candidate.proposedCalls?.balanced?.dte || 35}d DTE). Option pricing reflects binary earnings event.`}>
+                              <AlertTriangle className="w-3 h-3 text-amber-400" />
+                              <span>Earnings Inside Cycle (&le;{candidate.proposedCalls?.balanced?.dte || 35}d)</span>
+                            </Badge>
+                          ) : candidate.nextEarningsDate && candidate.nextEarningsDate !== 'Date Pending' && candidate.daysUntilEarnings !== undefined && candidate.daysUntilEarnings > 0 ? (
+                            <Badge variant="outline" className="text-emerald-400 border-emerald-500/30 text-[10px] font-medium gap-1 bg-emerald-950/20" title={`Earnings occurs after option expiration (${candidate.proposedCalls?.balanced?.dte || 35}d DTE). Clean theta decay without binary gap risk.`}>
+                              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                              <span>Safe: Post-Exp ({candidate.daysUntilEarnings}d)</span>
+                            </Badge>
+                          ) : null}
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -514,6 +808,30 @@ export function CoveredCallsAnalyser({
                           {candidate.proposedCalls.balanced.annualizedYieldPercent || 0}% APY (Balanced)
                         </div>
                       </div>
+                    )}
+
+                    {isHidden ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleUnhideStock(candidate.symbol)}
+                        className="h-8 text-xs gap-1.5 border-emerald-500/40 text-emerald-300 bg-emerald-950/20 hover:bg-emerald-900/40 font-semibold"
+                        title={`Restore ${candidate.symbol} to Covered Call Harvester`}
+                      >
+                        <Eye className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Unhide Stock</span>
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleHideStock(candidate.symbol)}
+                        className="h-8 text-xs gap-1.5 text-muted-foreground hover:text-rose-300 hover:bg-rose-950/30 font-medium transition-colors"
+                        title={`Temporarily hide ${candidate.symbol} (don't sell calls)`}
+                      >
+                        <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span className="hidden sm:inline">Don&apos;t Sell Calls</span>
+                      </Button>
                     )}
 
                     <Button

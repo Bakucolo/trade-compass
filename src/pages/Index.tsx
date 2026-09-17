@@ -18,6 +18,7 @@ import { SettingsPage } from '@/components/SettingsPage';
 import { ManagementPage } from '@/components/ManagementPage';
 import { ScorecardsPage } from '@/components/ScorecardsPage';
 import { EarningsPage } from '@/components/EarningsPage';
+import { AITradingPage } from '@/components/AITradingPage';
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -104,6 +105,7 @@ const Index = () => {
         return (
           <GraphsPage
             initialSymbol={graphsTicker}
+            onSelectSymbol={(sym) => setGraphsTicker(sym)}
             onNavigateToResearch={handleNavigateToResearch}
           />
         );
@@ -144,6 +146,13 @@ const Index = () => {
         return <IdeasPage onNavigateToResearch={handleNavigateToResearch} />;
       case 'research':
         return <ResearchPage initialSymbol={researchTicker} onNavigateTab={setActiveTab} />;
+      case 'ai-trading':
+        return (
+          <AITradingPage
+            onNavigateToResearch={handleNavigateToResearch}
+            onNavigateToGraphs={handleNavigateToGraphs}
+          />
+        );
       case 'portfolio':
       case 'brokers':
         return (

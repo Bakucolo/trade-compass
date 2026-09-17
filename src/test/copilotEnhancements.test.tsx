@@ -214,4 +214,62 @@ describe('AI Copilot Enhancements', () => {
     // Verify saved note is rendered
     expect(screen.getByText('Copilot: NVDA DCF Summary')).toBeDefined();
   });
+
+  it('allows customizing text brightness, color tone, and font scale with localStorage persistence', async () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <HybridAgentCopilot isOpen={true} onOpenChange={vi.fn()} />
+      </QueryClientProvider>
+    );
+
+    // Find and open Eye-Care popover
+    const eyeCareButton = screen.getByTitle(/Reading & Eye-Care/i);
+    expect(eyeCareButton).toBeDefined();
+    fireEvent.click(eyeCareButton);
+
+    // Popover content should now be visible
+    expect(screen.getByText(/Anti-Glare/i)).toBeDefined();
+    expect(screen.getByText('Text Brightness:')).toBeDefined();
+
+    // Click 70% dimming preset
+    const dim70Btn = screen.getByText('Dim 70%');
+    fireEvent.click(dim70Btn);
+    expect(localStorage.getItem('tradeflow_copilot_text_brightness')).toBe('70');
+
+    // Click Warm Amber color tone
+    const amberToneBtn = screen.getByText('Warm Amber');
+    fireEvent.click(amberToneBtn);
+    expect(localStorage.getItem('tradeflow_copilot_text_tone')).toBe('amber');
+
+    // Click Large font scale
+    const largeFontBtn = screen.getByText('Large (+15%)');
+    fireEvent.click(largeFontBtn);
+    expect(localStorage.getItem('tradeflow_copilot_font_size')).toBe('large');
+  });
+
+  it('supports full screen expansive layout and width mode toggles', () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <HybridAgentCopilot isOpen={true} onOpenChange={vi.fn()} />
+      </QueryClientProvider>
+    );
+
+    // Enter fullscreen
+    fireEvent.click(screen.getByTitle('Open chat in full size'));
+
+    // Open Eye-Care popover to adjust screen width mode
+    fireEvent.click(screen.getByTitle(/Reading & Eye-Care/i));
+
+    // Full screen width mode option is displayed in fullscreen
+    expect(screen.getByText(/Screen Layout Width/i)).toBeDefined();
+    const edgeToEdgeBtn = screen.getByText('Edge-to-Edge (100%)');
+    fireEvent.click(edgeToEdgeBtn);
+    expect(localStorage.getItem('tradeflow_copilot_width_mode')).toBe('full');
+
+    // Switch back to expansive
+    const expansiveBtn = screen.getByText('Expansive (1750px)');
+    fireEvent.click(expansiveBtn);
+    expect(localStorage.getItem('tradeflow_copilot_width_mode')).toBe('expansive');
+  });
 });
+

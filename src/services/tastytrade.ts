@@ -89,3 +89,103 @@ export const useTastytradeStatus = () => {
         refetchInterval: 10000,
     });
 };
+
+export interface StagedDraftOrder {
+    draftId: string;
+    broker?: 'tastytrade' | 'alpaca' | 'ibkr';
+    accountNumber: string;
+    createdAt: string;
+    expiresAt: string;
+    status: 'PENDING_APPROVAL' | 'EXECUTED' | 'CANCELLED' | 'EXPIRED';
+    symbol: string;
+    action: 'BUY_TO_OPEN' | 'SELL_TO_CLOSE' | 'BUY' | 'SELL' | 'SELL_TO_OPEN' | 'BUY_TO_CLOSE';
+    instrumentType: 'Equity' | 'Equity Option';
+    quantity: number;
+    orderType: 'Limit' | 'Market';
+    price?: number;
+    timeInForce: 'Day' | 'GTC';
+    optionDetails?: {
+        expirationDate: string;
+        strikePrice: number;
+        optionType: 'Call' | 'Put';
+    };
+    notes?: string;
+    dryRunResult?: {
+        estimatedMarginRequirement?: number;
+        buyingPowerEffect?: number;
+        estimatedCommission?: number;
+        estimatedFees?: number;
+        warnings?: string[];
+    };
+    executionResult?: {
+        orderId?: string | number;
+        executedAt?: string;
+        status?: string;
+    };
+}
+
+export const approveDraftOrder = async (
+    draftId: string,
+    overrides?: { price?: number; quantity?: number }
+): Promise<{ success: boolean; draft: StagedDraftOrder; orderId?: string | number }> => {
+    const response = await fetch(`${API_BASE}/orders/execute-draft`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ draftId, ...overrides })
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Failed to execute trade (status ${response.status})`);
+    }
+    return response.json();
+};
+
+export const cancelDraftOrder = async (draftId: string): Promise<{ success: boolean; draft: StagedDraftOrder }> => {
+    const response = await fetch(`${API_BASE}/orders/cancel-draft`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ draftId })
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Failed to cancel draft (status ${response.status})`);
+    }
+    return response.json();
+};
+
+export const fetchTastyEnvironment = async (): Promise<{
+    baseUrl: string;
+    isSandbox: boolean;
+    accountNumber: string;
+    authenticated: boolean;
+    environment: string;
+}> => {
+    const response = await fetch(`${API_BASE}/environment`);
+    if (!response.ok) throw new Error('Failed to fetch Tastytrade environment');
+    return response.json();
+};
+
+export interface FormattedOptionStrike {
+    strike: number;
+    formattedStrike: string;
+    callSymbol: string;
+    callName: string;
+    putSymbol: string;
+    putName: string;
+    callPrice?: number;
+    putPrice?: number;
+    isAtm?: boolean;
+}
+
+export interface FormattedOptionExpiration {
+    expirationDate: string;
+    dte: number;
+    strikes: FormattedOptionStrike[];
+}
+
+export interface FormattedOptionChain {
+    symbol: string;
+    underlyingPrice?: number;
+    expirations: FormattedOptionExpiration[];
+}
+

@@ -40,6 +40,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { icon: LayoutDashboard, label: 'Dashboard', id: 'dashboard' },
   { icon: Wallet, label: 'Portfolio', id: 'portfolio' },
+  { icon: Bot, label: 'AI Trading', id: 'ai-trading' },
   { icon: ShieldCheck, label: 'Scorecards', id: 'scorecards' },
   { icon: Briefcase, label: 'Management', id: 'management' },
   { icon: Globe, label: 'Macro', id: 'macro' },

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import {
   LineChart,
@@ -61,12 +61,13 @@ import { toast } from 'sonner';
 
 interface GraphsPageProps {
   onNavigateToResearch?: (symbol: string) => void;
+  onSelectSymbol?: (symbol: string) => void;
   initialSymbol?: string;
 }
 
 type SidePanelSource = 'WATCHLIST' | 'PORTFOLIO';
 
-export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPageProps) {
+export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol }: GraphsPageProps) {
   // --- Side Panel Source & Watchlists ---
   const [sourceMode, setSourceMode] = useState<SidePanelSource>('WATCHLIST');
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
@@ -138,8 +139,23 @@ export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPagePr
 
   // --- Active Selected Stock to Chart ---
   const [selectedSymbol, setSelectedSymbol] = useState<string>(() => {
-    return initialSymbol ? initialSymbol.toUpperCase() : 'AAPL';
+    return initialSymbol ? initialSymbol.trim().toUpperCase() : 'AAPL';
   });
+  const lastAppliedInitialSymbolRef = useRef<string>(
+    initialSymbol ? initialSymbol.trim().toUpperCase() : 'AAPL'
+  );
+
+  // Central symbol selection callback to update local state and notify parent
+  const handleSelectSymbol = useCallback(
+    (rawSymbol: string) => {
+      if (!rawSymbol || !rawSymbol.trim()) return;
+      const clean = rawSymbol.trim().toUpperCase();
+      lastAppliedInitialSymbolRef.current = clean;
+      setSelectedSymbol(clean);
+      onSelectSymbol?.(clean);
+    },
+    [onSelectSymbol]
+  );
 
   // Real-time Technical Analysis Query for selectedSymbol
   const { data: techAnalysis } = useTechnicalAnalysis(selectedSymbol);
@@ -220,16 +236,19 @@ export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPagePr
     );
   }, [currentList, searchQuery]);
 
-  // Keep selectedSymbol in sync with initialSymbol prop
+  // Keep selectedSymbol in sync with initialSymbol prop only when it actually changes from parent
   useEffect(() => {
     if (initialSymbol && initialSymbol.trim()) {
       const sym = initialSymbol.trim().toUpperCase();
-      setSelectedSymbol(sym);
-      if (portfolioItems.some((p) => p.symbol === sym)) {
-        setSourceMode('PORTFOLIO');
+      if (sym !== lastAppliedInitialSymbolRef.current) {
+        lastAppliedInitialSymbolRef.current = sym;
+        setSelectedSymbol(sym);
+        if (portfolioItems.some((p) => p.symbol === sym)) {
+          setSourceMode('PORTFOLIO');
+        }
       }
     }
-  }, [initialSymbol, portfolioItems]);
+  }, [initialSymbol]);
 
   // Listen for global select-graphs-ticker event
   useEffect(() => {
@@ -237,7 +256,7 @@ export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPagePr
       const customEvent = e as CustomEvent<string>;
       if (customEvent.detail && customEvent.detail.trim()) {
         const sym = customEvent.detail.trim().toUpperCase();
-        setSelectedSymbol(sym);
+        handleSelectSymbol(sym);
         if (portfolioItems.some((p) => p.symbol === sym)) {
           setSourceMode('PORTFOLIO');
         }
@@ -247,7 +266,7 @@ export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPagePr
     return () => {
       window.removeEventListener('select-graphs-ticker', handleTickerEvent);
     };
-  }, [portfolioItems]);
+  }, [portfolioItems, handleSelectSymbol]);
 
   // Check if searched ticker is an unlisted new ticker
   const searchedCleanTicker = searchQuery.trim().toUpperCase();
@@ -304,17 +323,17 @@ export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPagePr
         e.preventDefault();
         const currentIndex = filteredList.findIndex((i) => i.symbol === selectedSymbol);
         if (currentIndex < filteredList.length - 1) {
-          setSelectedSymbol(filteredList[currentIndex + 1].symbol);
+          handleSelectSymbol(filteredList[currentIndex + 1].symbol);
         }
       } else if (e.key === 'ArrowUp' || e.key === 'k') {
         e.preventDefault();
         const currentIndex = filteredList.findIndex((i) => i.symbol === selectedSymbol);
         if (currentIndex > 0) {
-          setSelectedSymbol(filteredList[currentIndex - 1].symbol);
+          handleSelectSymbol(filteredList[currentIndex - 1].symbol);
         }
       }
     },
-    [filteredList, selectedSymbol]
+    [filteredList, selectedSymbol, handleSelectSymbol]
   );
 
   useEffect(() => {
@@ -325,8 +344,7 @@ export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPagePr
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      const clean = searchQuery.trim().toUpperCase();
-      setSelectedSymbol(clean);
+      handleSelectSymbol(searchQuery.trim());
     }
   };
 
@@ -727,7 +745,7 @@ export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPagePr
                     <Button
                       type="button"
                       size="sm"
-                      onClick={() => setSelectedSymbol(searchedCleanTicker)}
+                      onClick={() => handleSelectSymbol(searchedCleanTicker)}
                       className={cn(
                         "h-7 text-xs font-bold gap-1",
                         selectedSymbol === searchedCleanTicker
@@ -776,7 +794,7 @@ export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPagePr
                       size="sm"
                       variant="outline"
                       onClick={() => {
-                        setSelectedSymbol(searchQuery.toUpperCase().trim());
+                        handleSelectSymbol(searchQuery.trim());
                         setSearchQuery('');
                       }}
                       className="text-xs h-7 gap-1"
@@ -795,7 +813,7 @@ export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPagePr
                   return (
                     <div
                       key={item.symbol}
-                      onClick={() => setSelectedSymbol(item.symbol)}
+                      onClick={() => handleSelectSymbol(item.symbol)}
                       className={cn(
                         "p-2.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between group relative overflow-hidden",
                         isSelected
@@ -1099,6 +1117,7 @@ export function GraphsPage({ onNavigateToResearch, initialSymbol }: GraphsPagePr
           )}
 
           <TradingViewChart
+            key={selectedSymbol}
             symbol={selectedSymbol}
             theme="dark"
             interval="D"

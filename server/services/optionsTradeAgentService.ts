@@ -190,7 +190,7 @@ function bsDelta(s: number, k: number, dte: number, iv: number, type: 'CALL' | '
 /**
  * Curated universe of high options liquidity underlying assets
  */
-const LIQUID_OPTIONS_UNIVERSE = [
+export const LIQUID_OPTIONS_UNIVERSE = [
   // Mega-Cap & High Beta Tech
   { symbol: 'NVDA', name: 'NVIDIA Corporation', sector: 'Semiconductors', baseIV: 0.48, ivRank: 64, ivp: 72, liquidity: 'INSTITUTIONAL' as LiquidityTier, avgVol: 450000, optVolRank: 5 },
   { symbol: 'TSLA', name: 'Tesla, Inc.', sector: 'Automotive / EV', baseIV: 0.58, ivRank: 78, ivp: 84, liquidity: 'INSTITUTIONAL' as LiquidityTier, avgVol: 650000, optVolRank: 5 },

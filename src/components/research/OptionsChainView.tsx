@@ -43,6 +43,7 @@ import {
   useOptionsChain,
 } from '@/services/optionsChainService';
 import { useCreateAlert } from '@/services/alertService';
+import { OptionsSkewAgentDialog } from './OptionsSkewAgentDialog';
 import {
   ResponsiveContainer,
   BarChart,
@@ -77,6 +78,7 @@ export function OptionsChainView({
   const [showDynamicsRadar, setShowDynamicsRadar] = useState<boolean>(true);
   const [strikeFilterQuery, setStrikeFilterQuery] = useState<string>('');
   const [copiedContract, setCopiedContract] = useState<string | null>(null);
+  const [showSkewAgent, setShowSkewAgent] = useState<boolean>(false);
 
   const { data: chain, isLoading, isError, error, refetch, isFetching } = useOptionsChain(symbol, selectedExp);
   const createAlertMutation = useCreateAlert();
@@ -268,6 +270,15 @@ export function OptionsChainView({
                   🛡️ Put Wall (Support): ${keyLevels.putWall.strike.toFixed(2)}
                 </Badge>
               )}
+              <button
+                type="button"
+                onClick={() => setShowSkewAgent(true)}
+                className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider bg-purple-500/20 text-purple-300 border border-purple-500/40 hover:bg-purple-500/30 hover:border-purple-400 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                title="Launch AI Agent to analyze options skew, strike equidistance & upside bias"
+              >
+                <Sparkles className="w-3 h-3 text-purple-400 animate-pulse" />
+                <span>Skew Agent</span>
+              </button>
             </div>
 
             <CardTitle className="text-2xl font-black tracking-tight text-foreground flex items-center gap-2.5 pt-1">
@@ -773,6 +784,18 @@ export function OptionsChainView({
               <span>Greeks {showGreeks ? 'ON' : 'OFF'}</span>
             </Button>
 
+            {/* Options Skew Agent Button */}
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setShowSkewAgent(true)}
+              className="h-8 text-xs font-bold gap-1.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-primary hover:from-purple-500 hover:to-indigo-500 text-white shadow-md border-0 transition-all cursor-pointer"
+              title="Call AI Agent to analyze options skew, strike equidistance & upside expectations"
+            >
+              <Scale className="w-3.5 h-3.5 text-purple-200" />
+              <span>Analyze Skew Agent</span>
+            </Button>
+
             {/* Refresh Button */}
             <Button
               variant="outline"
@@ -995,6 +1018,14 @@ export function OptionsChainView({
         </div>
 
       </CardContent>
+
+      {/* Options Volatility Skew & Upside Bias AI Agent Dialog */}
+      <OptionsSkewAgentDialog
+        isOpen={showSkewAgent}
+        onClose={() => setShowSkewAgent(false)}
+        symbol={symbol}
+        selectedExpiration={chain?.selectedExpiration}
+      />
     </Card>
   );
 }
