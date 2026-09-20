@@ -1,9 +1,12 @@
 import { PrismaClient } from '@prisma/client';
+import fs from 'fs';
+import path from 'path';
 import { extractSymbolsFromText } from './thoughtLogAgentService';
 import { agentActivityTracker } from './agentActivityService';
 import { transcribeTelegramVoice } from './voiceTranscriptionService';
 import { autoCreateAlertsFromText } from './thoughtLogAlertService';
 import { createPlannedTrade, PlannedTradeItem } from './plannedTradeService';
+import { sendTelegramMessage } from './telegramReportService';
 
 const logToFile = (msg: string) => console.log(msg);
 
@@ -52,6 +55,7 @@ export interface BufferSyncResult {
 
 let lastSyncTimestamp: string | null = null;
 let lastSyncCount: number = 0;
+let isConsuming = false;
 
 /**
  * Determine sentiment from raw text
@@ -176,6 +180,7 @@ export async function saveSymbolsToWatchlist(
 
 export interface ParsedExecutionTrade {
   symbol: string;
+  underlyingSymbol?: string;
   action: string;
   assetType: string;
   timeframe: string;
@@ -188,53 +193,121 @@ export interface ParsedExecutionTrade {
   notes?: string;
 }
 
-/**
- * Parses trade execution parameters (action, quantity, price, stop loss, exit) from Execution topic text
- */
-export function parseTradeExecutionCandidates(text: string, defaultTimeframe = 'DAY'): ParsedExecutionTrade[] {
-  const clean = text.trim();
-  const detectedSymbols = extractSymbolsFromText(clean);
-  const orderKeywords = new Set([
-    'SL', 'TP', 'PT', 'BTO', 'BTC', 'STC', 'STO', 'MKT', 'QTY', 'DAY', 'DAILY',
-    'WEEK', 'WEEKLY', 'SWING', 'INTRADAY', 'BUY', 'SELL', 'LONG', 'SHORT',
-    'ENTRY', 'EXIT', 'TARGET', 'LIMIT', 'STOP', 'SHARES', 'CONTRACTS'
-  ]);
-  const validSymbols = detectedSymbols.filter((s) => !orderKeywords.has(s.toUpperCase()));
-  if (validSymbols.length === 0) return [];
+const ORDER_KEYWORDS = new Set([
+  'SL', 'TP', 'PT', 'BTO', 'BTC', 'STC', 'STO', 'MKT', 'QTY', 'DAY', 'DAILY',
+  'WEEK', 'WEEKLY', 'SWING', 'INTRADAY', 'BUY', 'SELL', 'LONG', 'SHORT',
+  'ENTRY', 'EXIT', 'TARGET', 'LIMIT', 'STOP', 'SHARES', 'CONTRACTS', 'CALL', 'PUT',
+  'CALLS', 'PUTS', 'ORDER', 'ORDERS', 'AT', 'PRICE', 'SIZE', 'FOR', 'AND', 'THE'
+]);
 
-  // Determine global action
+function parseSingleTradeExecutionLine(line: string, defaultTimeframe = 'DAY'): ParsedExecutionTrade[] {
+  // Strip execution hashtags & topic directives & emojis
+  const cleanLine = line
+    .replace(/#(?:topic:)?(?:execution|execute|trade-execution|queue)\b/gi, '')
+    .replace(/^🎯\s*/, '')
+    .trim();
+
+  if (!cleanLine) return [];
+
+  // 1. Check for Options syntax: e.g. "BTO 2 AAPL 250C 10/18 @ 4.50" or "SELL 1 TSLA 240P @ 3.20"
+  const optionRegex = /\b([A-Za-z]{1,5})\s+(\d+(?:\.\d+)?)\s*([CPcp])(?:all|ut)?(?:\s+(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?))?\b/i;
+  const optionMatch = cleanLine.match(optionRegex);
+
+  let assetType = 'STOCK';
+  let symbol = '';
+  let underlyingSymbol: string | undefined = undefined;
+
+  // Check explicit action
   let action = 'BUY';
-  if (/\b(?:SELL|SHORT|STC|STO)\b/i.test(clean)) {
+  if (/\b(?:SELL|SHORT|STC|STO)\b/i.test(cleanLine)) {
     action = 'SELL';
-  } else if (/\b(?:BUY|LONG|BTO|BTC)\b/i.test(clean)) {
+    if (/\b(?:STO)\b/i.test(cleanLine)) action = 'STO';
+    else if (/\b(?:STC)\b/i.test(cleanLine)) action = 'STC';
+  } else if (/\b(?:BUY|LONG|BTO|BTC)\b/i.test(cleanLine)) {
     action = 'BUY';
+    if (/\b(?:BTO)\b/i.test(cleanLine)) action = 'BTO';
+    else if (/\b(?:BTC)\b/i.test(cleanLine)) action = 'BTC';
   }
+
+  if (optionMatch) {
+    assetType = 'OPTION';
+    underlyingSymbol = optionMatch[1].toUpperCase();
+    const strike = optionMatch[2];
+    const optType = optionMatch[3].toUpperCase() === 'C' ? 'C' : 'P';
+    const expiry = optionMatch[4] ? ` ${optionMatch[4]}` : '';
+    symbol = `${underlyingSymbol} ${strike}${optType}${expiry}`;
+    if (action === 'BUY') action = 'BTO';
+    if (action === 'SELL') action = 'STC';
+  } else {
+    // Stock / ETF ticker extraction:
+    // (a) Match explicit $TICKER
+    const dollarMatch = cleanLine.match(/\$([A-Za-z]{1,5})\b/);
+    if (dollarMatch && !ORDER_KEYWORDS.has(dollarMatch[1].toUpperCase())) {
+      symbol = dollarMatch[1].toUpperCase();
+    }
+
+    // (b) Match keyword-adjacent symbol: e.g. "BUY 100 AAPL" or "BUY AAPL" or "SELL TSLA"
+    if (!symbol) {
+      const verbAfterMatch = cleanLine.match(/\b(?:BUY|SELL|LONG|SHORT|BTO|BTC|STC|STO)\s+(?:(\d+(?:\.\d+)?)\s+)?([A-Za-z]{1,5})\b/i);
+      if (verbAfterMatch && !ORDER_KEYWORDS.has(verbAfterMatch[2].toUpperCase())) {
+        symbol = verbAfterMatch[2].toUpperCase();
+      }
+    }
+
+    // (c) Match symbol before verb: e.g. "AAPL BUY 100"
+    if (!symbol) {
+      const verbBeforeMatch = cleanLine.match(/\b([A-Za-z]{1,5})\s+(?:BUY|SELL|LONG|SHORT)\b/i);
+      if (verbBeforeMatch && !ORDER_KEYWORDS.has(verbBeforeMatch[1].toUpperCase())) {
+        symbol = verbBeforeMatch[1].toUpperCase();
+      }
+    }
+
+    // (d) Fallback to extractSymbolsFromText
+    if (!symbol) {
+      const detected = extractSymbolsFromText(cleanLine);
+      const valid = detected.filter((s) => !ORDER_KEYWORDS.has(s.toUpperCase()));
+      if (valid.length > 0) {
+        symbol = valid[0];
+      }
+    }
+
+    // (e) Fallback for lowercase standalone or prefixed ticker: e.g. "sofi 16" or "pltr @ 35"
+    if (!symbol) {
+      const words = cleanLine.split(/[\s,@]+/).map((w) => w.replace(/[^A-Za-z]/g, '').toUpperCase()).filter(Boolean);
+      for (const w of words) {
+        if (w.length >= 2 && w.length <= 5 && !ORDER_KEYWORDS.has(w)) {
+          symbol = w;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!symbol) return [];
 
   // Determine timeframe: WEEK vs DAY
   let timeframe = defaultTimeframe;
-  if (/\b(?:WEEK|WEEKLY|SWING)\b/i.test(clean)) {
+  if (/\b(?:WEEK|WEEKLY|SWING)\b/i.test(cleanLine)) {
     timeframe = 'WEEK';
-  } else if (/\b(?:DAY|DAILY|INTRADAY)\b/i.test(clean)) {
+  } else if (/\b(?:DAY|DAILY|INTRADAY)\b/i.test(cleanLine)) {
     timeframe = 'DAY';
   }
 
   // Determine order type
   let orderType = 'LIMIT';
-  if (/\b(?:MARKET|MKT)\b/i.test(clean)) {
+  if (/\b(?:MARKET|MKT)\b/i.test(cleanLine)) {
     orderType = 'MARKET';
-  } else if (/\b(?:STOP[- ]?LIMIT)\b/i.test(clean)) {
+  } else if (/\b(?:STOP[- ]?LIMIT)\b/i.test(cleanLine)) {
     orderType = 'STOP_LIMIT';
   }
 
   // Determine quantity
-  let quantity = 100; // standard default
+  let quantity = assetType === 'OPTION' ? 1 : 100;
   const qtyMatch =
-    clean.match(/(\d+(?:\.\d+)?)\s*(?:shares?|shs?|contracts?|units?|x)\b/i) ||
-    clean.match(/(?:qty|quantity|size)[:\s]+(\d+(?:\.\d+)?)/i) ||
-    clean.match(/(?:BUY|SELL|LONG|SHORT)\s+(\d+(?:\.\d+)?)\s+[A-Z]{1,5}\b/i) ||
-    (validSymbols.length > 0
-      ? clean.match(new RegExp(`(?:${validSymbols.join('|')})\\s+(\\d+(?:\\.\\d+)?)\\s*(?:@|at|limit)\\b`, 'i'))
-      : null);
+    cleanLine.match(/(\d+(?:\.\d+)?)\s*(?:shares?|shs?|contracts?|units?|x)\b/i) ||
+    cleanLine.match(/(?:qty|quantity|size)[:\s]+(\d+(?:\.\d+)?)/i) ||
+    cleanLine.match(/(?:BUY|SELL|LONG|SHORT|BTO|BTC|STC|STO)\s+(\d+(?:\.\d+)?)\s+[A-Za-z]{1,5}\b/i) ||
+    cleanLine.match(new RegExp(`(?:${symbol})\\s+(\\d+(?:\\.\\d+)?)\\s*(?:@|at|limit)\\b`, 'i'));
 
   if (qtyMatch && Number(qtyMatch[1]) > 0) {
     quantity = Number(qtyMatch[1]);
@@ -243,8 +316,8 @@ export function parseTradeExecutionCandidates(text: string, defaultTimeframe = '
   // Determine entry / limit price
   let targetPrice: number | undefined = undefined;
   const priceMatch =
-    clean.match(/(?:@|at|limit|entry|price)[:\s]*\$?\s*(\d+(?:\.\d+)?)/i) ||
-    clean.match(/\$\s*(\d+(?:\.\d+)?)/);
+    cleanLine.match(/(?:@|at|limit|entry|price)[:\s]*\$?\s*(\d+(?:\.\d+)?)/i) ||
+    cleanLine.match(/\$\s*(\d+(?:\.\d+)?)/);
 
   if (priceMatch && Number(priceMatch[1]) > 0) {
     targetPrice = Number(priceMatch[1]);
@@ -252,39 +325,70 @@ export function parseTradeExecutionCandidates(text: string, defaultTimeframe = '
 
   // Determine stop loss
   let stopLoss: number | undefined = undefined;
-  const slMatch = clean.match(/(?:sl|stop|stoploss|stop-loss)[:\s]*\$?\s*(\d+(?:\.\d+)?)/i);
+  const slMatch = cleanLine.match(/(?:sl|stop|stoploss|stop-loss)[:\s]*\$?\s*(\d+(?:\.\d+)?)/i);
   if (slMatch && Number(slMatch[1]) > 0) {
     stopLoss = Number(slMatch[1]);
   }
 
   // Determine target exit / take profit
   let targetExit: number | undefined = undefined;
-  const tpMatch = clean.match(/(?:tp|pt|target|exit|takeprofit|take-profit)[:\s]*\$?\s*(\d+(?:\.\d+)?)/i);
+  const tpMatch = cleanLine.match(/(?:tp|pt|target|exit|takeprofit|take-profit)[:\s]*\$?\s*(\d+(?:\.\d+)?)/i);
   if (tpMatch && Number(tpMatch[1]) > 0) {
     targetExit = Number(tpMatch[1]);
   }
 
   // Conviction
   let conviction = 'HIGH';
-  if (/\b(?:SPEC|SPECULATIVE|LOTTO)\b/i.test(clean)) {
+  if (/\b(?:SPEC|SPECULATIVE|LOTTO)\b/i.test(cleanLine)) {
     conviction = 'SPECULATIVE';
-  } else if (/\b(?:MED|MEDIUM|MODERATE)\b/i.test(clean)) {
+  } else if (/\b(?:MED|MEDIUM|MODERATE)\b/i.test(cleanLine)) {
     conviction = 'MEDIUM';
   }
 
-  return validSymbols.map((symbol) => ({
-    symbol,
-    action,
-    assetType: 'STOCK',
-    timeframe,
-    orderType,
-    quantity,
-    targetPrice,
-    stopLoss,
-    targetExit,
-    conviction,
-    notes: clean,
-  }));
+  return [
+    {
+      symbol,
+      underlyingSymbol: underlyingSymbol || symbol,
+      action,
+      assetType,
+      timeframe,
+      orderType,
+      quantity,
+      targetPrice,
+      stopLoss,
+      targetExit,
+      conviction,
+      notes: cleanLine,
+    },
+  ];
+}
+
+/**
+ * Parses trade execution parameters (action, quantity, price, stop loss, exit) from Execution topic text
+ */
+export function parseTradeExecutionCandidates(text: string, defaultTimeframe = 'DAY'): ParsedExecutionTrade[] {
+  const clean = text.trim();
+  if (!clean) return [];
+
+  const lines = clean.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+  const results: ParsedExecutionTrade[] = [];
+
+  for (const line of lines) {
+    const parsed = parseSingleTradeExecutionLine(line, defaultTimeframe);
+    if (parsed && parsed.length > 0) {
+      results.push(...parsed);
+    }
+  }
+
+  // Fallback: If line-by-line parsing yielded nothing, try parsing the entire block as one line
+  if (results.length === 0) {
+    const single = parseSingleTradeExecutionLine(clean, defaultTimeframe);
+    if (single && single.length > 0) {
+      results.push(...single);
+    }
+  }
+
+  return results;
 }
 
 /**
@@ -307,7 +411,18 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
   // Ensure /consume path is targeted
   const targetUrl = bufferUrl.endsWith('/consume') ? bufferUrl : `${bufferUrl.replace(/\/+$/, '')}/consume`;
 
-  logToFile(`[TelegramBuffer] Checking Cloudflare Worker buffer at ${targetUrl}...`);
+  if (isConsuming) {
+    logToFile(`[TelegramBuffer] A buffer consumption cycle is already active. Skipping concurrent execution.`);
+    return {
+      success: true,
+      consumedCount: 0,
+      createdLogs: [],
+      message: 'Concurrent sync skipped: buffer consumption cycle already active.',
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  isConsuming = true;
 
   try {
     const response = await fetch(targetUrl, {
@@ -422,6 +537,26 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         contentText.includes('🎯')
       ));
 
+      // Auto-discover and persist TELEGRAM_EXECUTION_THREAD_ID if not yet configured
+      if (isExecutionTopic && msgThreadNum !== undefined && !process.env.TELEGRAM_EXECUTION_THREAD_ID) {
+        process.env.TELEGRAM_EXECUTION_THREAD_ID = String(msgThreadNum);
+        logToFile(`[TelegramBuffer] Auto-discovered TELEGRAM_EXECUTION_THREAD_ID=${msgThreadNum}. Persisting to environment.`);
+        try {
+          const envPath = path.resolve(process.cwd(), '.env.local');
+          if (fs.existsSync(envPath)) {
+            let envContent = fs.readFileSync(envPath, 'utf8');
+            if (/TELEGRAM_EXECUTION_THREAD_ID=/i.test(envContent)) {
+              envContent = envContent.replace(/TELEGRAM_EXECUTION_THREAD_ID=.*/g, `TELEGRAM_EXECUTION_THREAD_ID=${msgThreadNum}`);
+            } else {
+              envContent += `\nTELEGRAM_EXECUTION_THREAD_ID=${msgThreadNum}\n`;
+            }
+            fs.writeFileSync(envPath, envContent, 'utf8');
+          }
+        } catch (e: any) {
+          logToFile(`[TelegramBuffer] Failed to persist discovered thread ID to .env.local: ${e.message}`);
+        }
+      }
+
       const isAppTopic = isExplicitAppThread || (!isAlertsTopic && !isIdeasTopic && !isExecutionTopic && Boolean(
         (msg.topicName && msg.topicName.toLowerCase().includes('app')) ||
         contentText.toLowerCase().startsWith('#app') ||
@@ -445,12 +580,13 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
 
       // If message is from Execution topic, automatically queue trades in the Daily & Weekly Trade Execution Queue
       const autoCreatedPlannedTrades: PlannedTradeItem[] = [];
-      if (isExecutionTopic && detectedSymbols.length > 0) {
+      if (isExecutionTopic) {
         const parsedTrades = parseTradeExecutionCandidates(contentText);
         for (const pt of parsedTrades) {
           try {
             const created = await createPlannedTrade({
               symbol: pt.symbol,
+              underlyingSymbol: pt.underlyingSymbol || pt.symbol,
               action: pt.action,
               assetType: pt.assetType,
               timeframe: pt.timeframe,
@@ -460,12 +596,31 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
               stopLoss: pt.stopLoss,
               targetExit: pt.targetExit,
               conviction: pt.conviction,
-              notes: `📱 Telegram Execution Queue: "${contentText.trim()}"`,
+              notes: pt.notes || `📱 Telegram Execution Queue: "${contentText.trim()}"`,
             }, prisma);
             autoCreatedPlannedTrades.push(created);
             logToFile(`[TelegramBuffer] Created PlannedTrade #${created.rank}: ${created.action} ${created.quantity} ${created.symbol} in ${created.timeframe} execution queue`);
           } catch (tradeErr: any) {
             logToFile(`[TelegramBuffer] Error creating PlannedTrade for ${pt.symbol}: ${tradeErr.message}`);
+          }
+        }
+
+        // Dispatch confirmation message back into Telegram execution topic
+        if (autoCreatedPlannedTrades.length > 0 && process.env.TELEGRAM_BOT_TOKEN) {
+          try {
+            const summaryLines = autoCreatedPlannedTrades.map(
+              (t) => `• *${t.action} ${t.quantity} $${t.symbol}* (${t.orderType}) — *${t.timeframe} Queue* [Rank #${t.rank}]${t.targetPrice ? ` @ $${t.targetPrice}` : ''}`
+            ).join('\n');
+            const replyText = `🎯 *Added to Tactical Execution Queue*\n\n${summaryLines}\n\n_Manage in Portfolio & Position Management Hub > Execution Queue._`;
+            
+            await sendTelegramMessage({
+              text: replyText,
+              chatId: msg.chat?.id || process.env.TELEGRAM_ALERTS_CHAT_ID || '-1003872409872',
+              messageThreadId: msgThreadNum || (process.env.TELEGRAM_EXECUTION_THREAD_ID ? Number(process.env.TELEGRAM_EXECUTION_THREAD_ID) : undefined),
+              parseMode: 'Markdown',
+            });
+          } catch (confirmErr: any) {
+            logToFile(`[TelegramBuffer] Failed to send Telegram execution confirmation: ${confirmErr.message}`);
           }
         }
       }
@@ -708,6 +863,8 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       message: error.message,
       timestamp: new Date().toISOString(),
     };
+  } finally {
+    isConsuming = false;
   }
 }
 
@@ -719,7 +876,36 @@ export function getTelegramBufferStatus() {
   return {
     isConfigured,
     bufferUrl: process.env.TELEGRAM_BUFFER_URL || null,
+    executionThreadId: process.env.TELEGRAM_EXECUTION_THREAD_ID || null,
+    alertsThreadId: process.env.TELEGRAM_ALERTS_THREAD_ID || null,
+    appThreadId: process.env.TELEGRAM_APP_THREAD_ID || null,
     lastSyncTimestamp,
     lastSyncCount,
   };
 }
+
+/**
+ * Explicitly update and persist TELEGRAM_EXECUTION_THREAD_ID to environment & .env.local
+ */
+export function setTelegramExecutionThreadId(threadId: string | number): boolean {
+  try {
+    const threadIdStr = String(threadId).trim();
+    process.env.TELEGRAM_EXECUTION_THREAD_ID = threadIdStr;
+    logToFile(`[TelegramBuffer] Updated TELEGRAM_EXECUTION_THREAD_ID=${threadIdStr}`);
+    const envPath = path.resolve(process.cwd(), '.env.local');
+    if (fs.existsSync(envPath)) {
+      let envContent = fs.readFileSync(envPath, 'utf8');
+      if (/TELEGRAM_EXECUTION_THREAD_ID=/i.test(envContent)) {
+        envContent = envContent.replace(/TELEGRAM_EXECUTION_THREAD_ID=.*/g, `TELEGRAM_EXECUTION_THREAD_ID=${threadIdStr}`);
+      } else {
+        envContent += `\nTELEGRAM_EXECUTION_THREAD_ID=${threadIdStr}\n`;
+      }
+      fs.writeFileSync(envPath, envContent, 'utf8');
+    }
+    return true;
+  } catch (e: any) {
+    logToFile(`[TelegramBuffer] Error setting execution thread ID: ${e.message}`);
+    return false;
+  }
+}
+

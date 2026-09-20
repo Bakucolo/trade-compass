@@ -66,9 +66,25 @@ import {
   getScenarioPresets,
   ValuationInputs,
   ValuationForecastResult,
+  ValuationMetricType,
 } from '@/services/valuationForecastEngine';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+
+function formatBillionOrMillion(val: number): string {
+  const abs = Math.abs(val);
+  if (abs === 0) return '$0.0M';
+  if (abs < 0.001) return `$${(val * 1e6).toFixed(1)}k`;
+  if (abs < 1.0) return `$${(val * 1000).toFixed(1)}M`;
+  return `$${val.toFixed(2)}B`;
+}
+
+function formatSharesBillionOrMillion(val: number): string {
+  const abs = Math.abs(val);
+  if (abs === 0) return '0.0M';
+  if (abs < 1.0) return `${(val * 1000).toFixed(1)}M`;
+  return `${val.toFixed(2)}B`;
+}
 
 interface MonteCarloSimulationModalProps {
   isOpen: boolean;
@@ -126,6 +142,7 @@ export function MonteCarloSimulationModal({
     discountRate: 10,
     annualShareChangePct: -1.0,
     horizonYears: 5,
+    valuationMetric: 'PE',
   });
 
   // Track if user customized or selected a preset
@@ -207,19 +224,29 @@ export function MonteCarloSimulationModal({
       const revB = baselines.revenueBillions > 0 ? baselines.revenueBillions : (baselines.revenue ? baselines.revenue / 1e9 : 50);
       const sharesB = baselines.sharesOutstandingBillions > 0 ? baselines.sharesOutstandingBillions : (baselines.sharesOutstanding ? baselines.sharesOutstanding / 1e9 : 1);
       const price = currentPrice || baselines.currentPrice || 100;
-      const margin = baselines.operatingMargin || 20;
-      const pe = baselines.trailingPE || baselines.forwardPE || 22;
-      const growth = baselines.revenueGrowth != null ? Math.max(-10, Math.min(35, baselines.revenueGrowth)) : 10;
+      const margin = baselines.operatingMargin != null ? baselines.operatingMargin : 20;
+
+      // Sanitize PE: must be positive and non-extreme (e.g. not -170.3)
+      const validForwardPE = (baselines.forwardPE && baselines.forwardPE > 4 && baselines.forwardPE < 120) ? baselines.forwardPE : null;
+      const validTrailingPE = (baselines.trailingPE && baselines.trailingPE > 4 && baselines.trailingPE < 120) ? baselines.trailingPE : null;
+      const defaultExitPE = validForwardPE || validTrailingPE || 22.0;
+
+      const isPreProfit = baselines.isPreProfit || margin <= 5;
+      const metric: ValuationMetricType = isPreProfit && margin < 3 ? 'PS' : 'PE';
+      const defaultExitMult = metric === 'PS' ? 8.0 : defaultExitPE;
+      const targetMargin = isPreProfit ? 18.0 : Number(margin.toFixed(1));
+      const growth = baselines.revenueGrowth != null ? Math.max(-10, Math.min(45, baselines.revenueGrowth)) : 15;
 
       setInputs((prev) => ({
         ...prev,
         startingPrice: Number(price.toFixed(2)),
-        startingRevenue: Number(revB.toFixed(2)),
+        startingRevenue: Number(revB < 1 ? revB.toFixed(4) : revB.toFixed(2)),
         startingMargin: Number(margin.toFixed(1)),
-        startingShares: Number(sharesB.toFixed(3)),
+        startingShares: Number(sharesB < 1 ? sharesB.toFixed(4) : sharesB.toFixed(3)),
         revenueGrowthRate: Number(growth.toFixed(1)),
-        targetMargin: Number(margin.toFixed(1)),
-        exitMultiple: Number(pe.toFixed(1)),
+        targetMargin: targetMargin,
+        exitMultiple: Number(defaultExitMult.toFixed(1)),
+        valuationMetric: metric,
       }));
     } else if (currentPrice && currentPrice > 0) {
       setInputs((prev) => ({
@@ -257,21 +284,30 @@ export function MonteCarloSimulationModal({
       const revB = baselines.revenueBillions > 0 ? baselines.revenueBillions : (baselines.revenue ? baselines.revenue / 1e9 : 50);
       const sharesB = baselines.sharesOutstandingBillions > 0 ? baselines.sharesOutstandingBillions : (baselines.sharesOutstanding ? baselines.sharesOutstanding / 1e9 : 1);
       const price = currentPrice || baselines.currentPrice || 100;
-      const margin = baselines.operatingMargin || 20;
-      const pe = baselines.trailingPE || baselines.forwardPE || 22;
-      const growth = baselines.revenueGrowth != null ? Math.max(-10, Math.min(35, baselines.revenueGrowth)) : 10;
+      const margin = baselines.operatingMargin != null ? baselines.operatingMargin : 20;
+
+      const validForwardPE = (baselines.forwardPE && baselines.forwardPE > 4 && baselines.forwardPE < 120) ? baselines.forwardPE : null;
+      const validTrailingPE = (baselines.trailingPE && baselines.trailingPE > 4 && baselines.trailingPE < 120) ? baselines.trailingPE : null;
+      const defaultExitPE = validForwardPE || validTrailingPE || 22.0;
+
+      const isPreProfit = baselines.isPreProfit || margin <= 5;
+      const metric: ValuationMetricType = isPreProfit && margin < 3 ? 'PS' : 'PE';
+      const defaultExitMult = metric === 'PS' ? 8.0 : defaultExitPE;
+      const targetMargin = isPreProfit ? 18.0 : Number(margin.toFixed(1));
+      const growth = baselines.revenueGrowth != null ? Math.max(-10, Math.min(45, baselines.revenueGrowth)) : 15;
 
       setInputs({
         startingPrice: Number(price.toFixed(2)),
-        startingRevenue: Number(revB.toFixed(2)),
+        startingRevenue: Number(revB < 1 ? revB.toFixed(4) : revB.toFixed(2)),
         startingMargin: Number(margin.toFixed(1)),
-        startingShares: Number(sharesB.toFixed(3)),
+        startingShares: Number(sharesB < 1 ? sharesB.toFixed(4) : sharesB.toFixed(3)),
         revenueGrowthRate: Number(growth.toFixed(1)),
-        targetMargin: Number(margin.toFixed(1)),
-        exitMultiple: Number(pe.toFixed(1)),
+        targetMargin: targetMargin,
+        exitMultiple: Number(defaultExitMult.toFixed(1)),
         discountRate: 10,
         annualShareChangePct: -1.0,
         horizonYears: 5,
+        valuationMetric: metric,
       });
       toast.success(`Reset assumptions to ${cleanSymbol} reported baselines.`);
     }
@@ -380,6 +416,8 @@ export function MonteCarloSimulationModal({
         revenue: pt.revenue,
         margin: pt.margin,
         eps: pt.epsOrFcfPerShare,
+        revenuePerShare: pt.revenuePerShare,
+        shares: pt.shares,
         returnPct: pt.cumulativeReturnPct,
       };
     });
@@ -864,7 +902,11 @@ export function MonteCarloSimulationModal({
                                     Return: {p.returnPct >= 0 ? '+' : ''}{p.returnPct.toFixed(1)}%
                                   </p>
                                   <div className="border-t border-border/40 pt-1 text-[10px] text-muted-foreground space-y-0.5">
-                                    <p>EPS: ${p.eps.toFixed(2)} • Rev: ${p.revenue.toFixed(1)}B</p>
+                                    <p>
+                                      {inputs.valuationMetric === 'PS'
+                                        ? `Rev/Share: $${(p.revenuePerShare || (p.shares > 0 ? p.revenue / p.shares : 0)).toFixed(2)} • Rev: ${formatBillionOrMillion(p.revenue)}`
+                                        : `EPS: $${p.eps.toFixed(2)} • Rev: ${formatBillionOrMillion(p.revenue)}`}
+                                    </p>
                                     <p>Operating Margin: {p.margin.toFixed(1)}%</p>
                                     <p className="text-emerald-400">Bull Target: ${p.bullPrice.toFixed(2)}</p>
                                     <p className="text-rose-400">Bear Target: ${p.bearPrice.toFixed(2)}</p>
@@ -1195,12 +1237,61 @@ export function MonteCarloSimulationModal({
 
                   {/* Assumptions Control Panel */}
                   <Card className="p-5 bg-card/70 border-border/70 rounded-2xl shadow-sm space-y-5">
-                    <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center justify-between flex-wrap gap-3">
                       <div className="flex items-center gap-2">
                         <Sliders className="w-4 h-4 text-primary" />
                         <h4 className="text-sm font-bold text-foreground">Interactive Assumptions Controls</h4>
                       </div>
-                      <div className="flex items-center gap-2">
+                      
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Valuation Metric Toggle (P/E vs P/S) */}
+                        <div className="flex items-center p-0.5 rounded-xl bg-background/80 border border-border/70 text-xs shadow-inner">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActivePreset('CUSTOM');
+                              setInputs((prev) => ({
+                                ...prev,
+                                valuationMetric: 'PE',
+                                exitMultiple: prev.valuationMetric === 'PS' ? 22 : prev.exitMultiple,
+                              }));
+                              toast.info('Switched valuation methodology to P/E (Price-to-Earnings).');
+                            }}
+                            className={cn(
+                              "px-2.5 py-1 rounded-lg font-mono text-[11px] font-bold transition-all",
+                              (!inputs.valuationMetric || inputs.valuationMetric === 'PE')
+                                ? "bg-primary text-primary-foreground shadow-sm"
+                                : "text-muted-foreground hover:text-foreground"
+                            )}
+                          >
+                            P/E (Earnings)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActivePreset('CUSTOM');
+                              setInputs((prev) => ({
+                                ...prev,
+                                valuationMetric: 'PS',
+                                exitMultiple: prev.valuationMetric === 'PE' ? 8.0 : prev.exitMultiple,
+                              }));
+                              toast.info('Switched valuation methodology to P/S (Price-to-Sales) multiple.');
+                            }}
+                            className={cn(
+                              "px-2.5 py-1 rounded-lg font-mono text-[11px] font-bold transition-all flex items-center gap-1.5",
+                              inputs.valuationMetric === 'PS'
+                                ? "bg-cyan-600 text-white shadow-sm"
+                                : "text-muted-foreground hover:text-foreground"
+                            )}
+                            title="Price-to-Sales multiple (recommended for high-growth or early commercial companies like SATL)"
+                          >
+                            <span>P/S (Revenue)</span>
+                            {baselines?.isPreProfit && (
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                            )}
+                          </button>
+                        </div>
+
                         <Button
                           type="button"
                           variant="outline"
@@ -1212,11 +1303,29 @@ export function MonteCarloSimulationModal({
                           <Sparkles className="w-3 h-3 text-amber-300" />
                           <span>{aiReport ? 'Re-Populate with AI' : 'AI Auto-Fill'}</span>
                         </Button>
-                        <div className="text-xs text-muted-foreground font-mono hidden sm:inline">
-                          Instant recalculation • Live path projection
-                        </div>
                       </div>
                     </div>
+
+                    {/* Early Growth / Pre-Profit Advisory Banner */}
+                    {baselines?.isPreProfit && (
+                      <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-start gap-2.5 text-xs text-amber-200 animate-in fade-in duration-200">
+                        <Scale className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                        <div className="space-y-0.5">
+                          <p className="font-bold text-foreground flex items-center gap-2">
+                            <span>High-Growth / Pre-Profit Valuation Setup ({cleanSymbol})</span>
+                            <Badge variant="outline" className="text-[9px] font-mono border-amber-500/40 text-amber-300 bg-amber-500/15">
+                              {inputs.valuationMetric === 'PS' ? 'P/S Method Active' : 'P/E Normalization Active'}
+                            </Badge>
+                          </p>
+                          <p className="text-muted-foreground text-[11px] leading-relaxed">
+                            Reported margin is currently {inputs.startingMargin}%.
+                            {inputs.valuationMetric === 'PS'
+                              ? ' Valuing directly on Price-to-Sales (Revenue per share) avoids distortion from early negative or low earnings.'
+                              : ` Modeling margin expansion toward Year-${inputs.horizonYears} mature target margin (${inputs.targetMargin}%) ensures stable intrinsic value.`}
+                          </p>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Sliders Grid */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1280,7 +1389,7 @@ export function MonteCarloSimulationModal({
                           </div>
                         </div>
                         <Slider
-                          min={5}
+                          min={-25}
                           max={65}
                           step={0.5}
                           value={[inputs.targetMargin]}
@@ -1290,9 +1399,9 @@ export function MonteCarloSimulationModal({
                           }}
                         />
                         <div className="flex justify-between text-[10px] font-mono text-muted-foreground">
-                          <span>5% (Thin Margin)</span>
+                          <span>-25% (Cash Burn)</span>
                           <span>Starting: {inputs.startingMargin.toFixed(1)}%</span>
-                          <span>65% (Software/SaaS)</span>
+                          <span>65% (High Margin SaaS)</span>
                         </div>
                       </div>
 
@@ -1301,7 +1410,9 @@ export function MonteCarloSimulationModal({
                         <div className="flex items-center justify-between">
                           <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                             <Scale className="w-3.5 h-3.5 text-cyan-400" />
-                            Exit Valuation Multiple (P/E or P/FCF)
+                            {inputs.valuationMetric === 'PS'
+                              ? 'Exit Valuation Multiple (P/S - Price-to-Sales)'
+                              : 'Exit Valuation Multiple (P/E or P/FCF)'}
                           </label>
                           <div className="flex items-center gap-1">
                             <Input
@@ -1310,28 +1421,50 @@ export function MonteCarloSimulationModal({
                               value={inputs.exitMultiple}
                               onChange={(e) => {
                                 setActivePreset('CUSTOM');
-                                setInputs((prev) => ({ ...prev, exitMultiple: parseFloat(e.target.value) || 1 }));
+                                setInputs((prev) => ({ ...prev, exitMultiple: Math.max(0.5, parseFloat(e.target.value) || 1) }));
                               }}
                               className="w-18 h-7 text-xs font-mono font-bold text-right py-0 px-2"
                             />
                             <span className="text-xs font-mono text-muted-foreground">x</span>
                           </div>
                         </div>
-                        <Slider
-                          min={6}
-                          max={60}
-                          step={0.5}
-                          value={[inputs.exitMultiple]}
-                          onValueChange={(val) => {
-                            setActivePreset('CUSTOM');
-                            setInputs((prev) => ({ ...prev, exitMultiple: val[0] }));
-                          }}
-                        />
-                        <div className="flex justify-between text-[10px] font-mono text-muted-foreground">
-                          <span>6x (Value/Cyclical)</span>
-                          <span>18x (Fair Mean)</span>
-                          <span>60x (High Multiple)</span>
-                        </div>
+                        {inputs.valuationMetric === 'PS' ? (
+                          <>
+                            <Slider
+                              min={1}
+                              max={30}
+                              step={0.5}
+                              value={[Math.max(1, Math.min(30, inputs.exitMultiple))]}
+                              onValueChange={(val) => {
+                                setActivePreset('CUSTOM');
+                                setInputs((prev) => ({ ...prev, exitMultiple: val[0] }));
+                              }}
+                            />
+                            <div className="flex justify-between text-[10px] font-mono text-muted-foreground">
+                              <span>1x (Distressed/Value)</span>
+                              <span>8x (Growth Median)</span>
+                              <span>30x (Hypergrowth SaaS)</span>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <Slider
+                              min={6}
+                              max={60}
+                              step={0.5}
+                              value={[Math.max(6, Math.min(60, inputs.exitMultiple))]}
+                              onValueChange={(val) => {
+                                setActivePreset('CUSTOM');
+                                setInputs((prev) => ({ ...prev, exitMultiple: val[0] }));
+                              }}
+                            />
+                            <div className="flex justify-between text-[10px] font-mono text-muted-foreground">
+                              <span>6x (Value/Cyclical)</span>
+                              <span>18x (Fair Mean)</span>
+                              <span>60x (High Multiple)</span>
+                            </div>
+                          </>
+                        )}
                       </div>
 
                       {/* 4. Discount Rate / Required Annual Return */}
@@ -1455,19 +1588,29 @@ export function MonteCarloSimulationModal({
                             <label className="text-[10px] text-muted-foreground font-mono block mb-1">Starting Price ($)</label>
                             <Input
                               type="number"
-                              step="0.1"
+                              step="0.05"
                               value={inputs.startingPrice}
                               onChange={(e) => setInputs((prev) => ({ ...prev, startingPrice: parseFloat(e.target.value) || 0 }))}
                               className="h-7 text-xs font-mono"
                             />
                           </div>
                           <div>
-                            <label className="text-[10px] text-muted-foreground font-mono block mb-1">TTM Revenue ($B)</label>
+                            <label className="text-[10px] text-muted-foreground font-mono block mb-1">
+                              TTM Revenue ($B) <span className="text-primary font-bold">({formatBillionOrMillion(inputs.startingRevenue)})</span>
+                            </label>
                             <Input
                               type="number"
-                              step="0.5"
+                              step={inputs.startingRevenue < 1 ? "0.001" : "0.1"}
                               value={inputs.startingRevenue}
-                              onChange={(e) => setInputs((prev) => ({ ...prev, startingRevenue: parseFloat(e.target.value) || 0 }))}
+                              onChange={(e) => {
+                                let val = parseFloat(e.target.value) || 0;
+                                // Auto-normalize if user typed e.g. 31.9 into revenue thinking in millions
+                                if (val >= 10 && inputs.startingRevenue < 1 && (baselines?.marketCap || 0) < 5e9) {
+                                  toast.info(`Auto-scaled $${val}M into $${(val / 1000).toFixed(4)}B for modeling.`);
+                                  val = Number((val / 1000).toFixed(4));
+                                }
+                                setInputs((prev) => ({ ...prev, startingRevenue: val }));
+                              }}
                               className="h-7 text-xs font-mono"
                             />
                           </div>
@@ -1482,12 +1625,22 @@ export function MonteCarloSimulationModal({
                             />
                           </div>
                           <div>
-                            <label className="text-[10px] text-muted-foreground font-mono block mb-1">Shares Out (B)</label>
+                            <label className="text-[10px] text-muted-foreground font-mono block mb-1">
+                              Shares Out (B) <span className="text-primary font-bold">({formatSharesBillionOrMillion(inputs.startingShares)})</span>
+                            </label>
                             <Input
                               type="number"
-                              step="0.05"
+                              step={inputs.startingShares < 1 ? "0.001" : "0.05"}
                               value={inputs.startingShares}
-                              onChange={(e) => setInputs((prev) => ({ ...prev, startingShares: parseFloat(e.target.value) || 0.01 }))}
+                              onChange={(e) => {
+                                let val = parseFloat(e.target.value) || 0.0001;
+                                // Auto-normalize if user typed e.g. 143.2 into shares thinking in millions
+                                if (val >= 10 && inputs.startingShares < 1) {
+                                  toast.info(`Auto-scaled ${val}M shares into ${(val / 1000).toFixed(4)}B.`);
+                                  val = Number((val / 1000).toFixed(4));
+                                }
+                                setInputs((prev) => ({ ...prev, startingShares: val }));
+                              }}
                               className="h-7 text-xs font-mono"
                             />
                           </div>
@@ -1510,7 +1663,7 @@ export function MonteCarloSimulationModal({
                         </p>
                       </div>
                       <Badge variant="outline" className="text-[10px] font-mono">
-                        Horizon: {inputs.horizonYears}Y
+                        Horizon: {inputs.horizonYears}Y • {inputs.valuationMetric === 'PS' ? 'P/S Method' : 'P/E Method'}
                       </Badge>
                     </div>
 
@@ -1520,7 +1673,7 @@ export function MonteCarloSimulationModal({
                           <tr>
                             <th className="p-2.5">Period</th>
                             <th className="p-2.5 text-right">Proj Price</th>
-                            <th className="p-2.5 text-right">EPS / FCF</th>
+                            <th className="p-2.5 text-right">{inputs.valuationMetric === 'PS' ? 'Rev/Share' : 'EPS / FCF'}</th>
                             <th className="p-2.5 text-right">Revenue</th>
                             <th className="p-2.5 text-right">Margin</th>
                             <th className="p-2.5 text-right">Net Income</th>
@@ -1550,20 +1703,22 @@ export function MonteCarloSimulationModal({
                               <td className="p-2.5 text-right font-bold text-foreground">
                                 ${row.projectedPrice.toFixed(2)}
                               </td>
-                              <td className="p-2.5 text-right text-foreground">
-                                ${row.epsOrFcfPerShare.toFixed(2)}
+                              <td className="p-2.5 text-right text-foreground font-mono">
+                                ${inputs.valuationMetric === 'PS'
+                                  ? (row.revenuePerShare || (row.shares > 0 ? row.revenue / row.shares : 0)).toFixed(2)
+                                  : row.epsOrFcfPerShare.toFixed(2)}
                               </td>
-                              <td className="p-2.5 text-right text-muted-foreground">
-                                ${row.revenue.toFixed(1)}B
+                              <td className="p-2.5 text-right text-muted-foreground font-mono">
+                                {formatBillionOrMillion(row.revenue)}
                               </td>
-                              <td className="p-2.5 text-right text-muted-foreground">
+                              <td className="p-2.5 text-right text-muted-foreground font-mono">
                                 {row.margin.toFixed(1)}%
                               </td>
-                              <td className="p-2.5 text-right text-muted-foreground">
-                                ${row.earningsOrFcf.toFixed(1)}B
+                              <td className="p-2.5 text-right text-muted-foreground font-mono">
+                                {formatBillionOrMillion(row.earningsOrFcf)}
                               </td>
-                              <td className="p-2.5 text-right text-muted-foreground">
-                                {row.shares.toFixed(2)}B
+                              <td className="p-2.5 text-right text-muted-foreground font-mono">
+                                {formatSharesBillionOrMillion(row.shares)}
                               </td>
                               <td className={cn("p-2.5 text-right font-bold", row.cumulativeReturnPct >= 0 ? "text-emerald-400" : "text-rose-400")}>
                                 {row.year === 0 ? '—' : `${row.cumulativeReturnPct >= 0 ? '+' : ''}${row.cumulativeReturnPct.toFixed(1)}%`}

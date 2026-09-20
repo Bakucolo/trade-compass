@@ -17,6 +17,21 @@ import {
     isTastySandbox
 } from './tastytradeService';
 import { alpacaService } from './alpacaService';
+import {
+    fetchIbkrAccounts,
+    fetchIbkrAccountSummary,
+    fetchIbkrPositions,
+    fetchIbkrMarketSnapshot,
+    fetchIbkrOrders,
+    searchIbkrSecDef,
+    submitIbkrLiveOrder,
+    getIbkrConfig,
+    getIbkrSessionStatus
+} from './ibkrService';
+import {
+    calculateBuyingPowerComparison,
+    BuyingPowerComparisonResult
+} from './buyingPowerService';
 
 // ============================================================================
 // 1. Types & Data Structures
@@ -49,6 +64,7 @@ export interface StagedDraftOrder {
         estimatedFees?: number;
         warnings?: string[];
     };
+    buyingPowerComparison?: BuyingPowerComparisonResult;
     executionResult?: {
         orderId?: string | number;
         executedAt?: string;
@@ -214,8 +230,258 @@ export const TASTYTRADE_TOOLS = [
     {
         type: 'function',
         function: {
+            name: 'compare_buying_power',
+            description: 'Read-only: Evaluates and compares the buying power effect, margin requirements, commission costs, and post-trade buffer between Tastytrade and Interactive Brokers (IBKR) for any trade.',
+            parameters: {
+                type: 'object',
+                required: ['symbol', 'action', 'quantity'],
+                properties: {
+                    symbol: {
+                        type: 'string',
+                        description: 'Ticker symbol for the security (e.g., AAPL, NVDA, SPY).'
+                    },
+                    action: {
+                        type: 'string',
+                        enum: ['BUY', 'SELL', 'BUY_TO_OPEN', 'SELL_TO_CLOSE', 'SELL_TO_OPEN', 'BUY_TO_CLOSE'],
+                        description: 'Order action (e.g. BUY, SELL, BUY_TO_OPEN).'
+                    },
+                    quantity: {
+                        type: 'number',
+                        description: 'Number of shares or contracts.'
+                    },
+                    price: {
+                        type: 'number',
+                        description: 'Limit price or current market price.'
+                    },
+                    orderType: {
+                        type: 'string',
+                        enum: ['Limit', 'Market'],
+                        description: 'Order type. Defaults to Limit.'
+                    },
+                    instrumentType: {
+                        type: 'string',
+                        enum: ['Equity', 'Equity Option'],
+                        description: 'Asset class. Defaults to Equity.'
+                    }
+                }
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
             name: 'draft_order',
             description: 'HUMAN-IN-THE-LOOP RULE: Prepares a staged draft order for user approval in the UI. YOU MUST NEVER EXECUTE A LIVE TRADE DIRECTLY. This tool creates a draft card in the UI requiring the user to physically click "Approve Trade" before any order is submitted to the exchange.',
+            parameters: {
+                type: 'object',
+                required: ['symbol', 'action', 'quantity', 'orderType'],
+                properties: {
+                    symbol: {
+                        type: 'string',
+                        description: 'Ticker symbol for the security (e.g., AAPL, TSLA, SPY).'
+                    },
+                    action: {
+                        type: 'string',
+                        enum: ['BUY', 'SELL', 'BUY_TO_OPEN', 'SELL_TO_CLOSE', 'SELL_TO_OPEN', 'BUY_TO_CLOSE'],
+                        description: 'Order action. For equities: BUY or SELL. For options: BUY_TO_OPEN, SELL_TO_CLOSE, etc.'
+                    },
+                    instrumentType: {
+                        type: 'string',
+                        enum: ['Equity', 'Equity Option'],
+                        description: 'Asset class. Defaults to Equity.'
+                    },
+                    quantity: {
+                        type: 'number',
+                        description: 'Number of shares or contracts (must be positive integer).'
+                    },
+                    orderType: {
+                        type: 'string',
+                        enum: ['Limit', 'Market'],
+                        description: 'Type of order.'
+                    },
+                    price: {
+                        type: 'number',
+                        description: 'Limit price per share or contract. If not specified by user for an option contract, assign the estimated price from the option chain or default between $1.00-$2.50. Never halt to ask the user.'
+                    },
+                    timeInForce: {
+                        type: 'string',
+                        enum: ['Day', 'GTC'],
+                        description: 'Time in force. Defaults to Day.'
+                    },
+                    optionDetails: {
+                        type: 'object',
+                        description: 'Details if instrumentType is Equity Option.',
+                        properties: {
+                            expirationDate: { type: 'string', description: 'YYYY-MM-DD expiration date' },
+                            strikePrice: { type: 'number', description: 'Strike price' },
+                            optionType: { type: 'string', enum: ['Call', 'Put'], description: 'Call or Put' }
+                        }
+                    },
+                    notes: {
+                        type: 'string',
+                        description: 'Brief 1-sentence reasoning or strategy explanation for the trade.'
+                    }
+                }
+            }
+        }
+    }
+];
+
+export const IBKR_TOOLS = [
+    {
+        type: 'function',
+        function: {
+            name: 'get_ibkr_accounts',
+            description: 'Read-only: Retrieves available Interactive Brokers accounts (e.g. Paper Trading Account DU1234567) from the IBKR Client Portal API Gateway.',
+            parameters: {
+                type: 'object',
+                properties: {}
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_ibkr_summary',
+            description: 'Read-only: Retrieves account summary, Net Liquidation Value, Cash Balance, Available Funds, Buying Power, and Margin Requirements from the IBKR Client Portal API Gateway.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    accountId: {
+                        type: 'string',
+                        description: 'Optional account ID. Defaults to configured Paper Trading account.'
+                    }
+                }
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_ibkr_positions',
+            description: 'Read-only: Retrieves current open portfolio positions (equities, options) with market price, cost basis, and unrealized P&L from the IBKR Client Portal API Gateway.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    accountId: {
+                        type: 'string',
+                        description: 'Optional account ID. Defaults to configured Paper Trading account.'
+                    },
+                    pageId: {
+                        type: 'number',
+                        description: 'Optional pagination index. Defaults to 0.'
+                    }
+                }
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_ibkr_market_snapshot',
+            description: 'Read-only: Resolves symbol to contract ID (conid) and retrieves real-time market quote snapshot (bid, ask, last price, volume) via IBKR Client Portal Gateway.',
+            parameters: {
+                type: 'object',
+                required: ['symbol'],
+                properties: {
+                    symbol: {
+                        type: 'string',
+                        description: 'The stock or ETF ticker symbol (e.g., AAPL, NVDA, SPY).'
+                    }
+                }
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_ibkr_orders',
+            description: 'Read-only: Retrieves active, queued, or recent orders from the IBKR Client Portal API Gateway and their execution status.',
+            parameters: {
+                type: 'object',
+                properties: {}
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_market_quote',
+            description: 'Read-only: Retrieves live or recent market quotes, current price, bid/ask, day volume, and 52-week range for any stock or ETF.',
+            parameters: {
+                type: 'object',
+                required: ['symbol'],
+                properties: {
+                    symbol: {
+                        type: 'string',
+                        description: 'The stock or ETF ticker symbol (e.g., AAPL, SPY, NVDA).'
+                    }
+                }
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_option_chain',
+            description: 'Read-only: Retrieves the nested options chain (available expiration dates, strike prices, call/put symbols) for an underlying ticker.',
+            parameters: {
+                type: 'object',
+                required: ['symbol'],
+                properties: {
+                    symbol: {
+                        type: 'string',
+                        description: 'The underlying ticker symbol (e.g., SPY, AAPL).'
+                    }
+                }
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'compare_buying_power',
+            description: 'Read-only: Evaluates and compares the buying power effect, margin requirements, commission costs, and post-trade buffer between Tastytrade and Interactive Brokers (IBKR) for any trade.',
+            parameters: {
+                type: 'object',
+                required: ['symbol', 'action', 'quantity'],
+                properties: {
+                    symbol: {
+                        type: 'string',
+                        description: 'Ticker symbol for the security (e.g., AAPL, NVDA, SPY).'
+                    },
+                    action: {
+                        type: 'string',
+                        enum: ['BUY', 'SELL', 'BUY_TO_OPEN', 'SELL_TO_CLOSE', 'SELL_TO_OPEN', 'BUY_TO_CLOSE'],
+                        description: 'Order action (e.g. BUY, SELL, BUY_TO_OPEN).'
+                    },
+                    quantity: {
+                        type: 'number',
+                        description: 'Number of shares or contracts.'
+                    },
+                    price: {
+                        type: 'number',
+                        description: 'Limit price or current market price.'
+                    },
+                    orderType: {
+                        type: 'string',
+                        enum: ['Limit', 'Market'],
+                        description: 'Order type. Defaults to Limit.'
+                    },
+                    instrumentType: {
+                        type: 'string',
+                        enum: ['Equity', 'Equity Option'],
+                        description: 'Asset class. Defaults to Equity.'
+                    }
+                }
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'draft_order',
+            description: 'HUMAN-IN-THE-LOOP RULE: Prepares a staged draft order for user approval in the UI. YOU MUST NEVER EXECUTE A LIVE TRADE DIRECTLY. This tool creates a draft card in the UI requiring the user to physically click "Approve Trade" before any live POST /iserver/account/{accountId}/orders request is submitted.',
             parameters: {
                 type: 'object',
                 required: ['symbol', 'action', 'quantity', 'orderType'],
@@ -570,6 +836,60 @@ export async function executeReadOnlyTool(toolName: string, args: Record<string,
             };
         }
 
+        case 'get_ibkr_accounts': {
+            const accounts = await fetchIbkrAccounts();
+            const session = getIbkrSessionStatus();
+            return {
+                broker: 'Interactive Brokers (IBKR)',
+                environment: session.environment,
+                defaultPaperAccountId: session.paperAccountId,
+                sessionActive: session.connected,
+                accounts
+            };
+        }
+
+        case 'get_ibkr_summary': {
+            const summary = await fetchIbkrAccountSummary(args.accountId);
+            return summary;
+        }
+
+        case 'get_ibkr_positions': {
+            const positions = await fetchIbkrPositions(args.accountId, args.pageId || 0);
+            return {
+                broker: 'Interactive Brokers (IBKR)',
+                accountId: args.accountId || getIbkrConfig().paperAccountId,
+                totalPositions: positions.length,
+                positions
+            };
+        }
+
+        case 'get_ibkr_market_snapshot': {
+            const snapshot = await fetchIbkrMarketSnapshot(args.symbol);
+            return snapshot;
+        }
+
+        case 'get_ibkr_orders': {
+            const orders = await fetchIbkrOrders();
+            return {
+                broker: 'Interactive Brokers (IBKR)',
+                totalOrders: orders.length,
+                orders
+            };
+        }
+
+        case 'compare_buying_power': {
+            const comparison = await calculateBuyingPowerComparison({
+                symbol: args.symbol,
+                action: args.action || 'BUY',
+                quantity: args.quantity,
+                price: args.price,
+                orderType: args.orderType,
+                instrumentType: args.instrumentType,
+                optionDetails: args.optionDetails
+            });
+            return comparison;
+        }
+
         default:
             throw new Error(`Unknown read-only tool: ${toolName}`);
     }
@@ -579,10 +899,10 @@ export async function executeReadOnlyTool(toolName: string, args: Record<string,
 // 4. Staged Draft Order Management (Human-in-the-Loop)
 // ============================================================================
 
-function formatTastyAction(action: string): string {
+function formatTastyAction(action: string, instrumentType?: string): string {
     switch (action.toUpperCase()) {
         case 'BUY': return 'Buy to Open';
-        case 'SELL': return 'Sell to Close';
+        case 'SELL': return instrumentType === 'Equity Option' ? 'Sell to Open' : 'Sell to Close';
         case 'BUY_TO_OPEN': return 'Buy to Open';
         case 'SELL_TO_CLOSE': return 'Sell to Close';
         case 'SELL_TO_OPEN': return 'Sell to Open';
@@ -608,7 +928,7 @@ export async function stageDraftOrder(args: {
     notes?: string;
 }): Promise<StagedDraftOrder> {
     const broker = args.broker || 'tastytrade';
-    const accNumber = broker === 'alpaca' ? 'ALPACA_PAPER' : broker === 'ibkr' ? 'IBKR_TWS' : (process.env.TASTY_ACCOUNT_NUMBER || '5WT67220');
+    const accNumber = broker === 'alpaca' ? 'ALPACA_PAPER' : broker === 'ibkr' ? getIbkrConfig().paperAccountId : (process.env.TASTY_ACCOUNT_NUMBER || '5WT67220');
     const draftId = `draft_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 15 * 60 * 1000); // 15 mins validity
@@ -627,23 +947,34 @@ export async function stageDraftOrder(args: {
     }
 
     // Build the provisional Tastytrade order payload for dry-run
+    const isDebit = cleanAction === 'BUY' || cleanAction === 'BUY_TO_OPEN' || cleanAction === 'BUY_TO_CLOSE';
     const tastyPayload = {
         'time-in-force': timeInForce,
         'order-type': orderType,
         price: resolvedPrice ? resolvedPrice.toFixed(2) : undefined,
-        'price-effect': (cleanAction.startsWith('BUY') || cleanAction === 'BUY') ? 'Debit' : 'Credit',
+        'price-effect': isDebit ? 'Debit' : 'Credit',
         legs: [
             {
                 'instrument-type': instrumentType === 'Equity Option' ? 'Equity Option' : 'Equity',
                 symbol: cleanSymbol,
                 quantity: quantity,
-                action: formatTastyAction(cleanAction)
+                action: formatTastyAction(cleanAction, instrumentType)
             }
         ]
     };
 
     let dryRunResult: any = null;
-    if (broker === 'tastytrade') {
+    if (broker === 'ibkr') {
+        const estPrice = resolvedPrice || 150.0;
+        const multiplier = instrumentType === 'Equity Option' ? 100 : 1;
+        dryRunResult = {
+            estimatedMarginRequirement: orderType === 'Limit' ? estPrice * quantity * multiplier * 0.30 : undefined,
+            buyingPowerEffect: estPrice * quantity * multiplier,
+            estimatedCommission: instrumentType === 'Equity Option' ? 0.65 * quantity : Math.max(1.00, Math.min(quantity * 0.005, estPrice * quantity * 0.01)),
+            estimatedFees: 0.14,
+            warnings: [`Staged for IBKR Paper Gateway (${accNumber}). Physical user approval required.`]
+        };
+    } else if (broker === 'tastytrade') {
         try {
             // Run pre-flight checks against Tastytrade Sandbox API without placing order
             const dryRun = await dryRunTastyOrder(accNumber, tastyPayload).catch(() => null);
@@ -674,6 +1005,17 @@ export async function stageDraftOrder(args: {
         };
     }
 
+    // Calculate comparative buying power analysis between Tastytrade and IBKR
+    const buyingPowerComparison = await calculateBuyingPowerComparison({
+        symbol: cleanSymbol,
+        action: cleanAction,
+        quantity,
+        price: resolvedPrice,
+        orderType,
+        instrumentType,
+        optionDetails: args.optionDetails
+    }).catch(() => undefined);
+
     const draftOrder: StagedDraftOrder = {
         draftId,
         broker,
@@ -690,7 +1032,8 @@ export async function stageDraftOrder(args: {
         timeInForce,
         optionDetails: args.optionDetails,
         notes: args.notes,
-        dryRunResult
+        dryRunResult,
+        buyingPowerComparison
     };
 
     stagedDrafts.set(draftId, draftOrder);
@@ -703,6 +1046,52 @@ export function getDraftOrder(draftId: string): StagedDraftOrder | null {
 
 export function getAllDraftOrders(): StagedDraftOrder[] {
     return Array.from(stagedDrafts.values());
+}
+
+export async function switchDraftBroker(
+    draftId: string,
+    targetBroker: 'tastytrade' | 'ibkr' | 'alpaca'
+): Promise<StagedDraftOrder> {
+    const draft = stagedDrafts.get(draftId);
+    if (!draft) {
+        throw new Error(`Draft order ${draftId} not found.`);
+    }
+    if (draft.status !== 'PENDING_APPROVAL') {
+        throw new Error(`Draft order cannot change broker because status is '${draft.status}'.`);
+    }
+
+    draft.broker = targetBroker;
+    draft.accountNumber = targetBroker === 'ibkr'
+        ? getIbkrConfig().paperAccountId
+        : targetBroker === 'alpaca'
+        ? 'ALPACA_PAPER'
+        : (process.env.TASTY_ACCOUNT_NUMBER || '5WT67220');
+
+    // Recompute comparative buying power
+    const comparison = await calculateBuyingPowerComparison({
+        symbol: draft.symbol,
+        action: draft.action,
+        quantity: draft.quantity,
+        price: draft.price,
+        orderType: draft.orderType,
+        instrumentType: draft.instrumentType,
+        optionDetails: draft.optionDetails
+    }).catch(() => undefined);
+
+    if (comparison) {
+        draft.buyingPowerComparison = comparison;
+        const brokerImpact = targetBroker === 'ibkr' ? comparison.ibkr : comparison.tastytrade;
+        draft.dryRunResult = {
+            estimatedMarginRequirement: brokerImpact.initialMarginRequirement,
+            buyingPowerEffect: brokerImpact.buyingPowerRequirement,
+            estimatedCommission: brokerImpact.estimatedCommission,
+            estimatedFees: brokerImpact.estimatedRegulatoryFees,
+            warnings: brokerImpact.warnings.length > 0 ? brokerImpact.warnings : [`Re-routed to ${targetBroker.toUpperCase()} via Buying Power Analyser.`]
+        };
+    }
+
+    stagedDrafts.set(draftId, draft);
+    return draft;
 }
 
 export async function executeApprovedDraft(
@@ -761,14 +1150,27 @@ export async function executeApprovedDraft(
 
     if (draft.broker === 'ibkr') {
         try {
-            const orderId = `IBKR_${Date.now().toString().slice(-6)}`;
+            const side = draft.action.toUpperCase().includes('SELL') ? 'SELL' : 'BUY';
+            const orderType = draft.orderType.toUpperCase() === 'MARKET' ? 'MKT' : 'LMT';
+            const tif = draft.timeInForce.toUpperCase() === 'GTC' ? 'GTC' : 'DAY';
+            const ibkrRes = await submitIbkrLiveOrder(draft.accountNumber || getIbkrConfig().paperAccountId, {
+                symbol: draft.symbol,
+                side,
+                orderType,
+                price: draft.price,
+                quantity: draft.quantity,
+                tif,
+                secType: draft.instrumentType === 'Equity Option' ? 'OPT' : 'STK',
+                cOID: draft.draftId
+            });
+
             draft.status = 'EXECUTED';
             draft.executionResult = {
-                orderId,
-                executedAt: new Date().toISOString(),
-                status: 'Submitted',
+                orderId: ibkrRes.orderId,
+                executedAt: ibkrRes.submittedAt,
+                status: ibkrRes.orderStatus || 'Submitted',
             };
-            return { success: true, draft, orderId };
+            return { success: true, draft, orderId: ibkrRes.orderId };
         } catch (err: any) {
             draft.status = 'PENDING_APPROVAL';
             throw err;
@@ -909,7 +1311,8 @@ function resolveCandidates(preferredModel?: string): ProviderCandidate[] {
 
 async function executeLLMCallWithCascade(
     candidates: ProviderCandidate[],
-    messages: any[]
+    messages: any[],
+    tools: any[] = TASTYTRADE_TOOLS
 ): Promise<{ choice: any; modelName: string }> {
     let lastError: any = null;
 
@@ -932,7 +1335,7 @@ async function executeLLMCallWithCascade(
                 body: JSON.stringify({
                     model: cand.model,
                     messages,
-                    tools: TASTYTRADE_TOOLS,
+                    tools,
                     tool_choice: 'auto',
                     temperature: 0.1
                 }),
@@ -1004,7 +1407,7 @@ function tryHeuristicDraftOrder(query: string, broker: 'tastytrade' | 'alpaca' |
 
     const draftId = `draft_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const now = new Date();
-    const accNumber = broker === 'alpaca' ? 'ALPACA_PAPER' : broker === 'ibkr' ? 'IBKR_TWS' : (process.env.TASTY_ACCOUNT_NUMBER || '5WT67220');
+    const accNumber = broker === 'alpaca' ? 'ALPACA_PAPER' : broker === 'ibkr' ? (getIbkrConfig().paperAccountId || 'DU1234567') : (process.env.TASTY_ACCOUNT_NUMBER || '5WT67220');
     const draft: StagedDraftOrder = {
         draftId,
         broker,
@@ -1051,22 +1454,30 @@ export async function runTastyCopilotAgent(
     const brokerContext = activeBroker === 'alpaca'
         ? 'Alpaca Markets Paper Trading Environment'
         : activeBroker === 'ibkr'
-        ? 'Interactive Brokers (IBKR TWS / Gateway API)'
+        ? `Interactive Brokers Client Portal Gateway Paper Environment (${getIbkrConfig().paperAccountId} at ${getIbkrConfig().gatewayUrl})`
         : `Tastytrade OpenAPI Certification Sandbox (${getTastyBaseUrl()})`;
+
+    // Select active tools based on the target broker
+    const activeTools = activeBroker === 'ibkr' ? IBKR_TOOLS : TASTYTRADE_TOOLS;
 
     // System prompt enforcing all required guardrails & architecture
     const systemPrompt = `You are Trade Compass Copilot, an institutional quantitative financial AI with active broker connection: ${brokerContext}.
 ACTIVE TARGET BROKER: ${activeBroker.toUpperCase()}
 
 SECURITY & OPERATIONAL DIRECTIVES:
-1. BACKEND EXECUTION ONLY: You do not possess API keys or make raw network calls. You generate structured function calls for tools.
+1. BACKEND EXECUTION ONLY: You do not possess API keys or make raw network calls. You generate structured function calls for tools. The backend executes all REST calls to the broker API Gateway.
 2. SEPARATION OF READ VS WRITE:
-   - Use read-only tools freely: 'get_tasty_balances', 'get_tasty_positions', 'get_market_quote', 'get_option_chain', 'get_market_metrics', 'get_tasty_orders'. They will execute automatically and return data to your context.
+   ${activeBroker === 'ibkr'
+     ? "- For INTERACTIVE BROKERS (IBKR): Use read-only tools freely: 'get_ibkr_accounts', 'get_ibkr_summary', 'get_ibkr_positions', 'get_ibkr_market_snapshot', 'get_ibkr_orders', 'get_option_chain', 'compare_buying_power'. They will execute automatically and return data to your context directly from the IBKR Client Portal API Gateway."
+     : "- For TASTYTRADE: Use read-only tools freely: 'get_tasty_balances', 'get_tasty_positions', 'get_market_quote', 'get_option_chain', 'get_market_metrics', 'get_tasty_orders', 'compare_buying_power'. They will execute automatically and return data to your context."
+   }
+   - Use 'compare_buying_power' whenever the user asks about buying power, margin impact, or compares fee structures between Tastytrade and Interactive Brokers.
    - For trade orders, you MUST ONLY call 'draft_order'.
-3. THE HUMAN-IN-THE-LOOP RULE: You are STRICTLY FORBIDDEN from executing live trades directly. When the user requests a trade, call 'draft_order'. Explain to the user that you have staged the order for ${activeBroker.toUpperCase()} and they must physically click the 'Approve Trade' button in the chat interface to submit the order to the exchange.
+3. THE HUMAN-IN-THE-LOOP RULE: You are STRICTLY FORBIDDEN from executing live trades directly. When the user requests a trade, call 'draft_order'. Explain to the user that you have staged the order for ${activeBroker.toUpperCase()} and they must physically click the 'Approve Trade' button in the chat interface to submit the live POST /iserver/account/{accountId}/orders request.
 4. ORDER VALIDITY & OPTION PRICING RULES:
    - Limit buy orders are routinely placed AT or BELOW the current market price. NEVER reject or question a limit buy order because the price is lower than the current stock price.
    - AUTOMATIC PRICING FOR OPTION DRAFTS: When drafting an option order (e.g. from an options chain or when the user asks to draft a contract), if the user does not specify an exact limit price, DO NOT halt, pause, or ask the user for a price. Automatically assign a realistic limit price (such as the contract's estimated price from the option chain or $1.00-$2.50) and immediately call 'draft_order'. The user can easily edit/change the price directly on the staged draft order card before clicking 'Approve Trade'.
+   - SHORT OPTIONS / CREDIT ORDERS: When the user requests a short option, sell to open (STO), or credit option order, call 'draft_order' with action 'SELL' (or 'SELL_TO_OPEN') and instrumentType 'Equity Option'. DO NOT reject short option orders or refuse to draft them.
    - Always proceed to call 'draft_order' with the requested parameters.
 5. SANDBOX / TEST ENVIRONMENT: All activity is running in a validated trading environment (${brokerContext}) with mandatory physical user confirmation.
 6. OPTIONS CHAIN FORMATTING RULES:
@@ -1101,7 +1512,7 @@ SECURITY & OPERATIONAL DIRECTIVES:
 
         let choice: any;
         try {
-            const llmRes = await executeLLMCallWithCascade(candidates, messages);
+            const llmRes = await executeLLMCallWithCascade(candidates, messages, activeTools);
             choice = llmRes.choice;
             usedModel = llmRes.modelName;
         } catch (cascadeErr: any) {
@@ -1183,7 +1594,7 @@ SECURITY & OPERATIONAL DIRECTIVES:
 
     return {
         success: true,
-        response: finalAssistantText || (stagedDraft ? `I have drafted your order for **${stagedDraft.quantity} ${stagedDraft.symbol}** in the Tastytrade Certification Sandbox. Per security policy, please review and click **Approve Trade** below to submit.` : 'No response returned.'),
+        response: finalAssistantText || (stagedDraft ? `I have drafted your order for **${stagedDraft.quantity} ${stagedDraft.symbol}** on **${activeBroker.toUpperCase()}**. Per security policy, please review and click **Approve Trade** below to submit.` : 'No response returned.'),
         model: usedModel,
         tools_used: toolsUsed,
         draftOrder: stagedDraft,

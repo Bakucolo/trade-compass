@@ -56,6 +56,42 @@ describe('Telegram Execution Topic Ingestion & Trade Queue Processing', () => {
     expect(trade4[0].symbol).toBe('AMD');
     expect(trade4[0].action).toBe('BUY');
     expect(trade4[0].quantity).toBe(200);
+
+    // Lowercase ticker: buy 100 aapl @ 150
+    const trade5 = parseTradeExecutionCandidates('buy 100 aapl @ 150 sl 140');
+    expect(trade5).toHaveLength(1);
+    expect(trade5[0].symbol).toBe('AAPL');
+    expect(trade5[0].action).toBe('BUY');
+    expect(trade5[0].quantity).toBe(100);
+    expect(trade5[0].targetPrice).toBe(150);
+    expect(trade5[0].stopLoss).toBe(140);
+
+    // Options trade: BTO 2 AAPL 250C 10/18 @ 4.50
+    const trade6 = parseTradeExecutionCandidates('BTO 2 AAPL 250C 10/18 @ 4.50');
+    expect(trade6).toHaveLength(1);
+    expect(trade6[0].assetType).toBe('OPTION');
+    expect(trade6[0].symbol).toBe('AAPL 250C 10/18');
+    expect(trade6[0].underlyingSymbol).toBe('AAPL');
+    expect(trade6[0].action).toBe('BTO');
+    expect(trade6[0].quantity).toBe(2);
+    expect(trade6[0].targetPrice).toBe(4.5);
+
+    // Multi-line batch trade orders
+    const multiTrades = parseTradeExecutionCandidates('BUY 100 MSFT @ 420\nSELL 50 TSLA @ 250\nBUY 20 AMD');
+    expect(multiTrades).toHaveLength(3);
+    expect(multiTrades[0].symbol).toBe('MSFT');
+    expect(multiTrades[0].action).toBe('BUY');
+    expect(multiTrades[0].quantity).toBe(100);
+    expect(multiTrades[0].targetPrice).toBe(420);
+
+    expect(multiTrades[1].symbol).toBe('TSLA');
+    expect(multiTrades[1].action).toBe('SELL');
+    expect(multiTrades[1].quantity).toBe(50);
+    expect(multiTrades[1].targetPrice).toBe(250);
+
+    expect(multiTrades[2].symbol).toBe('AMD');
+    expect(multiTrades[2].action).toBe('BUY');
+    expect(multiTrades[2].quantity).toBe(20);
   });
 
   it('routes Execution topic messages to Execution folder and adds PlannedTrade records to queue', async () => {

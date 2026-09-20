@@ -87,6 +87,19 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
   const spread2y10y = macroData?.spread2y10y ?? 0.36;
   const isCurveInverted = macroData?.isCurveInverted ?? false;
 
+  // Accurately resolve DXY: prioritize market ticker DX-Y.NYB over broad trade-weighted index
+  const dxyDisplay = useMemo(() => {
+    const marketDxy = categorized?.currencies?.find(c => c.symbol === 'DX-Y.NYB')?.price
+      || categorized?.all?.find(c => c.symbol === 'DX-Y.NYB')?.price;
+    if (marketDxy && marketDxy > 0) {
+      return marketDxy.toFixed(2);
+    }
+    if (regime?.dxy && regime.dxy < 115) {
+      return regime.dxy.toFixed(2);
+    }
+    return '100.26';
+  }, [categorized, regime]);
+
   // Active items list
   const activeItems = useMemo(() => {
     if (!categorized) return [];
@@ -213,12 +226,20 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
             </div>
 
             {/* DXY Dollar */}
-            <div className="p-2.5 sm:p-3 rounded-2xl bg-card/60 border border-border/60 shadow-sm min-w-[110px]">
-              <span className="text-[10px] text-muted-foreground font-semibold flex items-center gap-1">
+            <div
+              className="p-2.5 sm:p-3 rounded-2xl bg-card/60 border border-border/60 shadow-sm min-w-[110px] cursor-pointer hover:border-emerald-500/40 hover:bg-card/80 transition-all group"
+              onClick={() => {
+                const item = categorized?.currencies?.find(c => c.symbol === 'DX-Y.NYB')
+                  || categorized?.all?.find(c => c.symbol === 'DX-Y.NYB');
+                if (item) setChartModalSymbol(item);
+              }}
+              title="Click to view interactive TradingView chart for US Dollar Index (DXY)"
+            >
+              <span className="text-[10px] text-muted-foreground font-semibold flex items-center gap-1 group-hover:text-emerald-400 transition-colors">
                 <DollarSign className="w-3 h-3 text-emerald-400" /> US Dollar (DXY)
               </span>
               <span className="text-base font-black font-mono text-emerald-300 block mt-0.5">
-                {regime?.dxy ? regime.dxy.toFixed(2) : '103.80'}
+                {dxyDisplay}
               </span>
             </div>
 

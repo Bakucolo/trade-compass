@@ -71,6 +71,11 @@ export const AiTradingLlmConsole: React.FC<AiTradingLlmConsoleProps> = ({
   const brokerPrompts: Record<SupportedBroker, { label: string; prompt: string; icon: string }[]> = {
     tastytrade: [
       {
+        label: 'Compare BP: 50 AAPL',
+        prompt: 'Compare buying power and margin requirements for 50 shares of AAPL on Tastytrade vs Interactive Brokers.',
+        icon: '⚖️'
+      },
+      {
         label: 'Draft AAPL Limit Buy',
         prompt: 'Draft a limit buy order for 10 shares of AAPL at $220.00 limit in Tastytrade Sandbox.',
         icon: '⚡'
@@ -115,23 +120,28 @@ export const AiTradingLlmConsole: React.FC<AiTradingLlmConsoleProps> = ({
     ],
     ibkr: [
       {
-        label: 'Draft CCJ Limit Buy',
-        prompt: 'Draft a limit buy order for 25 shares of CCJ at $52.50 on Interactive Brokers.',
+        label: 'Compare BP: 100 SPY',
+        prompt: 'Compare buying power, initial margin, and fees between IBKR and Tastytrade for buying 100 shares of SPY.',
+        icon: '⚖️'
+      },
+      {
+        label: 'IBKR Account Summary',
+        prompt: 'Show my IBKR paper trading account summary, Net Liquidation Value, and Buying Power.',
+        icon: '💼'
+      },
+      {
+        label: 'Draft AAPL Limit Buy',
+        prompt: 'Draft a limit buy order for 10 shares of AAPL at $220.00 limit on my IBKR paper account.',
         icon: '⚡'
       },
       {
-        label: 'QQQ Live Quote',
-        prompt: 'Fetch the latest market quote and 52-week high/low for QQQ on IBKR.',
-        icon: '📈'
-      },
-      {
-        label: 'Draft AMD Buy Order',
-        prompt: 'Draft a limit buy for 15 shares of AMD at $145.00 on IBKR.',
-        icon: '⚡'
+        label: 'IBKR Portfolio Positions',
+        prompt: 'Show my current open portfolio positions and unrealized P&L on IBKR.',
+        icon: '📊'
       },
       {
         label: 'Inspect IBKR Orders',
-        prompt: 'Check open orders and executions on Interactive Brokers.',
+        prompt: 'Check recent orders on the Interactive Brokers Client Portal Gateway.',
         icon: '📋'
       }
     ]
@@ -224,11 +234,14 @@ export const AiTradingLlmConsole: React.FC<AiTradingLlmConsoleProps> = ({
     type: 'Call' | 'Put',
     symbol: string,
     expiration?: string,
-    price?: number
+    price?: number,
+    action: 'BUY' | 'SELL' = 'BUY'
   ) => {
+    const isShort = action === 'SELL';
+    const actionPhrase = isShort ? 'sell to open (short)' : 'limit buy';
     const expStr = expiration ? ` ${expiration}` : '';
     const priceStr = price !== undefined ? ` at $${price.toFixed(2)} limit` : ' at $1.50 limit';
-    const prompt = `Draft a limit buy order for 1 contract of ${symbol}${expStr} $${strike.toFixed(2)} ${type}${priceStr} on ${activeBroker}.`;
+    const prompt = `Draft a ${actionPhrase} order for 1 contract of ${symbol}${expStr} $${strike.toFixed(2)} ${type}${priceStr} on ${activeBroker}.`;
     handleSendMessage(prompt);
   };
 
@@ -359,14 +372,30 @@ export const AiTradingLlmConsole: React.FC<AiTradingLlmConsoleProps> = ({
                     )}
 
                     {/* Inline Interactive Option Chain Card */}
-                    {msg.optionChain && (
-                      <div className="mt-3">
-                        <OptionChainCard
-                          chain={msg.optionChain}
-                          onSelectStrike={handleSelectOptionStrike}
-                        />
-                      </div>
-                    )}
+                    {msg.optionChain && (() => {
+                      const prevUserMsg = messages.slice(0, idx).reverse().find(m => m.role === 'user');
+                      const isShortDefault = prevUserMsg && /\b(short|sell|credit|sto)\b/i.test(prevUserMsg.content || '');
+
+                      return (
+                        <div className="mt-3">
+                          <OptionChainCard
+                            chain={msg.optionChain}
+                            defaultAction={isShortDefault ? 'SELL' : 'BUY'}
+                            onSelectContract={(action, type, strike, expiration, contractSymbol, price) => {
+                              handleSelectOptionStrike(
+                                strike,
+                                type === 'CALL' ? 'Call' : 'Put',
+                                msg.optionChain?.symbol || '',
+                                expiration,
+                                price,
+                                action
+                              );
+                            }}
+                            onSelectStrike={handleSelectOptionStrike}
+                          />
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Message timestamp and meta */}

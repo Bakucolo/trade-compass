@@ -30,9 +30,19 @@ export default defineConfig(({ mode }) => ({
       output: {
         manualChunks: {
           'vendor-react': ['react', 'react-dom', 'react-router-dom', '@tanstack/react-query'],
+          'vendor-ui': [
+            '@radix-ui/react-dialog',
+            '@radix-ui/react-dropdown-menu',
+            '@radix-ui/react-tabs',
+            '@radix-ui/react-popover',
+            '@radix-ui/react-tooltip',
+            '@radix-ui/react-select',
+            '@radix-ui/react-scroll-area',
+            '@radix-ui/react-slot',
+          ],
           'vendor-charts': ['recharts'],
           'vendor-icons': ['lucide-react'],
-          'vendor-markdown': ['react-markdown'],
+          'vendor-markdown': ['react-markdown', 'remark-gfm'],
         },
       },
     },

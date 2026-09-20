@@ -445,7 +445,7 @@ ${allocations}
               <div className="flex items-center gap-1 text-muted-foreground">
                 <DollarSign className="w-3 h-3 text-emerald-400" />
                 <span>DXY:</span>
-                <span className="font-bold text-foreground">{activeDossier.dxyLevel?.toFixed(2) || '103.80'}</span>
+                <span className="font-bold text-foreground">{activeDossier.dxyLevel?.toFixed(2) || '100.26'}</span>
               </div>
 
               <div className="flex items-center gap-1 text-muted-foreground">

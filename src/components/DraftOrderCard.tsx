@@ -15,23 +15,42 @@ import {
   TrendingUp,
   AlertTriangle,
   FileCheck2,
-  Server
+  Server,
+  Scale,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { StagedDraftOrder, approveDraftOrder, cancelDraftOrder } from '@/services/tastytrade';
+import { BuyingPowerComparisonCard } from './aiTrading/BuyingPowerComparisonCard';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
 export interface DraftOrderCardProps {
-  initialDraft: StagedDraftOrder;
+  initialDraft?: StagedDraftOrder;
+  draft?: StagedDraftOrder;
   onStatusChange?: (updated: StagedDraftOrder) => void;
+  onExecuted?: () => void;
 }
 
-export function DraftOrderCard({ initialDraft, onStatusChange }: DraftOrderCardProps) {
-  const [draft, setDraft] = useState<StagedDraftOrder>(initialDraft);
-  const [limitPrice, setLimitPrice] = useState<number | undefined>(initialDraft.price);
-  const [quantity, setQuantity] = useState<number>(initialDraft.quantity || 1);
+export function DraftOrderCard(props: DraftOrderCardProps) {
+  const currentDraft = props.initialDraft || props.draft;
+  if (!currentDraft) return null;
+
+  const [draft, setDraft] = useState<StagedDraftOrder>(currentDraft);
+  const [limitPrice, setLimitPrice] = useState<number | undefined>(currentDraft.price);
+  const [quantity, setQuantity] = useState<number>(currentDraft.quantity || 1);
   const [isApproving, setIsApproving] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [showBpAnalyser, setShowBpAnalyser] = useState(true);
+
+  React.useEffect(() => {
+    const next = props.initialDraft || props.draft;
+    if (next) {
+      setDraft(next);
+      setLimitPrice(next.price);
+      setQuantity(next.quantity || 1);
+    }
+  }, [props.initialDraft, props.draft]);
 
   const isBuy = draft.action.toUpperCase().includes('BUY');
   const isPending = draft.status === 'PENDING_APPROVAL';
@@ -47,7 +66,7 @@ export function DraftOrderCard({ initialDraft, onStatusChange }: DraftOrderCardP
   const brokerEndpoint = draft.broker === 'alpaca'
     ? 'paper-api.alpaca.markets'
     : draft.broker === 'ibkr'
-    ? '127.0.0.1:7497 (TWS)'
+    ? 'localhost:5000/v1/api (Paper)'
     : 'api.cert.tastyworks.com';
 
   const handleApprove = async () => {
@@ -55,13 +74,14 @@ export function DraftOrderCard({ initialDraft, onStatusChange }: DraftOrderCardP
     setIsApproving(true);
 
     try {
-      const hasOverrides = (limitPrice !== undefined && limitPrice !== initialDraft.price) || (quantity !== initialDraft.quantity);
+      const hasOverrides = (limitPrice !== undefined && limitPrice !== currentDraft.price) || (quantity !== currentDraft.quantity);
       const res = hasOverrides
         ? await approveDraftOrder(draft.draftId, { price: limitPrice, quantity })
         : await approveDraftOrder(draft.draftId);
 
       setDraft(res.draft);
-      onStatusChange?.(res.draft);
+      props.onStatusChange?.(res.draft);
+      props.onExecuted?.();
       toast.success('Trade Approved & Executed!', {
         description: `Submitted order for ${res.draft.quantity || quantity} ${draft.symbol} to ${brokerLabel}. Order ID: #${res.orderId || 'SUCCESS'}`
       });
@@ -258,13 +278,44 @@ export function DraftOrderCard({ initialDraft, onStatusChange }: DraftOrderCardP
           </p>
         )}
 
+        {/* Buying Power Analyser Section & Routing Switch */}
+        <div className="pt-1.5 space-y-2">
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setShowBpAnalyser(!showBpAnalyser)}
+              className="flex items-center gap-1.5 text-xs font-mono font-semibold text-primary hover:text-primary/80 transition-colors cursor-pointer"
+            >
+              <Scale className="w-3.5 h-3.5" />
+              <span>Buying Power Analyser (Tastytrade vs. IBKR)</span>
+              {showBpAnalyser ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+            {draft.buyingPowerComparison?.verdict && (
+              <Badge variant="outline" className="text-[10px] font-mono border-primary/30 text-primary bg-primary/10">
+                Recommended: {draft.buyingPowerComparison.verdict.recommendedBroker.toUpperCase()}
+              </Badge>
+            )}
+          </div>
+
+          {showBpAnalyser && (
+            <BuyingPowerComparisonCard
+              draft={draft}
+              comparison={draft.buyingPowerComparison}
+              onBrokerSwitched={(updatedDraft) => {
+                setDraft(updatedDraft);
+                props.onStatusChange?.(updatedDraft);
+              }}
+            />
+          )}
+        </div>
+
         {/* Post-execution info */}
         {isExecuted && draft.executionResult && (
           <div className="bg-emerald-950/30 border border-emerald-500/40 rounded-lg p-3 flex items-start gap-2.5">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
             <div className="text-xs space-y-0.5">
               <p className="font-semibold text-emerald-300">
-                Order Live in Tastytrade Certification Sandbox
+                Order Live on {brokerLabel}
               </p>
               <p className="font-mono text-[11px] text-slate-300">
                 Order ID: <span className="text-white font-bold">#{draft.executionResult.orderId}</span>
@@ -307,7 +358,7 @@ export function DraftOrderCard({ initialDraft, onStatusChange }: DraftOrderCardP
                 {isApproving ? (
                   <>
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Submitting to Sandbox...</span>
+                    <span>Submitting to {brokerLabel}...</span>
                   </>
                 ) : (
                   <>

@@ -37,7 +37,11 @@ import {
     Bell,
     BellRing,
     Shield,
-    ShieldCheck
+    ShieldCheck,
+    Folder,
+    FolderPlus,
+    Settings2,
+    Coins
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,6 +56,14 @@ import {
 import { StockNoteModal } from "../StockNoteModal";
 import { PositionAdvisorModal } from "./PositionAdvisorModal";
 import { CriticalDefenseModal, isOptionCall } from "./CriticalDefenseModal";
+import { PositionFolderManagerModal, renderFolderIcon } from "./PositionFolderManagerModal";
+import { PositionFolderDropdown } from "./PositionFolderDropdown";
+import { PortfolioDividendIncomeModal } from "./PortfolioDividendIncomeModal";
+import {
+    usePositionFolderMap,
+    getFolderThemeStyle,
+    PositionFolder,
+} from "@/services/positionFolderService";
 import { 
     InvestmentStyle, 
     STYLE_CONFIG, 
@@ -85,7 +97,7 @@ type SortKey =
     | 'theme';
 
 type SortDirection = 'asc' | 'desc';
-type ViewLayout = 'CATEGORIZED' | 'OPTIONS_ONLY' | 'EQUITIES_ONLY' | 'UNIFIED';
+type ViewLayout = 'CATEGORIZED' | 'FOLDERS' | 'OPTIONS_ONLY' | 'EQUITIES_ONLY' | 'UNIFIED';
 
 interface SortConfig {
     key: SortKey;
@@ -107,8 +119,31 @@ export function HoldingsTable({
     const [styleFilter, setStyleFilter] = useState<'All' | InvestmentStyle>('All');
     const [themeFilter, setThemeFilter] = useState<string>('All');
     const [sideFilter, setSideFilter] = useState<'All' | 'Long' | 'Short'>('All');
+    const [folderFilter, setFolderFilter] = useState<string>('All');
     const [viewLayout, setViewLayout] = useState<ViewLayout>('CATEGORIZED');
     const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'marketValue', direction: 'desc' });
+
+    // Position Folders State
+    const [isFolderManagerOpen, setIsFolderManagerOpen] = useState(false);
+    const [isDividendModalOpen, setIsDividendModalOpen] = useState(false);
+    const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
+    const { folders, folderById, assignmentByPositionKey } = usePositionFolderMap();
+
+    const toggleFolderCollapse = (folderId: string) => {
+        setCollapsedFolders(prev => ({
+            ...prev,
+            [folderId]: !prev[folderId]
+        }));
+    };
+
+    const getPositionFolder = (pos: UnifiedPosition): PositionFolder | undefined => {
+        if (!pos) return undefined;
+        if (assignmentByPositionKey[pos.id]) {
+            return assignmentByPositionKey[pos.id];
+        }
+        const sym = (pos.underlyingSymbol || pos.symbol || '').toUpperCase();
+        return assignmentByPositionKey[sym];
+    };
 
     const handleOpenResearch = (symbol: string) => {
         if (onNavigateToResearch) {
@@ -552,8 +587,17 @@ export function HoldingsTable({
             result = result.filter(p => p && (p.quantity || 0) < 0);
         }
 
+        // 7. Folder Filter
+        if (folderFilter !== 'All') {
+            if (folderFilter === 'unfiled') {
+                result = result.filter(p => !getPositionFolder(p));
+            } else {
+                result = result.filter(p => getPositionFolder(p)?.id === folderFilter);
+            }
+        }
+
         return result;
-    }, [enrichedPositions, searchQuery, brokerFilter, currencyFilter, styleFilter, themeFilter, sideFilter]);
+    }, [enrichedPositions, searchQuery, brokerFilter, currencyFilter, styleFilter, themeFilter, sideFilter, folderFilter, assignmentByPositionKey]);
 
     // Split positions into Options and Equities
     const optionsPositions = useMemo(() => {
@@ -567,6 +611,52 @@ export function HoldingsTable({
     const allSortedPositions = useMemo(() => {
         return sortPositions(filteredPositions);
     }, [filteredPositions, sortConfig]);
+
+    // --- Groupings & Metrics for Folders Layout ---
+    const folderGroups = useMemo(() => {
+        return folders.map(folder => {
+            const folderPos = sortPositions(
+                filteredPositions.filter(p => getPositionFolder(p)?.id === folder.id)
+            );
+            const totalMarketValue = folderPos.reduce((sum, p) => sum + p.marketValue, 0);
+            const totalUnrealizedPL = folderPos.reduce((sum, p) => sum + p.unrealizedPL, 0);
+            const totalDayPL = folderPos.reduce((sum, p) => sum + p.dayChange, 0);
+            const totalNetDelta = folderPos.reduce((sum, p) => sum + calculatePositionDelta(p).netPositionDelta, 0);
+            const costBasis = Math.abs(totalMarketValue - totalUnrealizedPL);
+            const unrealizedPLPercent = costBasis > 0 ? (totalUnrealizedPL / costBasis) * 100 : 0;
+
+            return {
+                folder,
+                positions: folderPos,
+                totalMarketValue,
+                totalUnrealizedPL,
+                unrealizedPLPercent,
+                totalDayPL,
+                totalNetDelta,
+            };
+        });
+    }, [folders, filteredPositions, sortConfig, assignmentByPositionKey]);
+
+    const unfiledGroup = useMemo(() => {
+        const unfiledPos = sortPositions(
+            filteredPositions.filter(p => !getPositionFolder(p))
+        );
+        const totalMarketValue = unfiledPos.reduce((sum, p) => sum + p.marketValue, 0);
+        const totalUnrealizedPL = unfiledPos.reduce((sum, p) => sum + p.unrealizedPL, 0);
+        const totalDayPL = unfiledPos.reduce((sum, p) => sum + p.dayChange, 0);
+        const totalNetDelta = unfiledPos.reduce((sum, p) => sum + calculatePositionDelta(p).netPositionDelta, 0);
+        const costBasis = Math.abs(totalMarketValue - totalUnrealizedPL);
+        const unrealizedPLPercent = costBasis > 0 ? (totalUnrealizedPL / costBasis) * 100 : 0;
+
+        return {
+            positions: unfiledPos,
+            totalMarketValue,
+            totalUnrealizedPL,
+            unrealizedPLPercent,
+            totalDayPL,
+            totalNetDelta,
+        };
+    }, [filteredPositions, sortConfig, assignmentByPositionKey]);
 
     // --- Metrics for Options Section ---
     const optionsMetrics = useMemo(() => {
@@ -797,6 +887,15 @@ export function HoldingsTable({
                                         {stockNote.sentiment || 'Notes'}
                                     </button>
                                 )}
+
+                                {/* Position Folder Assignment Pill / Dropdown */}
+                                <PositionFolderDropdown
+                                    positionKey={pos.id}
+                                    symbol={cleanBaseSymbol}
+                                    currentFolder={getPositionFolder(pos)}
+                                    folders={folders}
+                                    onOpenFolderManager={() => setIsFolderManagerOpen(true)}
+                                />
                             </div>
 
                             {/* Thematic Exposure Badges (Clickable) */}
@@ -1250,55 +1349,90 @@ export function HoldingsTable({
                     </div>
 
                     {/* View Layout Tabs */}
-                    <div className="flex p-1 bg-slate-950/60 rounded-xl border border-white/5">
-                        <button
-                            onClick={() => setViewLayout('CATEGORIZED')}
-                            className={cn(
-                                "px-3 py-1 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5",
-                                viewLayout === 'CATEGORIZED'
-                                    ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm"
-                                    : "text-muted-foreground hover:text-foreground"
-                            )}
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <div className="flex p-1 bg-slate-950/60 rounded-xl border border-white/5 flex-wrap gap-0.5">
+                            <button
+                                onClick={() => setViewLayout('CATEGORIZED')}
+                                className={cn(
+                                    "px-3 py-1 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5",
+                                    viewLayout === 'CATEGORIZED'
+                                        ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm"
+                                        : "text-muted-foreground hover:text-foreground"
+                                )}
+                            >
+                                <Layers className="w-3.5 h-3.5" /> Categorized
+                            </button>
+                            <button
+                                onClick={() => setViewLayout('FOLDERS')}
+                                className={cn(
+                                    "px-3 py-1 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5",
+                                    viewLayout === 'FOLDERS'
+                                        ? "bg-blue-500/20 text-blue-300 border border-blue-500/40 shadow-sm font-bold"
+                                        : "text-muted-foreground hover:text-foreground"
+                                )}
+                            >
+                                <Folder className="w-3.5 h-3.5 text-blue-400" /> Folders ({folders.length})
+                            </button>
+                            <button
+                                onClick={() => setViewLayout('OPTIONS_ONLY')}
+                                className={cn(
+                                    "px-3 py-1 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5",
+                                    viewLayout === 'OPTIONS_ONLY'
+                                        ? "bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-sm"
+                                        : "text-muted-foreground hover:text-foreground"
+                                )}
+                            >
+                                Options ({optionsPositions.length})
+                            </button>
+                            <button
+                                onClick={() => setViewLayout('EQUITIES_ONLY')}
+                                className={cn(
+                                    "px-3 py-1 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5",
+                                    viewLayout === 'EQUITIES_ONLY'
+                                        ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm"
+                                        : "text-muted-foreground hover:text-foreground"
+                                )}
+                            >
+                                Equities ({equitiesPositions.length})
+                            </button>
+                            <button
+                                onClick={() => setViewLayout('UNIFIED')}
+                                className={cn(
+                                    "px-3 py-1 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5",
+                                    viewLayout === 'UNIFIED'
+                                        ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 shadow-sm"
+                                        : "text-muted-foreground hover:text-foreground"
+                                )}
+                            >
+                                Unified ({filteredPositions.length})
+                            </button>
+                        </div>
+
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setIsFolderManagerOpen(true)}
+                            className="h-8 text-xs font-bold gap-1.5 border-white/10 hover:border-cyan-500/40 hover:bg-cyan-500/10 text-slate-300 hover:text-cyan-300 shadow-sm"
+                            title="Manage, create, or re-color position folders"
                         >
-                            <Layers className="w-3.5 h-3.5" /> Categorized
-                        </button>
-                        <button
-                            onClick={() => setViewLayout('OPTIONS_ONLY')}
-                            className={cn(
-                                "px-3 py-1 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5",
-                                viewLayout === 'OPTIONS_ONLY'
-                                    ? "bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-sm"
-                                    : "text-muted-foreground hover:text-foreground"
-                            )}
+                            <Settings2 className="w-3.5 h-3.5 text-cyan-400" />
+                            <span>Manage Folders</span>
+                        </Button>
+
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setIsDividendModalOpen(true)}
+                            className="h-8 text-xs font-bold gap-1.5 border-emerald-500/30 bg-emerald-500/10 hover:border-emerald-500/50 hover:bg-emerald-500/20 text-emerald-300 shadow-sm transition-all"
+                            title="Calculate annual expected dividend income and forward dividend raises across open holdings"
                         >
-                            Options ({optionsPositions.length})
-                        </button>
-                        <button
-                            onClick={() => setViewLayout('EQUITIES_ONLY')}
-                            className={cn(
-                                "px-3 py-1 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5",
-                                viewLayout === 'EQUITIES_ONLY'
-                                    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm"
-                                    : "text-muted-foreground hover:text-foreground"
-                            )}
-                        >
-                            Equities ({equitiesPositions.length})
-                        </button>
-                        <button
-                            onClick={() => setViewLayout('UNIFIED')}
-                            className={cn(
-                                "px-3 py-1 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5",
-                                viewLayout === 'UNIFIED'
-                                    ? "bg-blue-500/20 text-blue-300 border border-blue-500/40 shadow-sm"
-                                    : "text-muted-foreground hover:text-foreground"
-                            )}
-                        >
-                            Unified ({filteredPositions.length})
-                        </button>
+                            <Coins className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                            <span>Expected Dividends</span>
+                        </Button>
                     </div>
                 </div>
 
-                {/* Broker, Currency & Side Filters */}
+                {/* Broker, Currency, Folder & Side Filters */}
                 <div className="flex items-center gap-3 flex-wrap">
                     
                     {/* Position Side (Long / Short) Selector */}
@@ -1365,6 +1499,54 @@ export function HoldingsTable({
                                     {filter}
                                 </button>
                             ))}
+                        </div>
+                    </div>
+
+                    {/* Folder Filter */}
+                    <div className="flex items-center gap-1">
+                        <span className="text-xs text-muted-foreground mr-1 hidden sm:inline">Folder:</span>
+                        <div className="flex p-0.5 bg-slate-950/60 rounded-lg border border-white/5 flex-wrap gap-0.5">
+                            <button
+                                onClick={() => setFolderFilter('All')}
+                                className={cn(
+                                    "px-2 py-1 text-xs font-medium rounded-md transition-all",
+                                    folderFilter === 'All'
+                                        ? "bg-white/15 text-foreground font-bold shadow-sm"
+                                        : "text-muted-foreground hover:text-foreground"
+                                )}
+                            >
+                                All
+                            </button>
+                            {folders.map((f) => {
+                                const fStyle = getFolderThemeStyle(f.color);
+                                const isSelected = folderFilter === f.id;
+                                return (
+                                    <button
+                                        key={f.id}
+                                        onClick={() => setFolderFilter(isSelected ? 'All' : f.id)}
+                                        className={cn(
+                                            "px-2 py-1 text-xs font-medium rounded-md transition-all flex items-center gap-1",
+                                            isSelected
+                                                ? cn("font-bold shadow-sm border", fStyle.badgeClass)
+                                                : "text-muted-foreground hover:text-foreground"
+                                        )}
+                                    >
+                                        <span className={cn("w-1.5 h-1.5 rounded-full", fStyle.dotColor)} />
+                                        <span>{f.name}</span>
+                                    </button>
+                                );
+                            })}
+                            <button
+                                onClick={() => setFolderFilter(folderFilter === 'unfiled' ? 'All' : 'unfiled')}
+                                className={cn(
+                                    "px-2 py-1 text-xs font-medium rounded-md transition-all flex items-center gap-1",
+                                    folderFilter === 'unfiled'
+                                        ? "bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold shadow-sm"
+                                        : "text-muted-foreground hover:text-foreground"
+                                )}
+                            >
+                                Unfiled ({unfiledGroup.positions.length})
+                            </button>
                         </div>
                     </div>
 
@@ -1673,6 +1855,299 @@ export function HoldingsTable({
                 </div>
             )}
 
+            {/* ================= FOLDERS VIEW SECTION ================= */}
+            {viewLayout === 'FOLDERS' && (
+                <div className="space-y-6">
+                    {/* Folders Summary Banner */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-gradient-to-r from-blue-950/30 via-slate-900/40 to-slate-950/40 border border-blue-500/20 glass-card">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2.5 rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-400">
+                                <Folder className="w-5 h-5" />
+                            </div>
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <h3 className="text-base font-bold text-foreground">Position Folders & Strategy Sleeves</h3>
+                                    <Badge variant="outline" className="text-xs font-mono font-bold bg-blue-500/10 text-blue-300 border-blue-500/30">
+                                        {folders.length} Folders
+                                    </Badge>
+                                    <Badge variant="outline" className="text-xs font-mono">
+                                        {filteredPositions.length} Total Holdings
+                                    </Badge>
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-0.5">
+                                    Positions grouped into custom sleeves with live aggregate P/L, total value, and delta exposure.
+                                </p>
+                            </div>
+                        </div>
+
+                        <Button
+                            onClick={() => setIsFolderManagerOpen(true)}
+                            size="sm"
+                            className="bg-cyan-500 hover:bg-cyan-600 text-slate-950 font-bold gap-1.5 h-8 text-xs shrink-0 self-start sm:self-center cursor-pointer shadow-sm"
+                        >
+                            <Settings2 className="w-3.5 h-3.5" />
+                            Manage Folders
+                        </Button>
+                    </div>
+
+                    {/* Folder Groups Accordion Cards */}
+                    {folderGroups.map(({ folder, positions: groupPositions, totalMarketValue, totalUnrealizedPL, unrealizedPLPercent, totalDayPL, totalNetDelta }) => {
+                        const themeStyle = getFolderThemeStyle(folder.color);
+                        const isCollapsed = Boolean(collapsedFolders[folder.id]);
+
+                        return (
+                            <div
+                                key={folder.id}
+                                className={cn(
+                                    "glass-card rounded-2xl overflow-hidden border shadow-2xl bg-slate-950/40 transition-all",
+                                    themeStyle.cardBorder
+                                )}
+                            >
+                                {/* Folder Card Header */}
+                                <div
+                                    onClick={() => toggleFolderCollapse(folder.id)}
+                                    className={cn(
+                                        "p-4 border-b border-white/5 bg-gradient-to-r flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer hover:bg-white/5 transition-colors",
+                                        themeStyle.headerBg
+                                    )}
+                                >
+                                    {/* Left: Folder Identity */}
+                                    <div className="flex items-center gap-3">
+                                        <div className={cn("p-2 rounded-xl border shrink-0 transition-transform", themeStyle.badgeClass)}>
+                                            {renderFolderIcon(folder.icon, cn("w-5 h-5", themeStyle.iconColor))}
+                                        </div>
+                                        <div>
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <h4 className="text-lg font-bold text-foreground tracking-tight">
+                                                    {folder.name}
+                                                </h4>
+                                                <Badge variant="outline" className={cn("text-xs font-mono font-bold", themeStyle.badgeClass)}>
+                                                    {groupPositions.length} {groupPositions.length === 1 ? 'Holding' : 'Holdings'}
+                                                </Badge>
+                                            </div>
+                                            {folder.description && (
+                                                <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1 max-w-xl">
+                                                    {folder.description}
+                                                </p>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Right: Aggregate Folder Metrics */}
+                                    <div className="flex items-center gap-2 flex-wrap shrink-0" onClick={(e) => e.stopPropagation()}>
+                                        <div className="px-3 py-1.5 rounded-xl bg-card/60 border border-border/40 font-mono">
+                                            <span className="text-[10px] text-muted-foreground block uppercase font-bold">Total Value</span>
+                                            <span className="text-sm font-black text-foreground">
+                                                ${totalMarketValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+
+                                        <div className="px-3 py-1.5 rounded-xl bg-card/60 border border-border/40 font-mono">
+                                            <span className="text-[10px] text-muted-foreground block uppercase font-bold">Day P/L</span>
+                                            <span className={cn("text-sm font-black", totalDayPL >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                                                {totalDayPL >= 0 ? '+' : ''}${totalDayPL.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+
+                                        <div className="px-3 py-1.5 rounded-xl bg-card/60 border border-border/40 font-mono">
+                                            <span className="text-[10px] text-muted-foreground block uppercase font-bold">Open Return</span>
+                                            <span className={cn("text-sm font-black", totalUnrealizedPL >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                                                {totalUnrealizedPL >= 0 ? '+' : ''}${totalUnrealizedPL.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                <span className="text-xs opacity-75 ml-1">
+                                                    ({unrealizedPLPercent >= 0 ? '+' : ''}{unrealizedPLPercent.toFixed(1)}%)
+                                                </span>
+                                            </span>
+                                        </div>
+
+                                        <div className="px-3 py-1.5 rounded-xl bg-card/60 border border-border/40 font-mono hidden lg:block">
+                                            <span className="text-[10px] text-muted-foreground block uppercase font-bold">Net Delta (&Delta;)</span>
+                                            <span className={cn("text-sm font-black", totalNetDelta >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                                                {totalNetDelta >= 0 ? '+' : ''}{Math.round(totalNetDelta).toLocaleString()} &Delta;
+                                            </span>
+                                        </div>
+
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => toggleFolderCollapse(folder.id)}
+                                            className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                                            title={isCollapsed ? "Expand folder" : "Collapse folder"}
+                                        >
+                                            {isCollapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+                                        </Button>
+                                    </div>
+                                </div>
+
+                                {/* Folder Positions Table */}
+                                {!isCollapsed && (
+                                    <div className="overflow-x-auto">
+                                        <Table>
+                                            <TableHeader className="bg-slate-950/50">
+                                                <TableRow className="hover:bg-transparent border-white/5">
+                                                    <TableHead className="w-[240px] cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('symbol')}>
+                                                        <div className="flex items-center">Symbol & Folder <SortIcon columnKey="symbol" /></div>
+                                                    </TableHead>
+                                                    <TableHead className="cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('style')}>
+                                                        <div className="flex items-center">Style <SortIcon columnKey="style" /></div>
+                                                    </TableHead>
+                                                    <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('quantity')}>
+                                                        <div className="flex items-center justify-end">Pos <SortIcon columnKey="quantity" /></div>
+                                                    </TableHead>
+                                                    <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('delta')}>
+                                                        <div className="flex items-center justify-end text-cyan-300 font-bold">Delta (&Delta;) <SortIcon columnKey="delta" /></div>
+                                                    </TableHead>
+                                                    <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('risky')}>
+                                                        <div className="flex items-center justify-end">Risk / Strike <SortIcon columnKey="risky" /></div>
+                                                    </TableHead>
+                                                    <TableHead className="text-right">Und. Price</TableHead>
+                                                    <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('currentPrice')}>
+                                                        <div className="flex items-center justify-end">Mkt Price <SortIcon columnKey="currentPrice" /></div>
+                                                    </TableHead>
+                                                    <TableHead className="text-right md:table-cell hidden">Avg Cost</TableHead>
+                                                    <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('marketValue')}>
+                                                        <div className="flex items-center justify-end">Value <SortIcon columnKey="marketValue" /></div>
+                                                    </TableHead>
+                                                    <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('dayChange')}>
+                                                        <div className="flex items-center justify-end">Day P/L <SortIcon columnKey="dayChange" /></div>
+                                                    </TableHead>
+                                                    <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('unrealizedPL')}>
+                                                        <div className="flex items-center justify-end">Open P/L <SortIcon columnKey="unrealizedPL" /></div>
+                                                    </TableHead>
+                                                    <TableHead className="text-center w-[90px]">AI Advisor</TableHead>
+                                                    <TableHead className="text-center w-[50px]">Notes</TableHead>
+                                                </TableRow>
+                                            </TableHeader>
+                                            <TableBody>
+                                                {groupPositions.length === 0 ? (
+                                                    <TableRow>
+                                                        <TableCell colSpan={13} className="text-center py-8 text-muted-foreground text-xs">
+                                                            No positions filed in "{folder.name}". Use the "+ Folder" pill on any holding to organize it here.
+                                                        </TableCell>
+                                                    </TableRow>
+                                                ) : (
+                                                    groupPositions.map(pos => renderPositionRow(pos, pos.assetType === 'Option'))
+                                                )}
+                                            </TableBody>
+                                        </Table>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+
+                    {/* Unfiled Positions Card */}
+                    {unfiledGroup.positions.length > 0 && (
+                        <div className="glass-card rounded-2xl overflow-hidden border border-amber-500/30 shadow-2xl bg-slate-950/40 transition-all">
+                            {/* Unfiled Card Header */}
+                            <div
+                                onClick={() => toggleFolderCollapse('unfiled')}
+                                className="p-4 border-b border-amber-500/20 bg-gradient-to-r from-amber-950/30 via-slate-900/40 to-slate-950/40 flex flex-col md:flex-row md:items-center justify-between gap-4 cursor-pointer hover:bg-white/5 transition-colors"
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 rounded-xl border shrink-0 bg-amber-500/15 border-amber-500/30 text-amber-400">
+                                        <FolderPlus className="w-5 h-5" />
+                                    </div>
+                                    <div>
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <h4 className="text-lg font-bold text-foreground tracking-tight">
+                                                Unfiled Positions
+                                            </h4>
+                                            <Badge variant="outline" className="text-xs font-mono font-bold bg-amber-500/15 text-amber-300 border-amber-500/40">
+                                                {unfiledGroup.positions.length} Unfiled
+                                            </Badge>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground mt-0.5">
+                                            Holdings not yet categorized into a folder. Assign them to organize risk and strategy sleeves.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 flex-wrap shrink-0" onClick={(e) => e.stopPropagation()}>
+                                    <div className="px-3 py-1.5 rounded-xl bg-card/60 border border-border/40 font-mono">
+                                        <span className="text-[10px] text-muted-foreground block uppercase font-bold">Total Value</span>
+                                        <span className="text-sm font-black text-foreground">
+                                            ${unfiledGroup.totalMarketValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </span>
+                                    </div>
+
+                                    <div className="px-3 py-1.5 rounded-xl bg-card/60 border border-border/40 font-mono">
+                                        <span className="text-[10px] text-muted-foreground block uppercase font-bold">Day P/L</span>
+                                        <span className={cn("text-sm font-black", unfiledGroup.totalDayPL >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                                            {unfiledGroup.totalDayPL >= 0 ? '+' : ''}${unfiledGroup.totalDayPL.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </span>
+                                    </div>
+
+                                    <div className="px-3 py-1.5 rounded-xl bg-card/60 border border-border/40 font-mono">
+                                        <span className="text-[10px] text-muted-foreground block uppercase font-bold">Open Return</span>
+                                        <span className={cn("text-sm font-black", unfiledGroup.totalUnrealizedPL >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                                            {unfiledGroup.totalUnrealizedPL >= 0 ? '+' : ''}${unfiledGroup.totalUnrealizedPL.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            <span className="text-xs opacity-75 ml-1">
+                                                ({unfiledGroup.unrealizedPLPercent >= 0 ? '+' : ''}{unfiledGroup.unrealizedPLPercent.toFixed(1)}%)
+                                            </span>
+                                        </span>
+                                    </div>
+
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => toggleFolderCollapse('unfiled')}
+                                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                                        title={collapsedFolders['unfiled'] ? "Expand unfiled positions" : "Collapse unfiled positions"}
+                                    >
+                                        {collapsedFolders['unfiled'] ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
+                                    </Button>
+                                </div>
+                            </div>
+
+                            {!collapsedFolders['unfiled'] && (
+                                <div className="overflow-x-auto">
+                                    <Table>
+                                        <TableHeader className="bg-slate-950/50">
+                                            <TableRow className="hover:bg-transparent border-white/5">
+                                                <TableHead className="w-[240px] cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('symbol')}>
+                                                    <div className="flex items-center">Symbol & Folder <SortIcon columnKey="symbol" /></div>
+                                                </TableHead>
+                                                <TableHead className="cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('style')}>
+                                                    <div className="flex items-center">Style <SortIcon columnKey="style" /></div>
+                                                </TableHead>
+                                                <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('quantity')}>
+                                                    <div className="flex items-center justify-end">Pos <SortIcon columnKey="quantity" /></div>
+                                                </TableHead>
+                                                <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('delta')}>
+                                                    <div className="flex items-center justify-end text-cyan-300 font-bold">Delta (&Delta;) <SortIcon columnKey="delta" /></div>
+                                                </TableHead>
+                                                <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('risky')}>
+                                                    <div className="flex items-center justify-end">Risk / Strike <SortIcon columnKey="risky" /></div>
+                                                </TableHead>
+                                                <TableHead className="text-right">Und. Price</TableHead>
+                                                <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('currentPrice')}>
+                                                    <div className="flex items-center justify-end">Mkt Price <SortIcon columnKey="currentPrice" /></div>
+                                                </TableHead>
+                                                <TableHead className="text-right md:table-cell hidden">Avg Cost</TableHead>
+                                                <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('marketValue')}>
+                                                    <div className="flex items-center justify-end">Value <SortIcon columnKey="marketValue" /></div>
+                                                </TableHead>
+                                                <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('dayChange')}>
+                                                    <div className="flex items-center justify-end">Day P/L <SortIcon columnKey="dayChange" /></div>
+                                                </TableHead>
+                                                <TableHead className="text-right cursor-pointer hover:bg-white/5 transition-colors group" onClick={() => handleSort('unrealizedPL')}>
+                                                    <div className="flex items-center justify-end">Open P/L <SortIcon columnKey="unrealizedPL" /></div>
+                                                </TableHead>
+                                                <TableHead className="text-center w-[90px]">AI Advisor</TableHead>
+                                                <TableHead className="text-center w-[50px]">Notes</TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {unfiledGroup.positions.map(pos => renderPositionRow(pos, pos.assetType === 'Option'))}
+                                        </TableBody>
+                                    </Table>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* ================= UNIFIED TABLE SECTION ================= */}
             {viewLayout === 'UNIFIED' && (
                 <div className="glass-card rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950/40">
@@ -1765,6 +2240,19 @@ export function HoldingsTable({
                 }}
                 onNavigateToResearch={handleOpenResearch}
                 onNavigateToGraphs={onNavigateToGraphs}
+            />
+
+            {/* Position Folder Manager Modal */}
+            <PositionFolderManagerModal
+                isOpen={isFolderManagerOpen}
+                onClose={() => setIsFolderManagerOpen(false)}
+            />
+
+            {/* Expected Dividend Income & Raise Forecast Modal */}
+            <PortfolioDividendIncomeModal
+                isOpen={isDividendModalOpen}
+                onClose={() => setIsDividendModalOpen(false)}
+                onNavigateToResearch={handleOpenResearch}
             />
         </div>
     );

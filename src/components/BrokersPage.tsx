@@ -11,6 +11,7 @@ import { PerformanceLeaderboard } from './portfolio/PerformanceLeaderboard';
 import { HoldingsTable } from './portfolio/HoldingsTable';
 import { PortfolioAuditModal } from './portfolio/PortfolioAuditModal';
 import { PortfolioValuationModal } from './portfolio/PortfolioValuationModal';
+import { PortfolioDividendIncomeModal } from './portfolio/PortfolioDividendIncomeModal';
 import { CriticalDefenseModal, isOptionCall } from './portfolio/CriticalDefenseModal';
 import { PositionAdvisorModal } from './portfolio/PositionAdvisorModal';
 import { UnifiedPosition } from './portfolio/types';
@@ -34,6 +35,7 @@ import {
   EyeOff,
   ChevronDown,
   ChevronUp,
+  Coins,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from './ui/use-toast';
@@ -92,6 +94,7 @@ export function BrokersPage({ onNavigateToResearch, onNavigateToGraphs }: Broker
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [isValuationModalOpen, setIsValuationModalOpen] = useState(false);
   const [isDefenseModalOpen, setIsDefenseModalOpen] = useState(false);
+  const [isDividendIncomeModalOpen, setIsDividendIncomeModalOpen] = useState(false);
   const [advisorPosition, setAdvisorPosition] = useState<UnifiedPosition | null>(null);
   const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
   const [isAgentDrawerOpen, setIsAgentDrawerOpen] = useState(false);
@@ -503,6 +506,18 @@ export function BrokersPage({ onNavigateToResearch, onNavigateToGraphs }: Broker
             <span>Portfolio Valuation & Alerts</span>
           </Button>
 
+          {/* Calculate Expected Dividend Income & Raises */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsDividendIncomeModalOpen(true)}
+            className="h-9 text-xs font-bold gap-1.5 bg-gradient-to-r from-emerald-500/15 via-teal-500/15 to-cyan-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25 shadow-[0_0_12px_rgba(16,185,129,0.2)] transition-all"
+            title="Calculate annual expected dividend income based on open portfolio holdings and expected dividend raises"
+          >
+            <Coins className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+            <span>Expected Dividend Income</span>
+          </Button>
+
           <Button
             variant="default"
             size="sm"
@@ -684,6 +699,13 @@ export function BrokersPage({ onNavigateToResearch, onNavigateToGraphs }: Broker
         }}
         onNavigateToResearch={onNavigateToResearch}
         onNavigateToGraphs={onNavigateToGraphs}
+      />
+
+      {/* Portfolio Expected Dividend Income & Raise Forecast Modal */}
+      <PortfolioDividendIncomeModal
+        isOpen={isDividendIncomeModalOpen}
+        onClose={() => setIsDividendIncomeModalOpen(false)}
+        onNavigateToResearch={onNavigateToResearch}
       />
 
       <div className="text-xs text-muted-foreground text-center pt-4">

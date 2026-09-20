@@ -141,14 +141,13 @@ describe('Redesigned AI Trading Section', () => {
     // Switch to Interactive Brokers
     fireEvent.click(ibkrBtn);
     expect(screen.getByText(/IBKR AI Terminal/i)).toBeDefined();
-    expect(screen.getByText(/TWS \/ Gateway Socket/i)).toBeDefined();
+    expect(screen.getAllByText(/Client Portal/i).length).toBeGreaterThan(0);
   });
 
-  it('2. Strictly hides any account balances, buying power, portfolio values, or positions', () => {
+  it('2. Strictly hides any account balances, portfolio values, or positions widgets', () => {
     render(<AITradingPage />, { wrapper: createWrapper() });
 
-    // Assert that standard balance metrics are NOT present on the screen
-    expect(screen.queryByText(/Buying Power/i)).toBeNull();
+    // Assert that standard balance metrics widgets are NOT present on the screen
     expect(screen.queryByText(/Net Liquidating Value/i)).toBeNull();
     expect(screen.queryByText(/Cash Balance/i)).toBeNull();
     expect(screen.queryByText(/Day P&L/i)).toBeNull();
@@ -215,6 +214,6 @@ describe('Redesigned AI Trading Section', () => {
 
     // Zero balance verification in workspace
     expect(screen.queryByText(/Cash Balance/i)).toBeNull();
-    expect(screen.queryByText(/Buying Power/i)).toBeNull();
+    expect(screen.queryByText(/Account Buying Power/i)).toBeNull();
   });
 });

@@ -8,11 +8,14 @@ import {
   RotateCcw, 
   CheckCircle2, 
   Cpu, 
-  Lock
+  Lock,
+  Activity
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useIBKRClientPortalStatus } from '@/services/ibkr';
+import { BuyingPowerModal } from './BuyingPowerModal';
 
 export type SupportedBroker = 'tastytrade' | 'alpaca' | 'ibkr';
 
@@ -69,10 +72,10 @@ export const AiTradingBrokerBar: React.FC<AiTradingBrokerBarProps> = ({
     {
       id: 'ibkr',
       name: 'Interactive Brokers',
-      badge: 'TWS/API',
-      envName: 'TWS / Gateway Socket',
-      endpoint: '127.0.0.1:7497',
-      instruments: 'Global Equities & Derivatives',
+      badge: 'Client Portal (Paper)',
+      envName: 'IBKR Gateway (Paper DU1234567)',
+      endpoint: 'localhost:5000/v1/api',
+      instruments: 'Equities, Options & Tool Calling',
       color: 'text-blue-400',
       borderColor: 'border-blue-500/40',
       bgActive: 'bg-blue-500/15 text-blue-200 border-blue-500/60 shadow-blue-950/40'
@@ -80,6 +83,7 @@ export const AiTradingBrokerBar: React.FC<AiTradingBrokerBarProps> = ({
   ];
 
   const currentBroker = brokers.find((b) => b.id === activeBroker) || brokers[0];
+  const { data: ibkrStatus } = useIBKRClientPortalStatus();
 
   return (
     <div className="bg-card/90 border border-border/80 rounded-2xl p-4 sm:p-5 shadow-lg backdrop-blur-sm space-y-4">
@@ -126,6 +130,9 @@ export const AiTradingBrokerBar: React.FC<AiTradingBrokerBarProps> = ({
               <option value="local/quant" className="bg-card text-foreground">Local Quant</option>
             </select>
           </div>
+
+          {/* Quick Buying Power & Margin Analyser */}
+          <BuyingPowerModal />
 
           {/* Clear chat action */}
           {onClearChat && (
@@ -195,6 +202,15 @@ export const AiTradingBrokerBar: React.FC<AiTradingBrokerBarProps> = ({
           <span className="text-[11px] text-muted-foreground hidden sm:inline">{currentBroker.endpoint}</span>
           <span className="text-muted-foreground/60 hidden md:inline">|</span>
           <span className="text-[11px] text-primary/90 hidden md:inline">{currentBroker.instruments}</span>
+          {activeBroker === 'ibkr' && (
+            <>
+              <span className="text-muted-foreground/60 hidden lg:inline">|</span>
+              <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-semibold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                <Activity className="w-3 h-3 animate-pulse text-emerald-400" />
+                Tickle Heartbeat (2m)
+              </span>
+            </>
+          )}
         </div>
       </div>
     </div>

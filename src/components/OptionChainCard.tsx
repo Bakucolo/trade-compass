@@ -39,9 +39,11 @@ export interface OptionChainCardProps {
     type: 'Call' | 'Put',
     symbol: string,
     expiration?: string,
-    price?: number
+    price?: number,
+    action?: 'BUY' | 'SELL'
   ) => void;
   onNavigateToResearch?: (symbol: string) => void;
+  defaultAction?: 'BUY' | 'SELL' | 'BOTH';
 }
 
 export function OptionChainCard({
@@ -49,11 +51,20 @@ export function OptionChainCard({
   chain: chainProp,
   onSelectContract,
   onSelectStrike,
-  onNavigateToResearch
+  onNavigateToResearch,
+  defaultAction = 'BUY'
 }: OptionChainCardProps) {
   const [selectedExpIdx, setSelectedExpIdx] = useState<number>(0);
   const [showAllStrikes, setShowAllStrikes] = useState<boolean>(false);
   const [copiedContract, setCopiedContract] = useState<string | null>(null);
+  const [actionMode, setActionMode] = useState<'BUY' | 'SELL' | 'BOTH'>(defaultAction);
+
+  // Sync defaultAction if prop changes
+  React.useEffect(() => {
+    if (defaultAction) {
+      setActionMode(defaultAction);
+    }
+  }, [defaultAction]);
 
   const chain = chainProp || initialChain;
   const expirations = chain?.expirations || [];
@@ -98,9 +109,10 @@ export function OptionChainCard({
         onSelectContract(action, type, strike, currentExp.expirationDate, contractSymbol);
       }
     } else if (onSelectStrike) {
-      onSelectStrike(strike, type === 'CALL' ? 'Call' : 'Put', chain.symbol, currentExp.expirationDate, price);
+      onSelectStrike(strike, type === 'CALL' ? 'Call' : 'Put', chain.symbol, currentExp.expirationDate, price, action);
     } else {
-      toast.info(`Selected ${chain.symbol} $${strike.toFixed(2)} ${type}`, {
+      const actionLabel = action === 'SELL' ? 'Short (Sell to Open)' : 'Long (Buy to Open)';
+      toast.info(`Selected ${actionLabel} ${chain.symbol} $${strike.toFixed(2)} ${type}`, {
         description: `Exp: ${currentExp.expirationDate} (${currentExp.dte} DTE)`
       });
     }
@@ -136,23 +148,58 @@ export function OptionChainCard({
           </div>
         </div>
 
-        {/* Research Link Shortcut */}
-        <button
-          type="button"
-          onClick={() => {
-            if (onNavigateToResearch) {
-              onNavigateToResearch(chain.symbol);
-            } else {
-              window.dispatchEvent(new CustomEvent('select-research-ticker', { detail: chain.symbol }));
-            }
-          }}
-          className="text-xs font-semibold px-2.5 py-1 rounded-lg border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 flex items-center gap-1 transition-all cursor-pointer"
-          title={`Deep-dive ${chain.symbol} in Research Options Chain`}
-        >
-          <Sparkles className="w-3 h-3 text-amber-300" />
-          <span>Deep Research</span>
-          <ExternalLink className="w-3 h-3 opacity-70 ml-0.5" />
-        </button>
+        {/* Right side controls: Action Mode Switcher & Deep Research */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Action Mode Switcher */}
+          <div className="flex items-center bg-slate-900/90 p-0.5 rounded-xl border border-purple-500/30 shadow-inner">
+            <button
+              type="button"
+              onClick={() => setActionMode('BUY')}
+              className={cn(
+                "px-2.5 py-1 text-xs font-mono font-semibold rounded-lg transition-all flex items-center gap-1 cursor-pointer",
+                actionMode === 'BUY'
+                  ? "bg-emerald-600 text-white shadow-xs font-bold ring-1 ring-emerald-400/40"
+                  : "text-slate-400 hover:text-slate-200"
+              )}
+              title="Set default action to Buy (Long / BTO)"
+            >
+              <TrendingUp className="w-3 h-3" />
+              <span>Buy (Long)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActionMode('SELL')}
+              className={cn(
+                "px-2.5 py-1 text-xs font-mono font-semibold rounded-lg transition-all flex items-center gap-1 cursor-pointer",
+                actionMode === 'SELL'
+                  ? "bg-amber-600 text-white shadow-xs font-bold ring-1 ring-amber-400/40"
+                  : "text-slate-400 hover:text-slate-200"
+              )}
+              title="Set default action to Sell (Short / STO)"
+            >
+              <TrendingDown className="w-3 h-3" />
+              <span>Sell (Short)</span>
+            </button>
+          </div>
+
+          {/* Research Link Shortcut */}
+          <button
+            type="button"
+            onClick={() => {
+              if (onNavigateToResearch) {
+                onNavigateToResearch(chain.symbol);
+              } else {
+                window.dispatchEvent(new CustomEvent('select-research-ticker', { detail: chain.symbol }));
+              }
+            }}
+            className="text-xs font-semibold px-2.5 py-1 rounded-lg border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 flex items-center gap-1 transition-all cursor-pointer"
+            title={`Deep-dive ${chain.symbol} in Research Options Chain`}
+          >
+            <Sparkles className="w-3 h-3 text-amber-300" />
+            <span>Deep Research</span>
+            <ExternalLink className="w-3 h-3 opacity-70 ml-0.5" />
+          </button>
+        </div>
       </div>
 
       {/* ================= EXPIRATION SELECTOR TABS ================= */}
@@ -204,11 +251,21 @@ export function OptionChainCard({
           <div className="col-span-5 text-left flex items-center gap-1 text-emerald-400 pl-1">
             <TrendingUp className="w-3.5 h-3.5" />
             <span>Calls (Bullish)</span>
+            {actionMode === 'SELL' && (
+              <Badge className="ml-1 text-[9px] px-1 py-0 bg-amber-500/20 text-amber-300 border-amber-500/40">
+                Short (STO)
+              </Badge>
+            )}
           </div>
           <div className="col-span-2 text-center text-amber-300 font-mono">
             <span>Strike</span>
           </div>
           <div className="col-span-5 text-right flex items-center justify-end gap-1 text-rose-400 pr-1">
+            {actionMode === 'SELL' && (
+              <Badge className="mr-1 text-[9px] px-1 py-0 bg-amber-500/20 text-amber-300 border-amber-500/40">
+                Short (STO)
+              </Badge>
+            )}
             <span>Puts (Bearish)</span>
             <TrendingDown className="w-3.5 h-3.5" />
           </div>
@@ -229,24 +286,66 @@ export function OptionChainCard({
               >
                 {/* CALLS (LEFT) */}
                 <div className="col-span-5 flex items-center gap-1.5 min-w-0">
-                  <button
-                    type="button"
-                    onClick={() => handleContractClick('BUY', 'CALL', row.strike, row.callSymbol, row.callPrice)}
-                    className="group/call flex-1 py-1 px-2 rounded-lg bg-emerald-950/40 hover:bg-emerald-600 border border-emerald-500/30 hover:border-emerald-400 text-left transition-all flex items-center justify-between cursor-pointer"
-                    title={`Click to draft Buy Order for ${chain.symbol} $${row.strike.toFixed(2)} Call${row.callPrice !== undefined ? ` at $${row.callPrice.toFixed(2)}` : ''}`}
-                  >
-                    <span className="font-mono text-xs font-semibold text-emerald-300 group-hover/call:text-white truncate flex items-center gap-1">
-                      <span>{row.callName}</span>
-                      {row.callPrice !== undefined && (
-                        <span className="text-[10px] text-emerald-400 font-mono font-normal opacity-90 group-hover/call:text-emerald-100">
-                          ${row.callPrice.toFixed(2)}
-                        </span>
-                      )}
-                    </span>
-                    <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 group-hover/call:bg-emerald-700 text-emerald-300 group-hover/call:text-white shrink-0 flex items-center gap-0.5">
-                      Draft {row.callPrice !== undefined ? `$${row.callPrice.toFixed(2)}` : ''} <ArrowRight className="w-2.5 h-2.5" />
-                    </span>
-                  </button>
+                  {actionMode === 'SELL' ? (
+                    <button
+                      type="button"
+                      onClick={() => handleContractClick('SELL', 'CALL', row.strike, row.callSymbol, row.callPrice)}
+                      className="group/call flex-1 py-1 px-2 rounded-lg bg-amber-950/40 hover:bg-amber-600 border border-amber-500/30 hover:border-amber-400 text-left transition-all flex items-center justify-between cursor-pointer"
+                      title={`Click to draft Short Order for ${chain.symbol} $${row.strike.toFixed(2)} Call${row.callPrice !== undefined ? ` at $${row.callPrice.toFixed(2)}` : ''}`}
+                    >
+                      <span className="font-mono text-xs font-semibold text-amber-300 group-hover/call:text-white truncate flex items-center gap-1">
+                        <span>{row.callName}</span>
+                        {row.callPrice !== undefined && (
+                          <span className="text-[10px] text-amber-400 font-mono font-normal opacity-90 group-hover/call:text-amber-100">
+                            ${row.callPrice.toFixed(2)}
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-amber-500/20 group-hover/call:bg-amber-700 text-amber-300 group-hover/call:text-white shrink-0 flex items-center gap-0.5">
+                        Draft Short {row.callPrice !== undefined ? `$${row.callPrice.toFixed(2)}` : ''} <ArrowRight className="w-2.5 h-2.5" />
+                      </span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleContractClick('BUY', 'CALL', row.strike, row.callSymbol, row.callPrice)}
+                      className="group/call flex-1 py-1 px-2 rounded-lg bg-emerald-950/40 hover:bg-emerald-600 border border-emerald-500/30 hover:border-emerald-400 text-left transition-all flex items-center justify-between cursor-pointer"
+                      title={`Click to draft Buy Order for ${chain.symbol} $${row.strike.toFixed(2)} Call${row.callPrice !== undefined ? ` at $${row.callPrice.toFixed(2)}` : ''}`}
+                    >
+                      <span className="font-mono text-xs font-semibold text-emerald-300 group-hover/call:text-white truncate flex items-center gap-1">
+                        <span>{row.callName}</span>
+                        {row.callPrice !== undefined && (
+                          <span className="text-[10px] text-emerald-400 font-mono font-normal opacity-90 group-hover/call:text-emerald-100">
+                            ${row.callPrice.toFixed(2)}
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 group-hover/call:bg-emerald-700 text-emerald-300 group-hover/call:text-white shrink-0 flex items-center gap-0.5">
+                        Draft {row.callPrice !== undefined ? `$${row.callPrice.toFixed(2)}` : ''} <ArrowRight className="w-2.5 h-2.5" />
+                      </span>
+                    </button>
+                  )}
+
+                  {/* Quick Alternate Action Button */}
+                  {actionMode === 'SELL' ? (
+                    <button
+                      type="button"
+                      onClick={() => handleContractClick('BUY', 'CALL', row.strike, row.callSymbol, row.callPrice)}
+                      className="px-1.5 py-1 rounded-md text-[10px] font-mono font-bold uppercase bg-emerald-500/15 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 hover:border-emerald-400 transition-all shrink-0 cursor-pointer"
+                      title={`Click to draft Buy Order for ${chain.symbol} $${row.strike.toFixed(2)} Call${row.callPrice !== undefined ? ` at $${row.callPrice.toFixed(2)}` : ''}`}
+                    >
+                      Buy
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleContractClick('SELL', 'CALL', row.strike, row.callSymbol, row.callPrice)}
+                      className="px-1.5 py-1 rounded-md text-[10px] font-mono font-bold uppercase bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 hover:border-amber-400 transition-all shrink-0 cursor-pointer"
+                      title={`Click to draft Short (Sell to Open) Order for ${chain.symbol} $${row.strike.toFixed(2)} Call${row.callPrice !== undefined ? ` at $${row.callPrice.toFixed(2)}` : ''}`}
+                    >
+                      Short
+                    </button>
+                  )}
 
                   {row.callSymbol && (
                     <button
@@ -296,24 +395,66 @@ export function OptionChainCard({
                     </button>
                   )}
 
-                  <button
-                    type="button"
-                    onClick={() => handleContractClick('BUY', 'PUT', row.strike, row.putSymbol, row.putPrice)}
-                    className="group/put flex-1 py-1 px-2 rounded-lg bg-rose-950/40 hover:bg-rose-600 border border-rose-500/30 hover:border-rose-400 text-right transition-all flex items-center justify-between cursor-pointer"
-                    title={`Click to draft Buy Order for ${chain.symbol} $${row.strike.toFixed(2)} Put${row.putPrice !== undefined ? ` at $${row.putPrice.toFixed(2)}` : ''}`}
-                  >
-                    <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-rose-500/20 group-hover/put:bg-rose-700 text-rose-300 group-hover/put:text-white shrink-0 flex items-center gap-0.5">
-                      <ArrowRight className="w-2.5 h-2.5 rotate-180" /> Draft {row.putPrice !== undefined ? `$${row.putPrice.toFixed(2)}` : ''}
-                    </span>
-                    <span className="font-mono text-xs font-semibold text-rose-300 group-hover/put:text-white truncate flex items-center justify-end gap-1">
-                      {row.putPrice !== undefined && (
-                        <span className="text-[10px] text-rose-400 font-mono font-normal opacity-90 group-hover/put:text-rose-100">
-                          ${row.putPrice.toFixed(2)}
-                        </span>
-                      )}
-                      <span>{row.putName}</span>
-                    </span>
-                  </button>
+                  {/* Quick Alternate Action Button */}
+                  {actionMode === 'SELL' ? (
+                    <button
+                      type="button"
+                      onClick={() => handleContractClick('BUY', 'PUT', row.strike, row.putSymbol, row.putPrice)}
+                      className="px-1.5 py-1 rounded-md text-[10px] font-mono font-bold uppercase bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 hover:border-rose-400 transition-all shrink-0 cursor-pointer"
+                      title={`Click to draft Buy Order for ${chain.symbol} $${row.strike.toFixed(2)} Put${row.putPrice !== undefined ? ` at $${row.putPrice.toFixed(2)}` : ''}`}
+                    >
+                      Buy
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleContractClick('SELL', 'PUT', row.strike, row.putSymbol, row.putPrice)}
+                      className="px-1.5 py-1 rounded-md text-[10px] font-mono font-bold uppercase bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 hover:border-amber-400 transition-all shrink-0 cursor-pointer"
+                      title={`Click to draft Short (Sell to Open) Order for ${chain.symbol} $${row.strike.toFixed(2)} Put${row.putPrice !== undefined ? ` at $${row.putPrice.toFixed(2)}` : ''}`}
+                    >
+                      Short
+                    </button>
+                  )}
+
+                  {actionMode === 'SELL' ? (
+                    <button
+                      type="button"
+                      onClick={() => handleContractClick('SELL', 'PUT', row.strike, row.putSymbol, row.putPrice)}
+                      className="group/put flex-1 py-1 px-2 rounded-lg bg-amber-950/40 hover:bg-amber-600 border border-amber-500/30 hover:border-amber-400 text-right transition-all flex items-center justify-between cursor-pointer"
+                      title={`Click to draft Short Order for ${chain.symbol} $${row.strike.toFixed(2)} Put${row.putPrice !== undefined ? ` at $${row.putPrice.toFixed(2)}` : ''}`}
+                    >
+                      <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-amber-500/20 group-hover/put:bg-amber-700 text-amber-300 group-hover/put:text-white shrink-0 flex items-center gap-0.5">
+                        <ArrowRight className="w-2.5 h-2.5 rotate-180" /> Draft Short {row.putPrice !== undefined ? `$${row.putPrice.toFixed(2)}` : ''}
+                      </span>
+                      <span className="font-mono text-xs font-semibold text-amber-300 group-hover/put:text-white truncate flex items-center justify-end gap-1">
+                        {row.putPrice !== undefined && (
+                          <span className="text-[10px] text-amber-400 font-mono font-normal opacity-90 group-hover/put:text-amber-100">
+                            ${row.putPrice.toFixed(2)}
+                          </span>
+                        )}
+                        <span>{row.putName}</span>
+                      </span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleContractClick('BUY', 'PUT', row.strike, row.putSymbol, row.putPrice)}
+                      className="group/put flex-1 py-1 px-2 rounded-lg bg-rose-950/40 hover:bg-rose-600 border border-rose-500/30 hover:border-rose-400 text-right transition-all flex items-center justify-between cursor-pointer"
+                      title={`Click to draft Buy Order for ${chain.symbol} $${row.strike.toFixed(2)} Put${row.putPrice !== undefined ? ` at $${row.putPrice.toFixed(2)}` : ''}`}
+                    >
+                      <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-rose-500/20 group-hover/put:bg-rose-700 text-rose-300 group-hover/put:text-white shrink-0 flex items-center gap-0.5">
+                        <ArrowRight className="w-2.5 h-2.5 rotate-180" /> Draft {row.putPrice !== undefined ? `$${row.putPrice.toFixed(2)}` : ''}
+                      </span>
+                      <span className="font-mono text-xs font-semibold text-rose-300 group-hover/put:text-white truncate flex items-center justify-end gap-1">
+                        {row.putPrice !== undefined && (
+                          <span className="text-[10px] text-rose-400 font-mono font-normal opacity-90 group-hover/put:text-rose-100">
+                            ${row.putPrice.toFixed(2)}
+                          </span>
+                        )}
+                        <span>{row.putName}</span>
+                      </span>
+                    </button>
+                  )}
                 </div>
               </div>
             );

@@ -17,6 +17,7 @@ export interface Env {
   TELEGRAM_ALERTS_CHAT_ID?: string; // Specific Alerts chat ID: -1003872409872
   TELEGRAM_ALERTS_THREAD_ID?: string | number; // Specific Alerts topic thread ID: 2
   TELEGRAM_APP_THREAD_ID?: string | number; // Specific App topic thread ID: 10
+  TELEGRAM_EXECUTION_THREAD_ID?: string | number; // Specific Execution topic thread ID
 }
 
 export interface SendTelegramMessageOptions {
@@ -117,6 +118,10 @@ export interface TelegramMessage {
   forum_topic_created?: {
     name: string;
     icon_color?: number;
+    icon_custom_emoji_id?: string;
+  };
+  forum_topic_edited?: {
+    name?: string;
     icon_custom_emoji_id?: string;
   };
   reply_to_message?: TelegramMessage;
@@ -230,8 +235,50 @@ export default {
         const voiceObj = msg.voice || msg.audio;
         const isVoice = Boolean(voiceObj && voiceObj.file_id);
         const messageText = (msg.text || msg.caption || '').trim();
+        const topicCreatedName = msg.forum_topic_created?.name || msg.forum_topic_edited?.name;
+
+        // Automatically store forum topic name in KV if topic was created or edited
+        if (topicCreatedName && msg.message_thread_id && env.APP_BUFFER) {
+          try {
+            await env.APP_BUFFER.put(`topic_name_${msg.chat.id}_${msg.message_thread_id}`, topicCreatedName);
+          } catch (e) {
+            console.error('Failed to cache topic name in KV:', e);
+          }
+        }
 
         if (!messageText && !isVoice) {
+          if (topicCreatedName) {
+            const nowMs = Date.now();
+            const storageKey = `msg_${nowMs}_topic_${msg.message_thread_id}`;
+            const topicRecord: BufferedTelegramMessage = {
+              id: storageKey,
+              messageId: msg.message_id || Math.floor(Math.random() * 1000000),
+              messageThreadId: msg.message_thread_id,
+              isTopicMessage: true,
+              topicName: topicCreatedName,
+              type: 'text',
+              text: `📌 Topic created: ${topicCreatedName}`,
+              date: msg.date || Math.floor(nowMs / 1000),
+              timestamp: new Date(msg.date ? msg.date * 1000 : nowMs).toISOString(),
+              sender: msg.from
+                ? {
+                    id: msg.from.id,
+                    username: msg.from.username,
+                    firstName: msg.from.first_name,
+                    lastName: msg.from.last_name,
+                  }
+                : undefined,
+              chat: {
+                id: msg.chat.id,
+                type: msg.chat.type,
+                title: msg.chat.title || msg.chat.first_name,
+              },
+            };
+            await env.APP_BUFFER.put(storageKey, JSON.stringify(topicRecord));
+            return new Response(JSON.stringify({ ok: true, topicRegistered: topicCreatedName }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
           return new Response(JSON.stringify({ ok: true, note: 'Empty text and no audio ignored' }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
@@ -245,10 +292,35 @@ export default {
         const isAlertsThread = msg.message_thread_id !== undefined && String(msg.message_thread_id) === alertsThreadIdStr;
         const appThreadIdStr = String(env.TELEGRAM_APP_THREAD_ID || '10');
         const isAppThread = msg.message_thread_id !== undefined && String(msg.message_thread_id) === appThreadIdStr;
-        const topicName =
+        const executionThreadIdStr = env.TELEGRAM_EXECUTION_THREAD_ID ? String(env.TELEGRAM_EXECUTION_THREAD_ID) : undefined;
+        const isExecutionThread = msg.message_thread_id !== undefined && executionThreadIdStr !== undefined && String(msg.message_thread_id) === executionThreadIdStr;
+
+        // Try reading cached topic name from KV if available
+        let cachedTopicName: string | null = null;
+        if (msg.message_thread_id && env.APP_BUFFER) {
+          try {
+            cachedTopicName = await env.APP_BUFFER.get(`topic_name_${msg.chat.id}_${msg.message_thread_id}`);
+          } catch {
+            // ignore
+          }
+        }
+
+        const rawTopicName =
           msg.forum_topic_created?.name ||
           msg.reply_to_message?.forum_topic_created?.name ||
-          (isAppThread ? 'App' : (isAlertsThread ? 'Alerts' : undefined));
+          cachedTopicName ||
+          (isExecutionThread ? 'Execution' : (isAppThread ? 'App' : (isAlertsThread ? 'Alerts' : undefined)));
+
+        // If message text contains execution keywords or tags, also remember topic as Execution
+        const topicName = (isExecutionThread || (rawTopicName && /execution/i.test(rawTopicName)))
+          ? 'Execution'
+          : rawTopicName;
+
+        if (topicName && msg.message_thread_id && env.APP_BUFFER && !cachedTopicName) {
+          try {
+            await env.APP_BUFFER.put(`topic_name_${msg.chat.id}_${msg.message_thread_id}`, topicName);
+          } catch {}
+        }
 
         const bufferRecord: BufferedTelegramMessage = {
           id: storageKey,

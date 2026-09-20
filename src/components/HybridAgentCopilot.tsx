@@ -993,16 +993,30 @@ export function HybridAgentCopilot({ isOpen, onOpenChange, onNavigateToLog }: Hy
                       )}
 
                       {/* Interactive Option Chain Card */}
-                      {msg.optionChain && (
-                        <OptionChainCard
-                          initialChain={msg.optionChain}
-                          chain={msg.optionChain}
-                          onSelectContract={(action, type, strike, expiration, contractSymbol, price) => {
-                            const priceStr = price !== undefined ? ` at $${price.toFixed(2)} limit` : ' at $1.50 limit';
-                            handleSend(`Draft a limit buy order for 1 contract of ${msg.optionChain?.symbol} ${expiration} $${strike} ${type}${priceStr}`);
-                          }}
-                        />
-                      )}
+                      {msg.optionChain && (() => {
+                        const prevUserMsg = messages.slice(0, idx).reverse().find(m => m.role === 'user');
+                        const isShortDefault = prevUserMsg && /\b(short|sell|credit|sto)\b/i.test(prevUserMsg.content || '');
+
+                        return (
+                          <OptionChainCard
+                            initialChain={msg.optionChain}
+                            chain={msg.optionChain}
+                            defaultAction={isShortDefault ? 'SELL' : 'BUY'}
+                            onSelectContract={(action, type, strike, expiration, contractSymbol, price) => {
+                              const isShort = action === 'SELL';
+                              const actionPhrase = isShort ? 'sell to open (short)' : 'limit buy';
+                              const priceStr = price !== undefined ? ` at $${price.toFixed(2)} limit` : ' at $1.50 limit';
+                              handleSend(`Draft a ${actionPhrase} order for 1 contract of ${msg.optionChain?.symbol} ${expiration} $${strike} ${type}${priceStr}`);
+                            }}
+                            onSelectStrike={(strike, type, symbol, expiration, price, action) => {
+                              const isShort = action === 'SELL';
+                              const actionPhrase = isShort ? 'sell to open (short)' : 'limit buy';
+                              const priceStr = price !== undefined ? ` at $${price.toFixed(2)} limit` : ' at $1.50 limit';
+                              handleSend(`Draft a ${actionPhrase} order for 1 contract of ${symbol} ${expiration || ''} $${strike} ${type}${priceStr}`);
+                            }}
+                          />
+                        );
+                      })()}
 
                       {/* Action Bar for Agent Answers */}
                       {!isUser && msg.id !== 'welcome' && (
@@ -1159,21 +1173,5 @@ export function HybridAgentCopilot({ isOpen, onOpenChange, onNavigateToLog }: Hy
   );
 }
 
-// Floating button to summon Copilot from any view in the app
-export function HybridAgentFloatingTrigger({ onOpen }: { onOpen: () => void }) {
-  return (
-    <button
-      onClick={onOpen}
-      className="fixed bottom-6 right-6 z-40 flex items-center gap-2.5 px-4 py-2.5 rounded-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-medium text-xs sm:text-sm shadow-xl shadow-indigo-600/30 hover:shadow-indigo-600/50 hover:scale-105 active:scale-95 transition-all duration-200 border border-indigo-400/30 group"
-      title="Open TradeFlow Hybrid AI Copilot"
-    >
-      <div className="relative">
-        <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
-      </div>
-      <span className="font-semibold tracking-wide">AI Copilot</span>
-      <Badge className="bg-white/20 text-white text-[9px] px-1.5 py-0 border-none font-mono">
-        Hybrid
-      </Badge>
-    </button>
-  );
-}
+export { HybridAgentFloatingTrigger } from './HybridAgentFloatingTrigger';
+

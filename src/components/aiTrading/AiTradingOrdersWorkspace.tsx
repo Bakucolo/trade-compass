@@ -15,7 +15,10 @@ import {
   ArrowRight,
   Filter,
   Layers,
-  Inbox
+  Inbox,
+  Scale,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -23,6 +26,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { StagedDraftOrder, approveDraftOrder, cancelDraftOrder } from '@/services/tastytrade';
+import { BuyingPowerComparisonCard } from './BuyingPowerComparisonCard';
 import { SupportedBroker } from './AiTradingBrokerBar';
 
 export interface UnifiedOrder {
@@ -53,6 +57,7 @@ export const AiTradingOrdersWorkspace: React.FC<AiTradingOrdersWorkspaceProps> =
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [statusFilter, setStatusFilter] = useState<'all' | 'drafts' | 'live' | 'filled' | 'cancelled'>('all');
   const [processingDraftId, setProcessingDraftId] = useState<string | null>(null);
+  const [expandedBpDraftId, setExpandedBpDraftId] = useState<string | null>(null);
 
   // Fetch drafts from backend
   const fetchDrafts = async () => {
@@ -321,9 +326,20 @@ export const AiTradingOrdersWorkspace: React.FC<AiTradingOrdersWorkspaceProps> =
 
                       {/* Action buttons */}
                       <div className="flex items-center justify-between pt-1 border-t border-border/40">
-                        <span className="text-[10px] font-mono text-muted-foreground">
-                          Broker: <strong className="text-foreground capitalize">{draft.broker || activeBroker}</strong>
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] font-mono text-muted-foreground">
+                            Broker: <strong className="text-foreground capitalize">{draft.broker || activeBroker}</strong>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedBpDraftId(expandedBpDraftId === draft.draftId ? null : draft.draftId)}
+                            className="inline-flex items-center gap-1 text-[10px] font-mono font-semibold text-primary hover:text-primary/80 transition-colors ml-1 bg-primary/10 px-1.5 py-0.5 rounded border border-primary/20"
+                          >
+                            <Scale className="w-2.5 h-2.5" />
+                            <span>Buying Power</span>
+                            {expandedBpDraftId === draft.draftId ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
+                          </button>
+                        </div>
 
                         <div className="flex items-center gap-2">
                           <Button
@@ -345,6 +361,20 @@ export const AiTradingOrdersWorkspace: React.FC<AiTradingOrdersWorkspaceProps> =
                           </Button>
                         </div>
                       </div>
+
+                      {/* Expandable Buying Power Side-by-Side Comparison */}
+                      {expandedBpDraftId === draft.draftId && (
+                        <div className="pt-2">
+                          <BuyingPowerComparisonCard
+                            draft={draft}
+                            comparison={draft.buyingPowerComparison}
+                            onBrokerSwitched={(updatedDraft) => {
+                              setDrafts((prev) => prev.map((d) => d.draftId === updatedDraft.draftId ? updatedDraft : d));
+                              fetchDrafts();
+                            }}
+                          />
+                        </div>
+                      )}
                     </div>
                   );
                 })}

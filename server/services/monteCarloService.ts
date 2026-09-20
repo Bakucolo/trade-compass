@@ -11,10 +11,12 @@ export interface CompanyBaselines {
   currentPrice: number;
   revenue: number;
   revenueBillions: number;
+  revenueMillions: number;
   operatingMargin: number;
   profitMargin: number;
   sharesOutstanding: number;
   sharesOutstandingBillions: number;
+  sharesOutstandingMillions: number;
   freeCashFlow: number;
   fcfBillions: number;
   trailingPE: number;
@@ -22,6 +24,7 @@ export interface CompanyBaselines {
   revenueGrowth: number;
   beta: number;
   marketCap: number;
+  isPreProfit?: boolean;
 }
 
 const baselinesCache = new Map<string, { data: CompanyBaselines; timestamp: number }>();
@@ -54,16 +57,29 @@ export async function getCompanyBaselines(ticker: string): Promise<CompanyBaseli
   const operatingMargin = financialsModule?.operatingMargins != null ? Number(financialsModule.operatingMargins) * 100 : 20.0;
   const profitMargin = financialsModule?.profitMargins != null ? Number(financialsModule.profitMargins) * 100 : 15.0;
   const revGrowth = financialsModule?.revenueGrowth != null ? Number(financialsModule.revenueGrowth) * 100 : 10.0;
-  const trailingPE = detailModule?.trailingPE != null ? Number(detailModule.trailingPE) : (detailModule?.forwardPE != null ? Number(detailModule.forwardPE) : 22.0);
-  const forwardPE = detailModule?.forwardPE != null ? Number(detailModule.forwardPE) : trailingPE;
   const beta = Number(statsModule?.beta || 1.0);
   const name = priceModule?.shortName || priceModule?.longName || cleanTicker;
   const currency = priceModule?.currency || 'USD';
 
-  // If revenue is in billions, provide shares in billions so units align nicely
-  const revenueBillions = Number((revenue / 1e9).toFixed(2));
-  const sharesOutstandingBillions = Number((sharesOutstanding / 1e9).toFixed(3));
-  const fcfBillions = Number((fcf / 1e9).toFixed(2));
+  // Sanitize P/E: Negative P/E (like SATL's -170.3) or extreme outliers are invalid exit multiples
+  const rawTrailingPE = detailModule?.trailingPE != null ? Number(detailModule.trailingPE) : null;
+  const rawForwardPE = detailModule?.forwardPE != null ? Number(detailModule.forwardPE) : null;
+  const isPreProfit = (rawTrailingPE !== null && rawTrailingPE <= 0) || (profitMargin <= 0 && operatingMargin <= 5);
+
+  const validForwardPE = (rawForwardPE !== null && rawForwardPE > 4 && rawForwardPE < 120) ? rawForwardPE : null;
+  const validTrailingPE = (rawTrailingPE !== null && rawTrailingPE > 4 && rawTrailingPE < 120) ? rawTrailingPE : null;
+  // Fallback to institutional market multiple 22.0x if company has negative or missing earnings
+  const defaultExitPE = validForwardPE || validTrailingPE || 22.0;
+
+  const trailingPE = Number(defaultExitPE.toFixed(1));
+  const forwardPE = Number((validForwardPE || defaultExitPE).toFixed(1));
+
+  // Maintain 4 decimal precision for small-caps where revenue is < 1B (e.g. $31.9M is 0.0319B)
+  const revenueBillions = Number((revenue / 1e9).toFixed(4));
+  const revenueMillions = Number((revenue / 1e6).toFixed(2));
+  const sharesOutstandingBillions = Number((sharesOutstanding / 1e9).toFixed(4));
+  const sharesOutstandingMillions = Number((sharesOutstanding / 1e6).toFixed(2));
+  const fcfBillions = Number((fcf / 1e9).toFixed(4));
 
   const result: CompanyBaselines = {
     ticker: cleanTicker,
@@ -72,17 +88,20 @@ export async function getCompanyBaselines(ticker: string): Promise<CompanyBaseli
     currentPrice: Number(currentPrice.toFixed(2)),
     revenue,
     revenueBillions,
+    revenueMillions,
     operatingMargin: Number(operatingMargin.toFixed(1)),
     profitMargin: Number(profitMargin.toFixed(1)),
     sharesOutstanding,
     sharesOutstandingBillions,
+    sharesOutstandingMillions,
     freeCashFlow: fcf,
     fcfBillions,
-    trailingPE: Number(trailingPE.toFixed(1)),
-    forwardPE: Number(forwardPE.toFixed(1)),
+    trailingPE,
+    forwardPE,
     revenueGrowth: Number(revGrowth.toFixed(1)),
     beta: Number(beta.toFixed(2)),
     marketCap,
+    isPreProfit,
   };
 
   baselinesCache.set(cleanTicker, { data: result, timestamp: Date.now() });

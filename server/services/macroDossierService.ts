@@ -175,7 +175,7 @@ export async function runMacroDossierAgent(
   const gdp = findFred('GDPC1', 23150);
 
   const liveVix = vixQuote.price || findFred('VIXCLS', 15.42);
-  const liveDxy = dxyQuote.price || findFred('DTWEXBGS', 103.80);
+  const liveDxy = dxyQuote.price || 100.26;
   const liveOil = oilQuote.price || findFred('DCOILWTICO', 71.40);
   const liveGold = goldQuote.price || findFred('GOLDAMGBD228NLBM', 2735.40);
 

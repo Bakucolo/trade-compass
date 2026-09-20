@@ -210,5 +210,101 @@ describe('Option Chain Copilot Styling & Matrix', () => {
         0.65
       );
     });
+
+    it('triggers onSelectContract with action "SELL" when clicking dedicated Short button on a Call or Put row', () => {
+      const onSelect = vi.fn();
+      render(<OptionChainCard initialChain={mockOptionChainData} onSelectContract={onSelect} />);
+
+      // Find the Short button for $28.00 Call
+      const shortCallBtn = screen.getByTitle(/Click to draft Short \(Sell to Open\) Order for KVYO \$28.00 Call/i);
+      expect(shortCallBtn).toBeInTheDocument();
+      fireEvent.click(shortCallBtn);
+
+      expect(onSelect).toHaveBeenCalledWith(
+        'SELL',
+        'CALL',
+        28.0,
+        '2026-10-16',
+        'KVYO261016C00028000'
+      );
+
+      // Find the Short button for $28.00 Put
+      const shortPutBtn = screen.getByTitle(/Click to draft Short \(Sell to Open\) Order for KVYO \$28.00 Put/i);
+      expect(shortPutBtn).toBeInTheDocument();
+      fireEvent.click(shortPutBtn);
+
+      expect(onSelect).toHaveBeenCalledWith(
+        'SELL',
+        'PUT',
+        28.0,
+        '2026-10-16',
+        'KVYO261016P00028000'
+      );
+    });
+
+    it('switches between Buy and Sell modes via header toggle and updates primary buttons', () => {
+      const onSelect = vi.fn();
+      render(<OptionChainCard initialChain={mockOptionChainData} onSelectContract={onSelect} />);
+
+      // Initially in Buy mode
+      const sellToggle = screen.getByTitle(/Set default action to Sell \(Short \/ STO\)/i);
+      fireEvent.click(sellToggle);
+
+      // Now Short mode is active; header should have Short badges
+      expect(screen.getAllByText(/Short \(STO\)/i).length).toBeGreaterThanOrEqual(1);
+
+      // In Short mode, the primary button drafts Short orders
+      const primaryShortCallBtn = screen.getByTitle(/Click to draft Short Order for KVYO \$28.00 Call/i);
+      expect(primaryShortCallBtn).toBeInTheDocument();
+      fireEvent.click(primaryShortCallBtn);
+
+      expect(onSelect).toHaveBeenCalledWith(
+        'SELL',
+        'CALL',
+        28.0,
+        '2026-10-16',
+        'KVYO261016C00028000'
+      );
+
+      // Quick Buy button should be present in Short mode
+      const quickBuyBtn = screen.getByTitle(/Click to draft Buy Order for KVYO \$28.00 Call/i);
+      expect(quickBuyBtn).toBeInTheDocument();
+      fireEvent.click(quickBuyBtn);
+
+      expect(onSelect).toHaveBeenCalledWith(
+        'BUY',
+        'CALL',
+        28.0,
+        '2026-10-16',
+        'KVYO261016C00028000'
+      );
+    });
+
+    it('honors defaultAction="SELL" and passes action parameter to onSelectStrike', () => {
+      const onSelectStrike = vi.fn();
+      render(
+        <OptionChainCard
+          initialChain={mockOptionChainData}
+          defaultAction="SELL"
+          onSelectStrike={onSelectStrike}
+        />
+      );
+
+      // Verify initialized in Short mode
+      expect(screen.getAllByText(/Short \(STO\)/i).length).toBeGreaterThanOrEqual(1);
+
+      // Click primary short call button
+      const shortCallBtn = screen.getByTitle(/Click to draft Short Order for KVYO \$28.00 Call/i);
+      fireEvent.click(shortCallBtn);
+
+      expect(onSelectStrike).toHaveBeenCalledWith(
+        28.0,
+        'Call',
+        'KVYO',
+        '2026-10-16',
+        undefined,
+        'SELL'
+      );
+    });
   });
 });

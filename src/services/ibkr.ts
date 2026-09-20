@@ -63,3 +63,75 @@ export const useIBKRPortfolio = () => {
         refetchInterval: 2000, // Frequent updates for live positions
     });
 };
+
+export interface IBKRClientPortalStatus {
+    connected: boolean;
+    authenticated: boolean;
+    gatewayUrl: string;
+    environment: string;
+    paperAccountId: string;
+    lastTickleTimestamp: string | null;
+    lastHeartbeatSuccess: boolean;
+    tickleIntervalMs: number;
+    heartbeatActive: boolean;
+    serverTime?: number;
+    error?: string;
+}
+
+export const fetchIBKRClientPortalStatus = async (): Promise<IBKRClientPortalStatus> => {
+    const response = await fetch(`${API_BASE}/ibkr/status`);
+    if (!response.ok) {
+        throw new Error('Failed to fetch IBKR Client Portal status');
+    }
+    return response.json();
+};
+
+export const triggerIBKRTickle = async (): Promise<{ success: boolean; session: any }> => {
+    const response = await fetch(`${API_BASE}/ibkr/tickle`, { method: 'POST' });
+    if (!response.ok) {
+        throw new Error('Failed to send tickle heartbeat');
+    }
+    return response.json();
+};
+
+export const useIBKRClientPortalStatus = () => {
+    return useQuery({
+        queryKey: ['ibkrClientPortalStatus'],
+        queryFn: fetchIBKRClientPortalStatus,
+        refetchInterval: 15000, // Query backend session status every 15s
+    });
+};
+
+export const fetchIBKRAccounts = async (): Promise<any[]> => {
+    const response = await fetch(`${API_BASE}/ibkr/accounts`);
+    if (!response.ok) {
+        throw new Error('Failed to fetch IBKR accounts');
+    }
+    return response.json();
+};
+
+export const useIBKRAccounts = () => {
+    return useQuery({
+        queryKey: ['ibkrAccounts'],
+        queryFn: fetchIBKRAccounts,
+        staleTime: 60000,
+    });
+};
+
+export const fetchIBKRSummary = async (accountId?: string): Promise<any> => {
+    const url = accountId ? `${API_BASE}/ibkr/summary?accountId=${encodeURIComponent(accountId)}` : `${API_BASE}/ibkr/summary`;
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error('Failed to fetch IBKR account summary');
+    }
+    return response.json();
+};
+
+export const useIBKRSummary = (accountId?: string) => {
+    return useQuery({
+        queryKey: ['ibkrSummary', accountId],
+        queryFn: () => fetchIBKRSummary(accountId),
+        refetchInterval: 30000,
+    });
+};
+

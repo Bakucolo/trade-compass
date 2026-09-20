@@ -21,6 +21,18 @@ process.on('uncaughtException', (err) => {
 import { PrismaClient } from '@prisma/client';
 import { fetchTastyPositions, fetchTastyBalances, fetchTastyAccountInfo, getTastyConfigSummary } from './services/tastytradeService';
 import { executeApprovedDraft, cancelDraft, getDraftOrder, getAllDraftOrders, runTastyCopilotAgent } from './services/tastytradeToolService';
+import {
+  startIbkrTickleDaemon,
+  stopIbkrTickleDaemon,
+  getIbkrSessionStatus,
+  tickleIbkrGateway,
+  reauthenticateIbkrGateway,
+  fetchIbkrAccounts,
+  fetchIbkrAccountSummary,
+  fetchIbkrPositions,
+  fetchIbkrOrders,
+  getIbkrConfig
+} from './services/ibkrService';
 import { fetchLiveOptionChains, buildOptionPricingContext, validateAndEnforcePlanPricing } from './services/optionDefenseService';
 import { runPortfolioAuditAgent, savePortfolioAuditToDb, listPortfolioAuditsFromDb, getPortfolioAuditByIdFromDb, deletePortfolioAuditFromDb } from './services/portfolioAnalyserService';
 import { agentActivityTracker } from './services/agentActivityService';
@@ -88,7 +100,16 @@ import {
   getScorecardsHubData,
   evaluateStockScorecard,
   compareStockScorecards,
+  refreshSingleStockScorecard,
+  analyzeLatestEarningsForStock,
 } from './services/scorecardService';
+import {
+  startScorecardWorker,
+  pauseScorecardWorker,
+  stopScorecardWorker,
+  resumeScorecardWorker,
+  getScorecardWorkerStatus,
+} from './services/scorecardWorkerService';
 import {
   fetchTrading212Cash,
   fetchTrading212AccountInfo,
@@ -116,10 +137,14 @@ import {
 import {
   consumeTelegramBuffer,
   getTelegramBufferStatus,
+  setTelegramExecutionThreadId,
 } from './services/telegramBufferConsumerService';
+import { getAiRatingForStock } from './services/aiRatingService';
+import { calculatePortfolioDividendIncome } from './services/portfolioDividendIncomeService';
 import { createAppIdeaRouter } from './routes/appIdeaRoutes';
 import { createMonteCarloRouter } from './routes/monteCarloRoutes';
 import { createAiTradingRouter } from './routes/aiTradingRoutes';
+import { createPositionFolderRouter } from './routes/positionFolderRoutes';
 import { autoCreateAlertsFromText } from './services/thoughtLogAlertService';
 import { SYMBOL_ALIASES, resolveYahooFinanceSymbol } from './services/tickerResolutionService';
 import { KNOWN_COMPANY_NAMES, getKnownCompanyName } from './services/commonTickers';
@@ -148,20 +173,57 @@ import {
   generateExecutionPlanPdfBuffer,
   sendExecutionPlanPdfToTelegram,
 } from './services/plannedTradeService';
+import { proposeTradeEntryLevels } from './services/tradeEntryAgentService';
 
 const prisma = new PrismaClient({
   log: ['error'],
 });
 
-// Configure SQLite for high concurrency / WAL mode
+// Configure SQLite for high concurrency / WAL mode with optimized in-memory caching and zero-copy mmap
 prisma.$queryRawUnsafe(`PRAGMA journal_mode = WAL;`)
-  .then(() => prisma.$queryRawUnsafe(`PRAGMA busy_timeout = 10000;`))
+  .then(() => prisma.$queryRawUnsafe(`PRAGMA synchronous = NORMAL;`))
+  .then(() => prisma.$queryRawUnsafe(`PRAGMA busy_timeout = 15000;`))
+  .then(() => prisma.$queryRawUnsafe(`PRAGMA cache_size = -64000;`)) // 64MB memory page cache
+  .then(() => prisma.$queryRawUnsafe(`PRAGMA temp_store = MEMORY;`))
+  .then(() => prisma.$queryRawUnsafe(`PRAGMA mmap_size = 268435456;`)) // 256MB memory map
   .catch(err => console.error('Failed to set SQLite PRAGMA:', err));
 const app = express();
 const port = 3000;
 
-app.use(cors());
-app.use(express.json());
+// Security Headers Middleware
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-XSS-Protection', '0');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
+// Hardened CORS Origin Whitelist
+const ALLOWED_ORIGINS = new Set([
+  'http://localhost:8080',
+  'http://127.0.0.1:8080',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL.replace(/\/+$/, '')] : []),
+  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : [])
+]);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || ALLOWED_ORIGINS.has(origin) || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS blocked for unauthorized origin: ${origin}`));
+    }
+  },
+  credentials: true,
+}));
+
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -173,6 +235,7 @@ app.use((req, res, next) => {
 app.use('/api/quant/monte-carlo', createMonteCarloRouter());
 app.use('/api/app-ideas', createAppIdeaRouter(prisma));
 app.use('/api/ai-trading', createAiTradingRouter());
+app.use('/api/position-folders', createPositionFolderRouter(prisma));
 
 // IBKR Connection Settings & Account Numbers
 export const IBKR_ISA_ACCOUNT = 'U14522424';
@@ -1568,6 +1631,83 @@ app.post('/api/tastytrade/orders/cancel-draft', (req, res) => {
 });
 
 // ==========================================
+// INTERACTIVE BROKERS CLIENT PORTAL API GATEWAY (REST)
+// ==========================================
+
+// GET /api/ibkr/status - Heartbeat & session status
+app.get('/api/ibkr/status', (req, res) => {
+  try {
+    const status = getIbkrSessionStatus();
+    res.json(status);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/ibkr/tickle - Manual heartbeat trigger
+app.post('/api/ibkr/tickle', async (req, res) => {
+  try {
+    const result = await tickleIbkrGateway();
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/ibkr/reauthenticate - Re-authenticate gateway session
+app.post('/api/ibkr/reauthenticate', async (req, res) => {
+  try {
+    const result = await reauthenticateIbkrGateway();
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/ibkr/accounts - Available portfolio accounts
+app.get('/api/ibkr/accounts', async (req, res) => {
+  try {
+    const accounts = await fetchIbkrAccounts();
+    res.json(accounts);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/ibkr/summary - Account summary, NLV, margin & buying power
+app.get('/api/ibkr/summary', async (req, res) => {
+  try {
+    const accountId = req.query.accountId as string;
+    const summary = await fetchIbkrAccountSummary(accountId);
+    res.json(summary);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/ibkr/positions - Open portfolio positions
+app.get('/api/ibkr/positions', async (req, res) => {
+  try {
+    const accountId = req.query.accountId as string;
+    const pageId = req.query.pageId ? parseInt(String(req.query.pageId), 10) : 0;
+    const positions = await fetchIbkrPositions(accountId, pageId);
+    res.json(positions);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/ibkr/orders - Live / recent orders
+app.get('/api/ibkr/orders', async (req, res) => {
+  try {
+    const orders = await fetchIbkrOrders();
+    res.json(orders);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
 // TRADING 212 REST API INTEGRATION
 // ==========================================
 app.get('/api/trading212/status', async (req, res) => {
@@ -1997,6 +2137,34 @@ app.get('/api/portfolio/quotes', async (req, res) => {
   }
 });
 
+// ==========================================
+// PORTFOLIO EXPECTED DIVIDEND INCOME & RAISE API
+// ==========================================
+
+// GET /api/portfolio/dividend-income
+app.get('/api/portfolio/dividend-income', async (req, res) => {
+  try {
+    const forceRefresh = req.query.refresh === 'true';
+    const report = await calculatePortfolioDividendIncome({ forceRefresh });
+    res.json({ success: true, data: report });
+  } catch (error: any) {
+    console.error('Error in GET /api/portfolio/dividend-income:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /api/portfolio/dividend-income/calculate
+app.post('/api/portfolio/dividend-income/calculate', async (req, res) => {
+  try {
+    const { forceRefresh, overrides } = req.body || {};
+    const report = await calculatePortfolioDividendIncome({ forceRefresh, overrides });
+    res.json({ success: true, data: report });
+  } catch (error: any) {
+    console.error('Error in POST /api/portfolio/dividend-income/calculate:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.post('/api/market-data/batch', async (req, res) => {
   try {
     const { symbols = [] } = req.body;
@@ -2070,6 +2238,86 @@ app.post('/api/scorecards/compare', async (req, res) => {
     res.json(comparison);
   } catch (error: any) {
     logToFile(`Error in POST /api/scorecards/compare: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/scorecards/worker/status - Get sequential scorecard queue status & progress
+app.get('/api/scorecards/worker/status', (req, res) => {
+  try {
+    const status = getScorecardWorkerStatus();
+    res.json(status);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/scorecards/worker/start - Start or restart sequential one-by-one analysis
+app.post('/api/scorecards/worker/start', async (req, res) => {
+  try {
+    const { forceRefresh = false } = req.body || {};
+    const result = await startScorecardWorker(prisma, { forceRefresh: Boolean(forceRefresh) });
+    res.json(result);
+  } catch (error: any) {
+    logToFile(`Error starting scorecard worker: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/scorecards/worker/pause - Pause the sequential analysis
+app.post('/api/scorecards/worker/pause', (req, res) => {
+  try {
+    const result = pauseScorecardWorker();
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/scorecards/worker/resume - Resume paused sequential analysis
+app.post('/api/scorecards/worker/resume', async (req, res) => {
+  try {
+    const result = await resumeScorecardWorker(prisma);
+    res.json(result);
+  } catch (error: any) {
+    logToFile(`Error resuming scorecard worker: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/scorecards/worker/stop - Cancel sequential analysis
+app.post('/api/scorecards/worker/stop', (req, res) => {
+  try {
+    const result = stopScorecardWorker();
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/scorecards/refresh/:symbol - Refresh a single stock on demand
+app.post('/api/scorecards/refresh/:symbol', async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const scorecard = await refreshSingleStockScorecard(symbol, prisma);
+    if (!scorecard) {
+      return res.status(404).json({ error: `Could not evaluate scorecard for ${symbol}` });
+    }
+    res.json(scorecard);
+  } catch (error: any) {
+    logToFile(`Error in POST /api/scorecards/refresh/${req.params.symbol}: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/scorecards/analyze-earnings/:symbol - Run AI agent to analyze company's latest quarterly earnings
+app.post('/api/scorecards/analyze-earnings/:symbol', async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const result = await analyzeLatestEarningsForStock(symbol);
+    res.json(result);
+  } catch (error: any) {
+    logToFile(`Error in POST /api/scorecards/analyze-earnings/${req.params.symbol}: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -2197,7 +2445,7 @@ app.get('/api/macro/overview', async (req, res) => {
       '^VIX': 15.42, '^VVIX': 98.40, '^VXN': 18.20, '^RVX': 22.10, '^GVZ': 14.50, '^OVX': 32.10,
       'TLT': 91.50, 'IEF': 94.20, 'HYG': 78.40, 'LQD': 108.50, 'BND': 72.80,
       '^GSPC': 5850.25, '^IXIC': 18720.50, '^DJI': 42800.10, '^RUT': 2240.80, '^FTSE': 8340.50, '^GDAXI': 19450.20, '^N225': 38900.00, 'EEM': 44.80,
-      'DX-Y.NYB': 103.80, 'EURUSD=X': 1.0820, 'GBPUSD=X': 1.2950, 'USDJPY=X': 152.40, 'USDCAD=X': 1.3850, 'AUDUSD=X': 0.6580, 'USDCHF=X': 0.8650, 'BTC-USD': 68200.00, 'ETH-USD': 2550.00,
+      'DX-Y.NYB': 100.26, 'EURUSD=X': 1.0820, 'GBPUSD=X': 1.2950, 'USDJPY=X': 152.40, 'USDCAD=X': 1.3850, 'AUDUSD=X': 0.6580, 'USDCHF=X': 0.8650, 'BTC-USD': 68200.00, 'ETH-USD': 2550.00,
       'GC=F': 2735.40, 'SI=F': 32.60, 'HG=F': 4.35, 'PL=F': 980.00, 'URA': 31.20,
       'CL=F': 71.40, 'BZ=F': 75.20, 'NG=F': 2.35, 'RB=F': 2.05, 'XLE': 89.40
     };
@@ -2295,9 +2543,9 @@ app.get('/api/macro/overview', async (req, res) => {
     const isCurveInverted = spread2y10y < 0;
 
     // Macro Regime Assessment
-    const vixVal = combinedAll.find((r: any) => r.symbol === '^VIX' || r.symbol === 'VIXCLS')?.price || 15.4;
-    const dxyVal = combinedAll.find((r: any) => r.symbol === 'DX-Y.NYB' || r.symbol === 'DTWEXBGS')?.price || 103.8;
-    const oilVal = combinedAll.find((r: any) => r.symbol === 'CL=F' || r.symbol === 'DCOILWTICO')?.price || 71.4;
+    const vixVal = combinedAll.find((r: any) => r.symbol === '^VIX')?.price || combinedAll.find((r: any) => r.symbol === 'VIXCLS')?.price || 15.4;
+    const dxyVal = combinedAll.find((r: any) => r.symbol === 'DX-Y.NYB')?.price || 100.26;
+    const oilVal = combinedAll.find((r: any) => r.symbol === 'CL=F')?.price || combinedAll.find((r: any) => r.symbol === 'DCOILWTICO')?.price || 71.4;
 
     let regimeTitle = 'Goldilocks & Balanced Rotation';
     let regimeDescription = 'Macro volatility is moderate with stable sovereign yields and balanced risk-reward posture.';
@@ -2843,6 +3091,51 @@ app.post('/api/arbitrage/odd-lot-tenders/save-watchlist', async (req, res) => {
     res.json({ success: true, ...result });
   } catch (error: any) {
     logToFile(`[OddLotTender] Error saving to watchlist: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==========================================
+// MULTI-LLM AI STOCK RATING & CONSENSUS API
+// ==========================================
+
+// GET /api/research/ai-rating/:ticker - Multi-LLM consensus rating and conviction
+app.get('/api/research/ai-rating/:ticker', async (req, res) => {
+  const ticker = req.params.ticker.toUpperCase();
+  const task = agentActivityTracker.startTask({
+    agentName: 'Multi-LLM Consensus Analyst',
+    agentType: 'STOCK_ANALYSIS',
+    taskDescription: `Querying diverse LLM panel for consensus rating and conviction on ${ticker}`,
+    targetSymbol: ticker,
+  });
+
+  try {
+    logToFile(`[AiRating] Synthesizing multi-LLM consensus rating for ${ticker}...`);
+    const consensus = await getAiRatingForStock(ticker);
+    agentActivityTracker.completeTask(task.id, {
+      status: 'SUCCESS',
+      outcomeSummary: `Consensus: ${consensus.consensusRating} (${consensus.blendedConviction}/10) from ${consensus.modelResults.filter(m => m.success).length} models.`,
+    });
+    res.json(consensus);
+  } catch (error: any) {
+    logToFile(`[AiRating] Error analyzing ${ticker}: ${error.message}`);
+    agentActivityTracker.completeTask(task.id, {
+      status: 'FAILED',
+      outcomeSummary: `Analysis failed: ${error.message}`,
+    });
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/research/ai-rating/:ticker - Multi-LLM consensus rating
+app.post('/api/research/ai-rating/:ticker', async (req, res) => {
+  const ticker = req.params.ticker.toUpperCase();
+  try {
+    logToFile(`[AiRating] POST multi-LLM rating request for ${ticker}...`);
+    const consensus = await getAiRatingForStock(ticker);
+    res.json(consensus);
+  } catch (error: any) {
+    logToFile(`[AiRating] Error analyzing ${ticker}: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -7451,6 +7744,20 @@ app.get('/api/telegram/status', (req, res) => {
   }
 });
 
+// POST /api/telegram/config-execution-thread - Update Telegram execution topic thread ID
+app.post('/api/telegram/config-execution-thread', (req, res) => {
+  try {
+    const { threadId } = req.body;
+    if (threadId === undefined || threadId === null) {
+      return res.status(400).json({ error: 'threadId is required' });
+    }
+    const success = setTelegramExecutionThreadId(threadId);
+    res.json({ success, threadId: String(threadId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // POST /api/telegram/send-report - Generate executive PDF and dispatch to Telegram
 app.post('/api/telegram/send-report', async (req, res) => {
   try {
@@ -7529,6 +7836,59 @@ app.delete('/api/management/planned-trades/:id', async (req, res) => {
   } catch (error: any) {
     console.error('Error deleting planned trade:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/management/planned-trades/:id/propose-entry - AI Agent proposes tactical entry levels for a queued trade
+app.post('/api/management/planned-trades/:id/propose-entry', async (req, res) => {
+  try {
+    const trade = await prisma.plannedTrade.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!trade) {
+      return res.status(404).json({ error: 'Planned trade not found' });
+    }
+
+    const proposal = await proposeTradeEntryLevels({
+      symbol: trade.symbol,
+      action: trade.action,
+      timeframe: trade.timeframe,
+      orderType: trade.orderType,
+      quantity: trade.quantity,
+      existingTargetPrice: trade.targetPrice,
+      existingStopLoss: trade.stopLoss,
+      existingTargetExit: trade.targetExit,
+      notes: trade.notes,
+    });
+
+    res.json({ success: true, proposal, trade });
+  } catch (error: any) {
+    console.error('Error generating trade entry proposal:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate trade entry proposal' });
+  }
+});
+
+// POST /api/management/planned-trades/propose-entry - Ad-hoc AI Agent entry proposal
+app.post('/api/management/planned-trades/propose-entry', async (req, res) => {
+  try {
+    const { symbol, action, timeframe, orderType, currentPrice, notes } = req.body;
+    if (!symbol) {
+      return res.status(400).json({ error: 'Symbol is required' });
+    }
+
+    const proposal = await proposeTradeEntryLevels({
+      symbol,
+      action,
+      timeframe,
+      orderType,
+      currentPrice,
+      notes,
+    });
+
+    res.json({ success: true, proposal });
+  } catch (error: any) {
+    console.error('Error generating trade entry proposal:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate trade entry proposal' });
   }
 });
 
@@ -7622,27 +7982,70 @@ async function cleanupStaleHoldingsInDB() {
   }
 }
 
+// Global centralized Express error handler
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error(`[API Error] ${req.method} ${req.url}:`, err);
+  if (res.headersSent) {
+    return next(err);
+  }
+  const status = typeof err.status === 'number' && err.status >= 400 && err.status < 600 ? err.status : 500;
+  res.status(status).json({
+    error: err.message || 'Internal Server Error',
+    status,
+  });
+});
+
+// Background job execution locks to prevent overlapping interval stampedes
+let isCleaningHoldings = false;
+let isSyncingTrading212 = false;
+let isConsumingBuffer = false;
+let isWarmingQuotes = false;
+
 const server = app.listen(port, () => {
   console.log(`Backend API server listening at http://localhost:${port}`);
   console.log(`Frontend UI available at http://localhost:8080`);
 
   // Initial and periodic cleanup of stale holding records
   cleanupStaleHoldingsInDB().catch(e => console.error('Initial holding cleanup error:', e));
-  setInterval(() => {
-    cleanupStaleHoldingsInDB().catch(e => console.error('Periodic holding cleanup error:', e));
+  setInterval(async () => {
+    if (isCleaningHoldings) return;
+    isCleaningHoldings = true;
+    try {
+      await cleanupStaleHoldingsInDB();
+    } catch (e) {
+      console.error('Periodic holding cleanup error:', e);
+    } finally {
+      isCleaningHoldings = false;
+    }
   }, 60000);
 
   // Initial and periodic sync for Trading 212 holdings
   syncTrading212HoldingsToDB(prisma).catch(e => console.error('Initial Trading 212 sync error:', e));
-  setInterval(() => {
-    syncTrading212HoldingsToDB(prisma).catch(e => console.error('Periodic Trading 212 sync error:', e));
+  setInterval(async () => {
+    if (isSyncingTrading212) return;
+    isSyncingTrading212 = true;
+    try {
+      await syncTrading212HoldingsToDB(prisma);
+    } catch (e) {
+      console.error('Periodic Trading 212 sync error:', e);
+    } finally {
+      isSyncingTrading212 = false;
+    }
   }, 45000);
 
   // Initial and periodic Telegram Buffer Sync
   consumeTelegramBuffer(prisma).catch(e => console.error('Initial Telegram Buffer sync error:', e));
-  setInterval(() => {
+  setInterval(async () => {
     if (process.env.TELEGRAM_BUFFER_URL) {
-      consumeTelegramBuffer(prisma).catch(e => console.error('Periodic Telegram Buffer sync error:', e));
+      if (isConsumingBuffer) return;
+      isConsumingBuffer = true;
+      try {
+        await consumeTelegramBuffer(prisma);
+      } catch (e) {
+        console.error('Periodic Telegram Buffer sync error:', e);
+      } finally {
+        isConsumingBuffer = false;
+      }
     }
   }, 60000);
 
@@ -7652,14 +8055,35 @@ const server = app.listen(port, () => {
 
   // Initial and periodic pre-warming of portfolio quotes cache
   warmPortfolioQuotesCache().catch(e => console.error('Initial quote warm error:', e));
-  setInterval(() => {
-    warmPortfolioQuotesCache().catch(e => console.error('Periodic quote warm error:', e));
+  setInterval(async () => {
+    if (isWarmingQuotes) return;
+    isWarmingQuotes = true;
+    try {
+      await warmPortfolioQuotesCache();
+    } catch (e) {
+      console.error('Periodic quote warm error:', e);
+    } finally {
+      isWarmingQuotes = false;
+    }
   }, 5 * 60 * 1000);
+
+  // Start IBKR Client Portal session heartbeat (Tickle Daemon: 2-3 minute intervals)
+  startIbkrTickleDaemon();
 });
 
 // Graceful shutdown
 const shutdown = async () => {
   console.log('Shutting down server...');
+
+  // Force exit safety timeout (5 seconds) to prevent lingering zombie processes
+  const forceExitTimer = setTimeout(() => {
+    console.warn('Shutdown timed out after 5s. Forcing exit.');
+    process.exit(1);
+  }, 5000);
+  forceExitTimer.unref();
+
+  // Stop IBKR Client Portal Tickle Daemon
+  stopIbkrTickleDaemon();
 
   server.close(() => {
     console.log('HTTP server closed.');

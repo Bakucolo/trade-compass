@@ -10,7 +10,7 @@ import {
   Layers, ArrowUpRight, ArrowDownRight, ArrowRight, RefreshCw, ShieldCheck, ShieldAlert, Target,
   CheckCircle2, Compass, Zap, Flame, Lightbulb, Bookmark,
   PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2, FolderPlus,
-  Cpu, Calculator
+  Cpu, Calculator, BrainCircuit
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -36,6 +36,7 @@ import { OptionsChainView } from './research/OptionsChainView';
 import { RedFlagsAndRisksCard } from './research/RedFlagsAndRisksCard';
 import { DilutionAndSbcCard } from './research/DilutionAndSbcCard';
 import { MonteCarloSimulationModal } from './research/MonteCarloSimulationModal';
+import { AiRatingModal } from './research/AiRatingModal';
 import { useOptionsChain } from '@/services/optionsChainService';
 import { TradeStructureModal } from './TradeStructureModal';
 import ReactMarkdown from 'react-markdown';
@@ -110,6 +111,7 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
   const [ideaModalState, setIdeaModalState] = useState<{ open: boolean; initialThesis?: string }>({ open: false });
   const [isAddToWatchlistOpen, setIsAddToWatchlistOpen] = useState(false);
   const [isMonteCarloModalOpen, setIsMonteCarloModalOpen] = useState(false);
+  const [isAiRatingModalOpen, setIsAiRatingModalOpen] = useState(false);
 
   // Dossier On-Demand Request State (prevents slow automatic blocking page loads)
   const [requestedSymbols, setRequestedSymbols] = useState<Record<string, boolean>>({});
@@ -502,6 +504,18 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
           >
             <FolderPlus className="w-3.5 h-3.5 text-amber-400" />
             <span>+ Watchlist</span>
+          </Button>
+
+          {/* AI Rating (Multi-LLM Consensus) Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsAiRatingModalOpen(true)}
+            className="text-xs gap-1.5 h-9 bg-gradient-to-r from-violet-500/15 via-indigo-500/15 to-cyan-500/15 text-violet-300 border-violet-500/40 hover:bg-violet-500/25 shadow-[0_0_12px_rgba(139,92,246,0.2)] font-bold transition-all"
+            title={`Run Multi-LLM Consensus AI Rating on ${selectedSymbol}`}
+          >
+            <BrainCircuit className="w-3.5 h-3.5 text-violet-400 animate-pulse" />
+            <span>AI Rating</span>
           </Button>
 
           {/* Simulate Ticker (Monte Carlo Valuation) Button */}
@@ -2023,6 +2037,14 @@ export function ResearchPage({ initialSymbol, onNavigateTab }: ResearchPageProps
       <MonteCarloSimulationModal
         isOpen={isMonteCarloModalOpen}
         onClose={() => setIsMonteCarloModalOpen(false)}
+        symbol={selectedSymbol}
+        currentPrice={currentPrice || quote?.price || 0}
+      />
+
+      {/* Multi-LLM AI Consensus Rating Modal */}
+      <AiRatingModal
+        isOpen={isAiRatingModalOpen}
+        onClose={() => setIsAiRatingModalOpen(false)}
         symbol={selectedSymbol}
         currentPrice={currentPrice || quote?.price || 0}
       />

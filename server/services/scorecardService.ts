@@ -1,5 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import YahooFinance from 'yahoo-finance2';
+import { generateJsonCompletion } from './llmFallbackRouter';
+import { resolveYahooFinanceSymbol } from './tickerResolutionService';
 
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey', 'ripHistorical'] });
 
@@ -9,11 +11,11 @@ export type ValuationPosture = 'DEEP_VALUE' | 'FAIR_VALUE' | 'RICHLY_VALUED' | '
 
 export interface ScorecardSubMetrics {
   // Buying conviction factors
-  priceTo52WeekHighPct: number; // e.g. -15%
-  distanceFrom52WeekLowPct: number; // e.g. +10%
-  technicalSetupScore: number; // 0 - 100
-  momentumScore: number; // 0 - 100
-  upsideToFairValuePct: number; // e.g. +28%
+  priceTo52WeekHighPct: number;
+  distanceFrom52WeekLowPct: number;
+  technicalSetupScore: number; // 1.0 - 10.0
+  momentumScore: number; // 1.0 - 10.0
+  upsideToFairValuePct: number;
   
   // Fundamental factors
   operatingMarginPct: number | null;
@@ -24,7 +26,7 @@ export interface ScorecardSubMetrics {
   fcfYieldPct: number | null;
   revenueGrowthPct: number | null;
   piotroskiFScoreEstimate: number; // 1 - 9
-  altmanZScoreEstimate: number; // e.g. 3.4
+  altmanZScoreEstimate: number;
   
   // Valuation factors
   trailingPE: number | null;
@@ -47,14 +49,16 @@ export interface StockScorecard {
   marketCap: number;
   beta: number;
 
-  // Composite Scores
-  overallScore: number; // 0 - 100
+  // Composite 1 to 10 Scores
+  overallScore: number; // 1.0 - 10.0
+  rank?: number; // 1 to N relative rank
   grade: ConvictionGrade;
   gradeLabel: string;
   
-  buyingConvictionScore: number; // 0 - 100
-  fundamentalsScore: number; // 0 - 100
-  valuationScore: number; // 0 - 100
+  buyingConvictionScore: number; // 1.0 - 10.0
+  fundamentalsScore: number; // 1.0 - 10.0
+  valuationScore: number; // 1.0 - 10.0
+  momentumScore: number; // 1.0 - 10.0
   healthStatus: HealthStatus;
   valuationPosture: ValuationPosture;
 
@@ -68,7 +72,9 @@ export interface StockScorecard {
   stopLossAnchor: number;
   recommendedMaxAllocationPct: number; // 1% - 15%
 
-  // Qualitative Analysis
+  // Qualitative Analysis & Narratives
+  scoreJustification: string;
+  fundamentalSituation: string;
   keyStrengths: string[];
   keyRisks: string[];
   bullCase: string;
@@ -83,9 +89,11 @@ export interface StockScorecard {
     unrealizedPnL: number;
     unrealizedPnLPercent: number;
     broker: string;
+    brokers?: string[];
   };
+  brokers?: string[]; // e.g. ["Interactive Brokers", "Trading 212"]
   isWatchlist: boolean;
-  watchlistNames?: string[];
+  watchlistNames?: string[]; // e.g. ["Space", "Nuclear Energy, SMRs & Clean Grid"]
 
   analyzedAt: string;
 }
@@ -104,59 +112,81 @@ export interface ScorecardsHubResponse {
     topQualityPick: StockScorecard | null;
   };
   sectors: string[];
+  brokers?: { name: string; count: number }[];
+  watchlists?: { name: string; count: number }[];
   timestamp: number;
 }
 
-// In-memory cache for scorecards
-const scorecardsCache = new Map<string, { scorecard: StockScorecard; timestamp: number }>();
-const SCORECARD_CACHE_TTL_MS = 60 * 1000; // 1 minute
+export interface EarningsQuarterComparison {
+  quarter: string;
+  epsActual: number | null;
+  epsEstimate: number | null;
+  epsSurprisePct: number | null;
+  revenue: number | null;
+  earnings: number | null;
+}
 
-const SYMBOL_ALIASES: Record<string, string> = {
-  'APF.L': 'ECOR.L',
-  'APF': 'ECOR.L',
-  'MBGL_US_EQ': 'MBGL',
-  'FET_US_EQ': 'FET',
-  'FLEX_US_EQ': 'FLEX',
-  'ENPH_US_EQ': 'ENPH',
-  'SPAQl_EQ': 'SPAQ.L',
-  'SPAQ': 'SPAQ.L',
-  'BURl_EQ': 'BUR.L',
-  'BUR': 'BUR.L',
-  'EOS': 'EOS.AX',
-  'EOS.AX': 'EOS.AX',
-  'BP.': 'BP.L',
-  'BP.L': 'BP.L',
-  'ONDO': 'ONDO.L',
-  'ONDO.L': 'ONDO.L',
-  'PNG': 'PNG.V',
-  'BOGO': 'BOGO.V',
-  'LIB': 'LIB.V',
-  'DMET': 'DMET.V',
-  'ZDC': 'ZDC.V',
-  'HSTR': 'HSTR.V',
-  'EMPR': 'EMPR.V',
-  'AUMB': 'AUMB.V',
-  'SWA': 'SWLF.V',
-  'AGX': 'SIL.V',
-  'AYA': 'AYA.TO',
-};
+export interface LatestEarningsAnalysisResult {
+  symbol: string;
+  companyName: string;
+  currentPrice: number;
+  reportDate: string | null;
+  timing: 'BMO' | 'AMC' | 'UNSPECIFIED';
+  isBeat: boolean;
+  verdict: 'STRONG_BEAT' | 'MODEST_BEAT' | 'IN_LINE' | 'MODEST_MISS' | 'BIG_MISS';
+  verdictLabel: string;
+  quarters: EarningsQuarterComparison[];
+  executiveDiagnosis: string;
+  guidanceCommentary: string;
+  scorecardImpact: {
+    recommendedScoreAdjustment: number;
+    fairValueAdjustmentPct: number;
+    analystSummary: string;
+  };
+  keyFocusPoints: string[];
+  analyzedAt: string;
+}
 
-// Calculate all multi-factor scores for a stock symbol
+// In-memory short-lived cache for single requests
+const memoryCache = new Map<string, { card: StockScorecard; timestamp: number }>();
+const CACHE_TTL_MS = 30 * 1000;
+
+/**
+ * Maps a numerical 1-10 overall score to grade and label
+ */
+export function getConvictionGrade(score10: number): { grade: ConvictionGrade; gradeLabel: string } {
+  if (score10 >= 9.0) {
+    return { grade: 'STRONG_BUY', gradeLabel: 'Prime Strong Buy (9-10)' };
+  } else if (score10 >= 7.5) {
+    return { grade: 'BUY_ACCUMULATE', gradeLabel: 'High Conviction Buy (7.5-8.9)' };
+  } else if (score10 >= 5.5) {
+    return { grade: 'HOLD_MONITOR', gradeLabel: 'Hold & Monitor (5.5-7.4)' };
+  } else if (score10 >= 3.5) {
+    return { grade: 'TRIM_DEFENSIVE', gradeLabel: 'Trim / Defensive (3.5-5.4)' };
+  } else {
+    return { grade: 'AVOID_HIGH_RISK', gradeLabel: 'Avoid / High Risk (1.0-3.4)' };
+  }
+}
+
+/**
+ * Evaluate single stock scorecard with Yahoo Finance telemetry + AI Agent narrative
+ */
 export async function evaluateStockScorecard(
   rawSymbol: string,
   holdingData?: any,
-  watchlistNames?: string[]
+  watchlistNames?: string[],
+  prisma?: PrismaClient
 ): Promise<StockScorecard | null> {
   const cleanRaw = rawSymbol.trim().toUpperCase();
-  const querySym = SYMBOL_ALIASES[cleanRaw] || cleanRaw;
+  const querySym = resolveYahooFinanceSymbol(cleanRaw);
 
-  // Check cache
-  const cached = scorecardsCache.get(cleanRaw);
-  if (cached && Date.now() - cached.timestamp < SCORECARD_CACHE_TTL_MS) {
-    const res = { ...cached.scorecard };
+  const cached = memoryCache.get(cleanRaw);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    const res = { ...cached.card };
     if (holdingData) {
       res.isHolding = true;
       res.holdingDetails = holdingData;
+      res.brokers = holdingData.broker ? [holdingData.broker] : res.brokers || [];
     }
     if (watchlistNames && watchlistNames.length > 0) {
       res.isWatchlist = true;
@@ -166,9 +196,13 @@ export async function evaluateStockScorecard(
   }
 
   try {
-    const summary = await yahooFinance.quoteSummary(querySym, {
-      modules: ['price', 'summaryDetail', 'defaultKeyStatistics', 'financialData', 'summaryProfile']
-    }, { validateResult: false }).catch(() => null);
+    const summary = await yahooFinance.quoteSummary(
+      querySym,
+      {
+        modules: ['price', 'summaryDetail', 'defaultKeyStatistics', 'financialData', 'summaryProfile'],
+      },
+      { validateResult: false }
+    ).catch(() => null);
 
     const priceModule = summary?.price;
     const detailModule = summary?.summaryDetail;
@@ -178,10 +212,13 @@ export async function evaluateStockScorecard(
 
     const currentPrice = Number(priceModule?.regularMarketPrice || detailModule?.previousClose || 1);
     const prevClose = Number(detailModule?.previousClose || priceModule?.regularMarketPreviousClose || currentPrice);
-    const change = priceModule?.regularMarketChange != null ? Number(priceModule.regularMarketChange) : (currentPrice - prevClose);
-    const changePercent = priceModule?.regularMarketChangePercent != null 
-      ? Number(priceModule.regularMarketChangePercent) * 100 
-      : (prevClose > 0 ? (change / prevClose) * 100 : 0);
+    const change = priceModule?.regularMarketChange != null ? Number(priceModule.regularMarketChange) : currentPrice - prevClose;
+    const changePercent =
+      priceModule?.regularMarketChangePercent != null
+        ? Number(priceModule.regularMarketChangePercent) * 100
+        : prevClose > 0
+        ? (change / prevClose) * 100
+        : 0;
 
     const name = priceModule?.shortName || priceModule?.longName || cleanRaw;
     const sector = profileModule?.sector || 'General';
@@ -190,13 +227,13 @@ export async function evaluateStockScorecard(
     const beta = Number(statsModule?.beta || 1.0);
     const currency = priceModule?.currency || 'USD';
 
-    // 52-week data
+    // 52-week metrics
     const high52 = Number(detailModule?.fiftyTwoWeekHigh || currentPrice * 1.25);
     const low52 = Number(detailModule?.fiftyTwoWeekLow || currentPrice * 0.75);
     const distFrom52WHigh = high52 > 0 ? ((currentPrice - high52) / high52) * 100 : 0;
     const distFrom52WLow = low52 > 0 ? ((currentPrice - low52) / low52) * 100 : 0;
 
-    // Fundamentals
+    // Fundamentals metrics
     const opMargin = financialsModule?.operatingMargins != null ? Number(financialsModule.operatingMargins) * 100 : null;
     const netMargin = financialsModule?.profitMargins != null ? Number(financialsModule.profitMargins) * 100 : null;
     const roe = financialsModule?.returnOnEquity != null ? Number(financialsModule.returnOnEquity) * 100 : null;
@@ -206,14 +243,14 @@ export async function evaluateStockScorecard(
     const fcf = Number(financialsModule?.freeCashflow || 0);
     const fcfYield = marketCap > 0 && fcf > 0 ? (fcf / marketCap) * 100 : null;
 
-    // Valuation
+    // Valuation metrics
     const trailingPE = detailModule?.trailingPE != null ? Number(detailModule.trailingPE) : null;
     const forwardPE = detailModule?.forwardPE != null ? Number(detailModule.forwardPE) : null;
     const priceToSales = detailModule?.priceToSalesTrailing12Months != null ? Number(detailModule.priceToSalesTrailing12Months) : null;
     const pegRatio = statsModule?.pegRatio != null ? Number(statsModule.pegRatio) : null;
     const evToEbitda = statsModule?.enterpriseToEbitda != null ? Number(statsModule.enterpriseToEbitda) : null;
 
-    // Fair Value & DCF Modeling
+    // Fair Value Estimate Model
     let fairValueMultiplier = 1.15;
     if (trailingPE && trailingPE > 0 && trailingPE < 18) fairValueMultiplier += 0.15;
     if (opMargin && opMargin > 20) fairValueMultiplier += 0.12;
@@ -222,164 +259,126 @@ export async function evaluateStockScorecard(
     const fairValueEstimate = Number((currentPrice * fairValueMultiplier).toFixed(2));
     const upsideToFairValue = ((fairValueEstimate - currentPrice) / currentPrice) * 100;
 
-    // -------------------------------------------------------------
-    // 1. BUYING CONVICTION SCORE (0 - 100)
-    // -------------------------------------------------------------
-    let buyingScore = 50;
-    // Discount from 52W High (Buying pullbacks vs chasing tops)
-    if (distFrom52WHigh <= -30) buyingScore += 22;
-    else if (distFrom52WHigh <= -15) buyingScore += 16;
-    else if (distFrom52WHigh <= -5) buyingScore += 8;
-    else if (distFrom52WHigh > -2) buyingScore -= 10; // near peak
+    // ==========================================
+    // 1 TO 10 SCORING CALIBRATION
+    // ==========================================
 
-    // Distance above 52W low
-    if (distFrom52WLow >= 10 && distFrom52WLow <= 40) buyingScore += 15; // healthy basing
-    else if (distFrom52WLow < 5) buyingScore += 8; // potential deep floor
-    else if (distFrom52WLow > 80) buyingScore -= 6; // extended
+    // 1. BUYING CONVICTION (1.0 to 10.0)
+    let buyingBase = 5.0;
+    if (distFrom52WHigh <= -30) buyingBase += 2.2;
+    else if (distFrom52WHigh <= -15) buyingBase += 1.6;
+    else if (distFrom52WHigh <= -5) buyingBase += 0.8;
+    else if (distFrom52WHigh > -2) buyingBase -= 1.0;
 
-    // Beta stability
-    if (beta >= 0.7 && beta <= 1.3) buyingScore += 10;
-    else if (beta > 1.8) buyingScore -= 10; // high volatility risk
+    if (distFrom52WLow >= 10 && distFrom52WLow <= 40) buyingBase += 1.5;
+    else if (distFrom52WLow < 5) buyingBase += 0.8;
+    else if (distFrom52WLow > 80) buyingBase -= 0.6;
 
-    // Upside to target
-    if (upsideToFairValue >= 25) buyingScore += 18;
-    else if (upsideToFairValue >= 10) buyingScore += 10;
+    if (beta >= 0.7 && beta <= 1.3) buyingBase += 1.0;
+    else if (beta > 1.8) buyingBase -= 1.0;
 
-    buyingScore = Math.max(15, Math.min(98, Math.round(buyingScore)));
+    if (upsideToFairValue >= 25) buyingBase += 1.8;
+    else if (upsideToFairValue >= 10) buyingBase += 1.0;
 
-    // -------------------------------------------------------------
-    // 2. FUNDAMENTALS & QUALITY SCORE (0 - 100)
-    // -------------------------------------------------------------
-    let fundScore = 40;
-    // Operating Margin
+    const buyingScore = Math.max(1.5, Math.min(9.8, Number(buyingBase.toFixed(1))));
+
+    // 2. FUNDAMENTALS QUALITY (1.0 to 10.0)
+    let fundBase = 4.0;
     if (opMargin != null) {
-      if (opMargin >= 25) fundScore += 25;
-      else if (opMargin >= 15) fundScore += 20;
-      else if (opMargin >= 8) fundScore += 12;
-      else if (opMargin > 0) fundScore += 5;
-      else fundScore -= 15;
+      if (opMargin >= 25) fundBase += 2.5;
+      else if (opMargin >= 15) fundBase += 2.0;
+      else if (opMargin >= 8) fundBase += 1.2;
+      else if (opMargin > 0) fundBase += 0.5;
+      else fundBase -= 1.5;
     } else {
-      fundScore += 10;
+      fundBase += 1.0;
     }
 
-    // Return on Equity
     if (roe != null) {
-      if (roe >= 20) fundScore += 20;
-      else if (roe >= 12) fundScore += 15;
-      else if (roe >= 5) fundScore += 8;
-      else fundScore -= 10;
+      if (roe >= 20) fundBase += 2.0;
+      else if (roe >= 12) fundBase += 1.5;
+      else if (roe >= 5) fundBase += 0.8;
+      else fundBase -= 1.0;
     } else {
-      fundScore += 8;
+      fundBase += 0.8;
     }
 
-    // Debt to Equity Health
     if (debtToEquity != null) {
-      if (debtToEquity < 40) fundScore += 20;
-      else if (debtToEquity <= 90) fundScore += 14;
-      else if (debtToEquity <= 180) fundScore += 5;
-      else fundScore -= 18;
+      if (debtToEquity < 40) fundBase += 2.0;
+      else if (debtToEquity <= 90) fundBase += 1.4;
+      else if (debtToEquity <= 180) fundBase += 0.5;
+      else fundBase -= 1.8;
     } else {
-      fundScore += 8;
+      fundBase += 0.8;
     }
 
-    // Revenue Growth
     if (revGrowth != null) {
-      if (revGrowth >= 20) fundScore += 15;
-      else if (revGrowth >= 8) fundScore += 10;
-      else if (revGrowth >= 0) fundScore += 5;
-      else fundScore -= 10;
+      if (revGrowth >= 20) fundBase += 1.5;
+      else if (revGrowth >= 8) fundBase += 1.0;
+      else if (revGrowth >= 0) fundBase += 0.5;
+      else fundBase -= 1.0;
     }
 
-    fundScore = Math.max(10, Math.min(99, Math.round(fundScore)));
+    const fundScore = Math.max(1.2, Math.min(9.9, Number(fundBase.toFixed(1))));
 
-    // -------------------------------------------------------------
-    // 3. VALUATION SCORE (0 - 100)
-    // -------------------------------------------------------------
-    let valScore = 45;
+    // 3. VALUATION POSTURE (1.0 to 10.0)
+    let valBase = 4.5;
     const pe = forwardPE || trailingPE;
     if (pe != null && pe > 0) {
-      if (pe < 15) valScore += 30;
-      else if (pe <= 22) valScore += 22;
-      else if (pe <= 32) valScore += 10;
-      else if (pe <= 50) valScore -= 5;
-      else valScore -= 20;
+      if (pe < 15) valBase += 3.0;
+      else if (pe <= 22) valBase += 2.2;
+      else if (pe <= 32) valBase += 1.0;
+      else if (pe <= 50) valBase -= 0.5;
+      else valBase -= 2.0;
     } else if (pe != null && pe < 0) {
-      valScore -= 25; // unprofitable
+      valBase -= 2.5;
     }
 
-    // Price to Sales
     if (priceToSales != null) {
-      if (priceToSales < 2.0) valScore += 20;
-      else if (priceToSales <= 4.5) valScore += 14;
-      else if (priceToSales <= 9.0) valScore += 4;
-      else valScore -= 15;
+      if (priceToSales < 2.0) valBase += 2.0;
+      else if (priceToSales <= 4.5) valBase += 1.4;
+      else if (priceToSales <= 9.0) valBase += 0.4;
+      else valBase -= 1.5;
     }
 
-    // PEG Ratio
     if (pegRatio != null && pegRatio > 0) {
-      if (pegRatio < 1.0) valScore += 15;
-      else if (pegRatio <= 1.5) valScore += 10;
-      else if (pegRatio > 2.5) valScore -= 10;
+      if (pegRatio < 1.0) valBase += 1.5;
+      else if (pegRatio <= 1.5) valBase += 1.0;
+      else if (pegRatio > 2.5) valBase -= 1.0;
     }
 
-    // FCF Yield
     if (fcfYield != null && fcfYield > 4.0) {
-      valScore += 12;
+      valBase += 1.2;
     }
 
-    valScore = Math.max(10, Math.min(98, Math.round(valScore)));
+    const valScore = Math.max(1.0, Math.min(9.8, Number(valBase.toFixed(1))));
 
-    // -------------------------------------------------------------
-    // COMPOSITE OVERALL CONVICTION SCORE
-    // -------------------------------------------------------------
-    const overallScore = Math.round(
-      (buyingScore * 0.35) + (fundScore * 0.35) + (valScore * 0.30)
-    );
+    // 4. MOMENTUM (1.0 to 10.0)
+    const momentumScore = Math.max(1.0, Math.min(9.8, Number((5.0 + (changePercent * 0.4)).toFixed(1))));
 
-    // Grade Assignment
-    let grade: ConvictionGrade = 'HOLD_MONITOR';
-    let gradeLabel = 'Hold / Neutral';
-    if (overallScore >= 84) {
-      grade = 'STRONG_BUY';
-      gradeLabel = 'Prime Strong Buy';
-    } else if (overallScore >= 70) {
-      grade = 'BUY_ACCUMULATE';
-      gradeLabel = 'High Conviction Buy';
-    } else if (overallScore >= 50) {
-      grade = 'HOLD_MONITOR';
-      gradeLabel = 'Hold & Monitor';
-    } else if (overallScore >= 35) {
-      grade = 'TRIM_DEFENSIVE';
-      gradeLabel = 'Trim / Defensive';
-    } else {
-      grade = 'AVOID_HIGH_RISK';
-      gradeLabel = 'Avoid / High Risk';
-    }
+    // COMPOSITE OVERALL SCORE (1.0 - 10.0)
+    const overallScore = Number(((buyingScore * 0.35) + (fundScore * 0.35) + (valScore * 0.30)).toFixed(1));
+
+    const { grade, gradeLabel } = getConvictionGrade(overallScore);
 
     // Health Rating
     let healthStatus: HealthStatus = 'STABLE';
-    if (debtToEquity != null && debtToEquity > 250) {
-      healthStatus = 'DISTRESSED';
-    } else if (debtToEquity != null && debtToEquity > 150) {
-      healthStatus = 'HIGH_LEVERAGE';
-    } else if (fundScore >= 80 && (debtToEquity == null || debtToEquity < 50)) {
-      healthStatus = 'PRISTINE';
-    } else if (fundScore >= 60) {
-      healthStatus = 'STABLE';
-    } else {
-      healthStatus = 'MODERATE_DEBT';
-    }
+    if (debtToEquity != null && debtToEquity > 250) healthStatus = 'DISTRESSED';
+    else if (debtToEquity != null && debtToEquity > 150) healthStatus = 'HIGH_LEVERAGE';
+    else if (fundScore >= 8.0 && (debtToEquity == null || debtToEquity < 50)) healthStatus = 'PRISTINE';
+    else if (fundScore >= 6.0) healthStatus = 'STABLE';
+    else healthStatus = 'MODERATE_DEBT';
 
     // Valuation Posture
     let valuationPosture: ValuationPosture = 'FAIR_VALUE';
-    if (valScore >= 78) valuationPosture = 'DEEP_VALUE';
-    else if (valScore >= 52) valuationPosture = 'FAIR_VALUE';
-    else if (valScore >= 32) valuationPosture = 'RICHLY_VALUED';
+    if (valScore >= 7.8) valuationPosture = 'DEEP_VALUE';
+    else if (valScore >= 5.2) valuationPosture = 'FAIR_VALUE';
+    else if (valScore >= 3.2) valuationPosture = 'RICHLY_VALUED';
     else valuationPosture = 'SPECULATIVE_BUBBLE';
 
     // Piotroski & Altman Estimates
-    const piotroskiFScoreEstimate = Math.min(9, Math.max(2, Math.round((fundScore / 100) * 8) + 1));
-    const altmanZScoreEstimate = Number((1.5 + (fundScore / 100) * 3.2 - (debtToEquity ? debtToEquity / 200 : 0)).toFixed(2));
+    const piotroskiFScoreEstimate = Math.min(9, Math.max(2, Math.round((fundScore / 10) * 8) + 1));
+    const altmanZScoreEstimate = Number((1.5 + (fundScore / 10) * 3.2 - (debtToEquity ? debtToEquity / 200 : 0)).toFixed(2));
 
     // Tactical Execution Parameters
     const buyMin = Number((currentPrice * 0.94).toFixed(2));
@@ -388,32 +387,80 @@ export async function evaluateStockScorecard(
     const stopLossAnchor = Number((currentPrice * (beta > 1.4 ? 0.88 : 0.92)).toFixed(2));
 
     let tacticalAction = 'Hold position and monitor technical breakout levels.';
-    if (overallScore >= 80) {
+    if (overallScore >= 8.0) {
       tacticalAction = `High conviction buy. Allocate initial tranche in zone $${buyMin} - $${buyMax} with target $${targetPrice}.`;
-    } else if (overallScore >= 68) {
+    } else if (overallScore >= 6.8) {
       tacticalAction = `Accumulate on pullbacks. Scale into tranches near $${buyMin}.`;
-    } else if (overallScore <= 40) {
+    } else if (overallScore <= 4.0) {
       tacticalAction = `Elevated valuation/debt pressure. Consider taking profits or setting tight trailing stop at $${stopLossAnchor}.`;
     }
 
-    const recommendedMaxAllocationPct = overallScore >= 85 ? 12 : overallScore >= 70 ? 8 : overallScore >= 50 ? 5 : 2;
+    const recommendedMaxAllocationPct = overallScore >= 8.5 ? 12 : overallScore >= 7.0 ? 8 : overallScore >= 5.0 ? 5 : 2;
 
-    // Strengths & Risks synthesis
+    // Key Strengths & Risks
     const keyStrengths: string[] = [];
-    if (opMargin && opMargin > 18) keyStrengths.push(`Robust operating margin profile (${opMargin.toFixed(1)}%) reflecting strong competitive moat.`);
-    if (roe && roe > 15) keyStrengths.push(`High capital efficiency with ${roe.toFixed(1)}% Return on Equity.`);
-    if (pe && pe > 0 && pe < 20) keyStrengths.push(`Favorable earnings multiple (P/E ${pe.toFixed(1)}x) offering attractive margin of safety.`);
+    if (opMargin && opMargin > 18) keyStrengths.push(`Robust operating margin (${opMargin.toFixed(1)}%) reflecting competitive moat.`);
+    if (roe && roe > 15) keyStrengths.push(`Capital efficiency with ${roe.toFixed(1)}% Return on Equity.`);
+    if (pe && pe > 0 && pe < 20) keyStrengths.push(`Attractive valuation multiple (P/E ${pe.toFixed(1)}x) offering margin of safety.`);
     if (distFrom52WHigh < -15) keyStrengths.push(`Significant discount (${distFrom52WHigh.toFixed(1)}%) from 52-week highs.`);
-    if (keyStrengths.length === 0) keyStrengths.push('Established market presence with active liquidity.');
+    if (keyStrengths.length === 0) keyStrengths.push('Established market liquidity and sector footprint.');
 
     const keyRisks: string[] = [];
-    if (debtToEquity && debtToEquity > 130) keyRisks.push(`Elevated debt-to-equity leverage (${debtToEquity.toFixed(0)}%) requires monitoring.`);
-    if (pe && pe > 40) keyRisks.push(`Rich forward valuation (P/E ${pe.toFixed(1)}x) leaves minimal cushion for growth misses.`);
-    if (beta > 1.4) keyRisks.push(`High market beta (${beta.toFixed(2)}) introduces amplified downside volatility in market selloffs.`);
-    if (keyRisks.length === 0) keyRisks.push('Macro and sector cyclicality risk.');
+    if (debtToEquity && debtToEquity > 130) keyRisks.push(`Leverage profile (Debt/Equity ${debtToEquity.toFixed(0)}%) warrants monitoring.`);
+    if (pe && pe > 40) keyRisks.push(`Elevated earnings multiple (P/E ${pe.toFixed(1)}x) leaves minimal cushion for execution misses.`);
+    if (beta > 1.4) keyRisks.push(`High market beta (${beta.toFixed(2)}) brings amplified macro drawdown exposure.`);
+    if (keyRisks.length === 0) keyRisks.push('Macro cyclicality and sector multiple compression.');
 
-    const bullCase = `${cleanRaw} showcases a conviction score of ${overallScore}/100 underpinned by ${fundScore}/100 quality fundamentals and an estimated fair value target of $${fairValueEstimate} (+${upsideToFairValue.toFixed(1)}% upside).`;
-    const bearCase = `Sustained macro compression, multiple re-rating or breakdown below $${stopLossAnchor} would invalidate the upside thesis.`;
+    // Fallback narrative
+    let scoreJustification = `Overall Score of ${overallScore}/10 (${gradeLabel}) combines Fundamentals (${fundScore}/10), Valuation Posture (${valScore}/10), and Buying Conviction (${buyingScore}/10). Driven by ${opMargin != null ? `${opMargin.toFixed(1)}% operating margins` : 'solid fundamentals'} and an estimated +${upsideToFairValue.toFixed(1)}% upside to fair value ($${fairValueEstimate}).`;
+    let fundamentalSituation = `${name} (${cleanRaw}) trades at $${currentPrice.toFixed(2)} in the ${sector} (${industry}) sector. Financial health is rated ${healthStatus} with ${debtToEquity != null ? `debt-to-equity of ${debtToEquity.toFixed(1)}%` : 'balanced leverage'} and ${revGrowth != null ? `revenue growth of ${revGrowth.toFixed(1)}%` : 'steady performance'}. Free cash flow yield stands at ${fcfYield != null ? `${fcfYield.toFixed(1)}%` : 'adequate levels'}.`;
+    let bullCase = `${cleanRaw} showcases a conviction score of ${overallScore}/10 underpinned by ${fundScore}/10 quality fundamentals and an estimated fair value target of $${fairValueEstimate} (+${upsideToFairValue.toFixed(1)}% upside).`;
+    let bearCase = `Sustained macro compression, multiple re-rating or breakdown below $${stopLossAnchor} would invalidate the upside thesis.`;
+
+    // ==========================================
+    // AI AGENT EVALUATION (ENRICHMENT)
+    // ==========================================
+    try {
+      const aiPrompt = `You are a top-tier institutional equity research analyst.
+Evaluate ${cleanRaw} (${name}):
+• Price: $${currentPrice.toFixed(2)} (${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%)
+• Sector: ${sector} | Industry: ${industry}
+• Trailing P/E: ${trailingPE || 'N/A'} | Forward P/E: ${forwardPE || 'N/A'}
+• Operating Margin: ${opMargin != null ? `${opMargin.toFixed(1)}%` : 'N/A'} | ROE: ${roe != null ? `${roe.toFixed(1)}%` : 'N/A'}
+• Debt to Equity: ${debtToEquity != null ? `${debtToEquity.toFixed(1)}%` : 'N/A'} | Rev Growth: ${revGrowth != null ? `${revGrowth.toFixed(1)}%` : 'N/A'}
+• Computed Scores: Overall ${overallScore}/10, Fundamentals ${fundScore}/10, Valuation ${valScore}/10, Buying ${buyingScore}/10
+
+Provide a concise, highly professional institutional assessment.
+Return ONLY valid JSON matching this schema:
+{
+  "scoreJustification": "Clear 2-3 sentence explanation justifying why the stock scored ${overallScore}/10 across valuation, fundamentals, and conviction.",
+  "fundamentalSituation": "Clear 2-3 sentence grounded diagnosis of the company's real-world fundamental situation: economic moat, margin stability, balance sheet health, and growth runway.",
+  "bullCase": "1-2 sentence core bull catalyst.",
+  "bearCase": "1-2 sentence core risk/downside invalidation."
+}`;
+
+      const aiRes = await generateJsonCompletion<{
+        scoreJustification: string;
+        fundamentalSituation: string;
+        bullCase: string;
+        bearCase: string;
+      }>({
+        userPrompt: aiPrompt,
+        temperature: 0.2,
+        maxTokens: 500,
+        timeoutMs: 15000,
+        tag: `[ScorecardAI-${cleanRaw}]`,
+      }).catch(() => null);
+
+      if (aiRes?.data) {
+        if (aiRes.data.scoreJustification?.trim()) scoreJustification = aiRes.data.scoreJustification.trim();
+        if (aiRes.data.fundamentalSituation?.trim()) fundamentalSituation = aiRes.data.fundamentalSituation.trim();
+        if (aiRes.data.bullCase?.trim()) bullCase = aiRes.data.bullCase.trim();
+        if (aiRes.data.bearCase?.trim()) bearCase = aiRes.data.bearCase.trim();
+      }
+    } catch (e: any) {
+      console.warn(`[ScorecardAI] AI enrichment fallback for ${cleanRaw}:`, e.message);
+    }
 
     const scorecard: StockScorecard = {
       symbol: cleanRaw,
@@ -432,13 +479,14 @@ export async function evaluateStockScorecard(
       buyingConvictionScore: buyingScore,
       fundamentalsScore: fundScore,
       valuationScore: valScore,
+      momentumScore,
       healthStatus,
       valuationPosture,
       metrics: {
         priceTo52WeekHighPct: Number(distFrom52WHigh.toFixed(2)),
         distanceFrom52WeekLowPct: Number(distFrom52WLow.toFixed(2)),
         technicalSetupScore: buyingScore,
-        momentumScore: Math.max(20, Math.min(95, Math.round(50 + changePercent * 4))),
+        momentumScore,
         upsideToFairValuePct: Number(upsideToFairValue.toFixed(1)),
         operatingMarginPct: opMargin != null ? Number(opMargin.toFixed(1)) : null,
         netMarginPct: netMargin != null ? Number(netMargin.toFixed(1)) : null,
@@ -461,54 +509,159 @@ export async function evaluateStockScorecard(
       targetPrice,
       stopLossAnchor,
       recommendedMaxAllocationPct,
+      scoreJustification,
+      fundamentalSituation,
       keyStrengths,
       keyRisks,
       bullCase,
       bearCase,
       isHolding: Boolean(holdingData),
       holdingDetails: holdingData,
+      brokers: holdingData?.broker ? [holdingData.broker] : [],
       isWatchlist: Boolean(watchlistNames && watchlistNames.length > 0),
       watchlistNames,
       analyzedAt: new Date().toISOString(),
     };
 
-    scorecardsCache.set(cleanRaw, { scorecard, timestamp: Date.now() });
+    // Cache in memory
+    memoryCache.set(cleanRaw, { card: scorecard, timestamp: Date.now() });
+
+    // Persist permanently in database if Prisma is provided
+    if (prisma) {
+      try {
+        await prisma.stockScorecardRecord.upsert({
+          where: { symbol: cleanRaw },
+          create: {
+            symbol: cleanRaw,
+            name: scorecard.name,
+            price: scorecard.price,
+            change: scorecard.change,
+            changePercent: scorecard.changePercent,
+            currency: scorecard.currency,
+            sector: scorecard.sector,
+            industry: scorecard.industry,
+            marketCap: scorecard.marketCap,
+            beta: scorecard.beta,
+            overallScore: scorecard.overallScore,
+            buyingConvictionScore: scorecard.buyingConvictionScore,
+            fundamentalsScore: scorecard.fundamentalsScore,
+            valuationScore: scorecard.valuationScore,
+            momentumScore: scorecard.momentumScore,
+            grade: scorecard.grade,
+            gradeLabel: scorecard.gradeLabel,
+            healthStatus: scorecard.healthStatus,
+            valuationPosture: scorecard.valuationPosture,
+            scoreJustification: scorecard.scoreJustification,
+            fundamentalSituation: scorecard.fundamentalSituation,
+            bullCase: scorecard.bullCase,
+            bearCase: scorecard.bearCase,
+            tacticalAction: scorecard.tacticalAction,
+            fairValueEstimate: scorecard.metrics.fairValueEstimate,
+            upsideToFairValuePct: scorecard.metrics.upsideToFairValuePct,
+            suggestedBuyZoneMin: scorecard.suggestedBuyZone.min,
+            suggestedBuyZoneMax: scorecard.suggestedBuyZone.max,
+            targetPrice: scorecard.targetPrice,
+            stopLossAnchor: scorecard.stopLossAnchor,
+            recommendedMaxAllocationPct: scorecard.recommendedMaxAllocationPct,
+            metricsJson: JSON.stringify(scorecard.metrics),
+            rawCardJson: JSON.stringify(scorecard),
+            analyzedAt: new Date(scorecard.analyzedAt),
+          },
+          update: {
+            name: scorecard.name,
+            price: scorecard.price,
+            change: scorecard.change,
+            changePercent: scorecard.changePercent,
+            currency: scorecard.currency,
+            sector: scorecard.sector,
+            industry: scorecard.industry,
+            marketCap: scorecard.marketCap,
+            beta: scorecard.beta,
+            overallScore: scorecard.overallScore,
+            buyingConvictionScore: scorecard.buyingConvictionScore,
+            fundamentalsScore: scorecard.fundamentalsScore,
+            valuationScore: scorecard.valuationScore,
+            momentumScore: scorecard.momentumScore,
+            grade: scorecard.grade,
+            gradeLabel: scorecard.gradeLabel,
+            healthStatus: scorecard.healthStatus,
+            valuationPosture: scorecard.valuationPosture,
+            scoreJustification: scorecard.scoreJustification,
+            fundamentalSituation: scorecard.fundamentalSituation,
+            bullCase: scorecard.bullCase,
+            bearCase: scorecard.bearCase,
+            tacticalAction: scorecard.tacticalAction,
+            fairValueEstimate: scorecard.metrics.fairValueEstimate,
+            upsideToFairValuePct: scorecard.metrics.upsideToFairValuePct,
+            suggestedBuyZoneMin: scorecard.suggestedBuyZone.min,
+            suggestedBuyZoneMax: scorecard.suggestedBuyZone.max,
+            targetPrice: scorecard.targetPrice,
+            stopLossAnchor: scorecard.stopLossAnchor,
+            recommendedMaxAllocationPct: scorecard.recommendedMaxAllocationPct,
+            metricsJson: JSON.stringify(scorecard.metrics),
+            rawCardJson: JSON.stringify(scorecard),
+            analyzedAt: new Date(scorecard.analyzedAt),
+          },
+        });
+      } catch (dbErr: any) {
+        console.warn(`[Scorecard DB Save Error] for ${cleanRaw}:`, dbErr.message);
+      }
+    }
+
     return scorecard;
   } catch (err: any) {
     console.error(`Error evaluating scorecard for ${cleanRaw}:`, err?.message || err);
-    return null;
+    throw err;
   }
 }
 
-// Fetch all scorecards across portfolio holdings & watchlists
+/**
+ * Fetch all scorecards from Database (Instant Read, zero API Hammering on startup)
+ */
 export async function getScorecardsHubData(prisma: PrismaClient): Promise<ScorecardsHubResponse> {
-  // 1. Fetch DB Holdings
+  // 1. Fetch persistent scorecards from database
+  const savedRecords = await prisma.stockScorecardRecord.findMany({
+    orderBy: { overallScore: 'desc' },
+  });
+
+  // 2. Fetch DB Holdings for badge, broker, and position context
   const holdings = await prisma.holding.findMany({
     where: {
+      quantity: { not: 0 },
       assetType: { in: ['EQUITY', 'Stock', 'ETF'] },
     },
     include: { broker: true },
   });
 
   const holdingSymbolsMap = new Map<string, any>();
-  holdings.forEach((h) => {
-    let clean = h.symbol.trim().toUpperCase();
-    if (clean.endsWith('_US_EQ')) clean = clean.replace('_US_EQ', '');
-    else if (clean.endsWith('_CA_EQ')) clean = clean.replace('_CA_EQ', '') + '.TO';
-    else if (clean.endsWith('L_EQ') || clean.endsWith('P_EQ')) clean = clean.replace(/[LP]_EQ$/, '') + '.L';
-    else if (clean.endsWith('_EQ')) clean = clean.replace('_EQ', '');
+  const holdingBrokersMap = new Map<string, Set<string>>();
 
-    holdingSymbolsMap.set(clean, {
+  holdings.forEach((h) => {
+    const clean = resolveYahooFinanceSymbol(h.symbol, h.currency || undefined).toUpperCase();
+    const raw = h.symbol.trim().toUpperCase();
+    const brokerName = h.broker?.name || 'Interactive Brokers';
+
+    [clean, raw].forEach((s) => {
+      if (!holdingBrokersMap.has(s)) {
+        holdingBrokersMap.set(s, new Set<string>());
+      }
+      holdingBrokersMap.get(s)!.add(brokerName);
+    });
+
+    const detail = {
       quantity: h.quantity,
       averageCost: h.averageCost,
       marketValue: h.marketValue,
       unrealizedPnL: h.unrealizedPnL,
       unrealizedPnLPercent: h.unrealizedPnLPercent,
-      broker: h.broker?.name || 'IBKR',
-    });
+      broker: brokerName,
+    };
+
+    if (!holdingSymbolsMap.has(clean)) holdingSymbolsMap.set(clean, detail);
+    if (!holdingSymbolsMap.has(raw)) holdingSymbolsMap.set(raw, detail);
   });
 
-  // 2. Fetch Watchlists & Symbols
+  // 3. Fetch Watchlists for badge and categorization context
   const watchlists = await prisma.watchlist.findMany({
     include: { items: true },
   });
@@ -516,58 +669,121 @@ export async function getScorecardsHubData(prisma: PrismaClient): Promise<Scorec
   const watchlistSymbolsMap = new Map<string, string[]>();
   watchlists.forEach((w) => {
     w.items.forEach((item) => {
-      const sym = item.symbol.trim().toUpperCase();
-      const existing = watchlistSymbolsMap.get(sym) || [];
-      if (!existing.includes(w.name)) {
-        existing.push(w.name);
-      }
-      watchlistSymbolsMap.set(sym, existing);
+      const sym = resolveYahooFinanceSymbol(item.symbol).toUpperCase();
+      const raw = item.symbol.trim().toUpperCase();
+      [sym, raw].forEach((s) => {
+        const existing = watchlistSymbolsMap.get(s) || [];
+        if (!existing.includes(w.name)) {
+          existing.push(w.name);
+        }
+        watchlistSymbolsMap.set(s, existing);
+      });
     });
   });
 
-  // Collect unique symbol list
-  const allSymbols = Array.from(
-    new Set([...Array.from(holdingSymbolsMap.keys()), ...Array.from(watchlistSymbolsMap.keys())])
-  );
+  // Map persistent records into StockScorecard objects with 1 to N ranking
+  const scorecards: StockScorecard[] = savedRecords.map((rec, index) => {
+    let metrics: ScorecardSubMetrics;
+    try {
+      metrics = JSON.parse(rec.metricsJson);
+    } catch {
+      metrics = {
+        priceTo52WeekHighPct: 0,
+        distanceFrom52WeekLowPct: 0,
+        technicalSetupScore: rec.buyingConvictionScore,
+        momentumScore: rec.momentumScore,
+        upsideToFairValuePct: rec.upsideToFairValuePct,
+        operatingMarginPct: null,
+        netMarginPct: null,
+        roePct: null,
+        debtToEquity: null,
+        currentRatio: null,
+        fcfYieldPct: null,
+        revenueGrowthPct: null,
+        piotroskiFScoreEstimate: 5,
+        altmanZScoreEstimate: 2.5,
+        trailingPE: null,
+        forwardPE: null,
+        priceToSales: null,
+        pegRatio: null,
+        evToEbitda: null,
+        fairValueEstimate: rec.fairValueEstimate,
+      };
+    }
 
-  // Evaluate in parallel batches
-  const scorecards: StockScorecard[] = [];
-  const batchSize = 12;
+    const symUpper = rec.symbol.trim().toUpperCase();
+    const cleanSymUpper = resolveYahooFinanceSymbol(rec.symbol).toUpperCase();
 
-  for (let i = 0; i < allSymbols.length; i += batchSize) {
-    const chunk = allSymbols.slice(i, i + batchSize);
-    const results = await Promise.allSettled(
-      chunk.map((sym) =>
-        evaluateStockScorecard(
-          sym,
-          holdingSymbolsMap.get(sym),
-          watchlistSymbolsMap.get(sym)
-        )
-      )
-    );
+    const holdingData = holdingSymbolsMap.get(symUpper) || holdingSymbolsMap.get(cleanSymUpper);
+    const brokersSet = new Set<string>();
+    (holdingBrokersMap.get(symUpper) || []).forEach((b) => brokersSet.add(b));
+    (holdingBrokersMap.get(cleanSymUpper) || []).forEach((b) => brokersSet.add(b));
+    if (holdingData?.broker) brokersSet.add(holdingData.broker);
+    const brokersList = Array.from(brokersSet);
 
-    results.forEach((res) => {
-      if (res.status === 'fulfilled' && res.value) {
-        scorecards.push(res.value);
-      }
-    });
-  }
+    const watchlistNamesSet = new Set<string>();
+    (watchlistSymbolsMap.get(symUpper) || []).forEach((w) => watchlistNamesSet.add(w));
+    (watchlistSymbolsMap.get(cleanSymUpper) || []).forEach((w) => watchlistNamesSet.add(w));
+    const watchlistList = Array.from(watchlistNamesSet);
 
-  // Sort descending by overall conviction score
-  scorecards.sort((a, b) => b.overallScore - a.overallScore);
+    return {
+      symbol: rec.symbol,
+      name: rec.name,
+      price: rec.price,
+      change: rec.change,
+      changePercent: rec.changePercent,
+      currency: rec.currency,
+      sector: rec.sector,
+      industry: rec.industry,
+      marketCap: rec.marketCap,
+      beta: rec.beta,
+      overallScore: rec.overallScore,
+      rank: index + 1, // 1 to N ranking
+      grade: rec.grade as ConvictionGrade,
+      gradeLabel: rec.gradeLabel,
+      buyingConvictionScore: rec.buyingConvictionScore,
+      fundamentalsScore: rec.fundamentalsScore,
+      valuationScore: rec.valuationScore,
+      momentumScore: rec.momentumScore,
+      healthStatus: rec.healthStatus as HealthStatus,
+      valuationPosture: rec.valuationPosture as ValuationPosture,
+      metrics,
+      tacticalAction: rec.tacticalAction,
+      suggestedBuyZone: { min: rec.suggestedBuyZoneMin, max: rec.suggestedBuyZoneMax },
+      targetPrice: rec.targetPrice,
+      stopLossAnchor: rec.stopLossAnchor,
+      recommendedMaxAllocationPct: rec.recommendedMaxAllocationPct,
+      scoreJustification: rec.scoreJustification,
+      fundamentalSituation: rec.fundamentalSituation,
+      bullCase: rec.bullCase,
+      bearCase: rec.bearCase,
+      keyStrengths: [
+        rec.fundamentalsScore >= 7.5 ? 'Strong balance sheet & margin efficiency.' : 'Established sector market presence.',
+        rec.valuationScore >= 7.0 ? 'Favorable valuation with margin of safety.' : 'Liquid institutional volume.',
+      ],
+      keyRisks: [
+        rec.beta > 1.3 ? 'Heightened systemic beta sensitivity.' : 'Sector macro cycle risk.',
+      ],
+      isHolding: brokersList.length > 0 || Boolean(holdingData),
+      holdingDetails: holdingData ? { ...holdingData, broker: brokersList[0] || holdingData.broker, brokers: brokersList } : undefined,
+      brokers: brokersList,
+      isWatchlist: watchlistList.length > 0,
+      watchlistNames: watchlistList,
+      analyzedAt: rec.analyzedAt.toISOString(),
+    };
+  });
 
-  // Summary statistics
   const holdingsItems = scorecards.filter((s) => s.isHolding);
   const watchlistItems = scorecards.filter((s) => s.isWatchlist);
 
-  const avgOverall = scorecards.length > 0 
-    ? Math.round(scorecards.reduce((sum, s) => sum + s.overallScore, 0) / scorecards.length) 
+  const avgOverall = scorecards.length > 0
+    ? Number((scorecards.reduce((sum, s) => sum + s.overallScore, 0) / scorecards.length).toFixed(1))
     : 0;
   const avgHoldings = holdingsItems.length > 0
-    ? Math.round(holdingsItems.reduce((sum, s) => sum + s.overallScore, 0) / holdingsItems.length)
+    ? Number((holdingsItems.reduce((sum, s) => sum + s.overallScore, 0) / holdingsItems.length).toFixed(1))
     : 0;
   const avgWatchlist = watchlistItems.length > 0
-    ? Math.round(watchlistItems.reduce((sum, s) => sum + s.overallScore, 0) / watchlistItems.length)
+    ? Number((watchlistItems.reduce((sum, s) => sum + s.overallScore, 0) / watchlistItems.length).toFixed(1))
     : 0;
 
   const topConvictionPick = scorecards[0] || null;
@@ -580,6 +796,27 @@ export async function getScorecardsHubData(prisma: PrismaClient): Promise<Scorec
       sectorSet.add(s.sector);
     }
   });
+
+  // Collect all unique brokers and watchlists with their counts
+  const brokerMap = new Map<string, number>();
+  const watchlistMap = new Map<string, number>();
+
+  scorecards.forEach((s) => {
+    (s.brokers || []).forEach((b) => {
+      brokerMap.set(b, (brokerMap.get(b) || 0) + 1);
+    });
+    (s.watchlistNames || []).forEach((w) => {
+      watchlistMap.set(w, (watchlistMap.get(w) || 0) + 1);
+    });
+  });
+
+  const availableBrokers = Array.from(brokerMap.entries())
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
+
+  const availableWatchlists = Array.from(watchlistMap.entries())
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count);
 
   return {
     scorecards,
@@ -595,11 +832,212 @@ export async function getScorecardsHubData(prisma: PrismaClient): Promise<Scorec
       topQualityPick,
     },
     sectors: Array.from(sectorSet).sort(),
+    brokers: availableBrokers,
+    watchlists: availableWatchlists,
     timestamp: Date.now(),
   };
 }
 
-// Compare multiple stocks head-to-head
+/**
+ * Refresh a single stock immediately
+ */
+export async function refreshSingleStockScorecard(
+  rawSymbol: string,
+  prisma: PrismaClient
+): Promise<StockScorecard | null> {
+  const cleanRaw = resolveYahooFinanceSymbol(rawSymbol);
+  
+  // Fetch holding and watchlist context
+  const holding = await prisma.holding.findFirst({
+    where: {
+      quantity: { not: 0 },
+      symbol: { startsWith: cleanRaw },
+    },
+    include: { broker: true },
+  });
+
+  const holdingData = holding ? {
+    quantity: holding.quantity,
+    averageCost: holding.averageCost,
+    marketValue: holding.marketValue,
+    unrealizedPnL: holding.unrealizedPnL,
+    unrealizedPnLPercent: holding.unrealizedPnLPercent,
+    broker: holding.broker?.name || 'Broker',
+  } : undefined;
+
+  const watchlists = await prisma.watchlistItem.findMany({
+    where: { symbol: { startsWith: cleanRaw } },
+    include: { watchlist: true },
+  });
+  const watchlistNames = watchlists.map((w) => w.watchlist.name);
+
+  // Clear memory cache to force re-computation
+  memoryCache.delete(cleanRaw);
+
+  const card = await evaluateStockScorecard(cleanRaw, holdingData, watchlistNames, prisma);
+  return card;
+}
+
+/**
+ * AI Latest Earnings Analysis Agent
+ */
+export async function analyzeLatestEarningsForStock(
+  rawSymbol: string
+): Promise<LatestEarningsAnalysisResult> {
+  const cleanRaw = resolveYahooFinanceSymbol(rawSymbol);
+
+  const summary = await yahooFinance.quoteSummary(
+    cleanRaw,
+    {
+      modules: ['price', 'earnings', 'earningsHistory', 'earningsTrend', 'financialData', 'defaultKeyStatistics'],
+    },
+    { validateResult: false }
+  ).catch((err) => {
+    throw new Error(`Failed to fetch earnings modules for ${cleanRaw}: ${err.message}`);
+  });
+
+  const priceModule = summary?.price;
+  const earningsModule = summary?.earnings;
+  const historyModule = summary?.earningsHistory;
+  const financials = summary?.financialData;
+
+  const companyName = priceModule?.shortName || priceModule?.longName || cleanRaw;
+  const currentPrice = Number(priceModule?.regularMarketPrice || 0);
+
+  // Parse Quarterly EPS comparisons
+  const rawHistory = historyModule?.history || [];
+  const quarters: EarningsQuarterComparison[] = rawHistory.slice(0, 4).map((h: any) => {
+    const qDate = h.quarter ? new Date(h.quarter).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'Quarter';
+    const epsActual = h.epsActual != null ? Number(h.epsActual) : null;
+    const epsEstimate = h.epsEstimate != null ? Number(h.epsEstimate) : null;
+    const surprise = h.surprisePercent != null ? Number(h.surprisePercent) * 100 : null;
+
+    return {
+      quarter: qDate,
+      epsActual,
+      epsEstimate,
+      epsSurprisePct: surprise != null ? Number(surprise.toFixed(1)) : null,
+      revenue: null,
+      earnings: null,
+    };
+  });
+
+  // Attach quarterly revenue if available
+  const quarterlyFinancials = earningsModule?.financialsChart?.quarterly || [];
+  quarterlyFinancials.slice(-4).forEach((q: any, idx: number) => {
+    if (quarters[idx]) {
+      quarters[idx].revenue = q.revenue != null ? Number(q.revenue) : null;
+      quarters[idx].earnings = q.earnings != null ? Number(q.earnings) : null;
+    }
+  });
+
+  const latestQ = quarters[0] || null;
+  const isBeat = latestQ?.epsSurprisePct != null ? latestQ.epsSurprisePct > 0 : true;
+  
+  let verdict: LatestEarningsAnalysisResult['verdict'] = 'IN_LINE';
+  let verdictLabel = 'Met Expectations (In-Line)';
+  if (latestQ?.epsSurprisePct != null) {
+    if (latestQ.epsSurprisePct >= 10) {
+      verdict = 'STRONG_BEAT';
+      verdictLabel = `Strong Double-Digit Beat (+${latestQ.epsSurprisePct}%)`;
+    } else if (latestQ.epsSurprisePct > 1) {
+      verdict = 'MODEST_BEAT';
+      verdictLabel = `Modest Earnings Beat (+${latestQ.epsSurprisePct}%)`;
+    } else if (latestQ.epsSurprisePct <= -10) {
+      verdict = 'BIG_MISS';
+      verdictLabel = `Substantial Earnings Miss (${latestQ.epsSurprisePct}%)`;
+    } else if (latestQ.epsSurprisePct < -1) {
+      verdict = 'MODEST_MISS';
+      verdictLabel = `Modest Earnings Miss (${latestQ.epsSurprisePct}%)`;
+    }
+  }
+
+  // AI Agent Briefing synthesis
+  let executiveDiagnosis = `${companyName} (${cleanRaw}) reported latest EPS of $${latestQ?.epsActual ?? 'N/A'} vs consensus expectations of $${latestQ?.epsEstimate ?? 'N/A'}${latestQ?.epsSurprisePct != null ? ` (${latestQ.epsSurprisePct >= 0 ? '+' : ''}${latestQ.epsSurprisePct}% surprise)` : ''}. Financial momentum remains aligned with quarterly operating targets.`;
+  let guidanceCommentary = 'Forward operating targets remain stable with management maintaining margin vigilance in current macro conditions.';
+  let recommendedScoreAdjustment = isBeat ? 0.3 : -0.4;
+  let fairValueAdjustmentPct = isBeat ? 5.0 : -4.0;
+  let analystSummary = `${verdictLabel}. Operating trajectory supports current scorecard positioning.`;
+  let keyFocusPoints = [
+    'Revenue trajectory across core divisions.',
+    'Operating margin durability and pricing power.',
+    'Next quarter forward guidance commentary.',
+  ];
+
+  try {
+    const aiPrompt = `You are a Wall Street senior technology & equity analyst.
+Analyze the latest quarterly earnings results for ${cleanRaw} (${companyName}):
+• Current Spot: $${currentPrice.toFixed(2)}
+• Latest EPS: $${latestQ?.epsActual ?? 'N/A'} vs $${latestQ?.epsEstimate ?? 'N/A'} consensus (${latestQ?.epsSurprisePct != null ? `${latestQ.epsSurprisePct}% surprise` : 'N/A'})
+• Historical Quarters: ${JSON.stringify(quarters.slice(0, 3))}
+• Profit Margin: ${financials?.profitMargins ? (financials.profitMargins * 100).toFixed(1) + '%' : 'N/A'}
+• Revenue Growth: ${financials?.revenueGrowth ? (financials.revenueGrowth * 100).toFixed(1) + '%' : 'N/A'}
+
+Provide an executive earnings diagnosis.
+Return ONLY valid JSON matching this schema:
+{
+  "executiveDiagnosis": "2-3 sentences diagnosing the quality of the earnings beat/miss, revenue quality, and underlying business momentum.",
+  "guidanceCommentary": "1-2 sentences summarizing forward guidance, margin outlook, and capital allocation.",
+  "recommendedScoreAdjustment": 0.4, // Numerical adjustment to the 1-10 overall scorecard (e.g. +0.5 for blowout beat, -0.6 for guidance cut)
+  "fairValueAdjustmentPct": 6.0, // Numerical % adjustment to fair value target (+/- percentage)
+  "analystSummary": "1 sentence concise bottom-line takeaway for investors.",
+  "keyFocusPoints": ["Core driver 1", "Core driver 2", "Key risk to watch"]
+}`;
+
+    const aiRes = await generateJsonCompletion<{
+      executiveDiagnosis: string;
+      guidanceCommentary: string;
+      recommendedScoreAdjustment: number;
+      fairValueAdjustmentPct: number;
+      analystSummary: string;
+      keyFocusPoints: string[];
+    }>({
+      userPrompt: aiPrompt,
+      temperature: 0.2,
+      maxTokens: 550,
+      timeoutMs: 18000,
+      tag: `[EarningsAI-${cleanRaw}]`,
+    }).catch(() => null);
+
+    if (aiRes?.data) {
+      if (aiRes.data.executiveDiagnosis) executiveDiagnosis = aiRes.data.executiveDiagnosis;
+      if (aiRes.data.guidanceCommentary) guidanceCommentary = aiRes.data.guidanceCommentary;
+      if (typeof aiRes.data.recommendedScoreAdjustment === 'number') recommendedScoreAdjustment = aiRes.data.recommendedScoreAdjustment;
+      if (typeof aiRes.data.fairValueAdjustmentPct === 'number') fairValueAdjustmentPct = aiRes.data.fairValueAdjustmentPct;
+      if (aiRes.data.analystSummary) analystSummary = aiRes.data.analystSummary;
+      if (Array.isArray(aiRes.data.keyFocusPoints) && aiRes.data.keyFocusPoints.length > 0) {
+        keyFocusPoints = aiRes.data.keyFocusPoints;
+      }
+    }
+  } catch (e: any) {
+    console.warn(`[EarningsAI] AI briefing fallback for ${cleanRaw}:`, e.message);
+  }
+
+  return {
+    symbol: cleanRaw,
+    companyName,
+    currentPrice,
+    reportDate: latestQ?.quarter || null,
+    timing: 'UNSPECIFIED',
+    isBeat,
+    verdict,
+    verdictLabel,
+    quarters,
+    executiveDiagnosis,
+    guidanceCommentary,
+    scorecardImpact: {
+      recommendedScoreAdjustment,
+      fairValueAdjustmentPct,
+      analystSummary,
+    },
+    keyFocusPoints,
+    analyzedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Compare multiple stocks head-to-head on 1-10 scale
+ */
 export async function compareStockScorecards(
   symbols: string[],
   prisma: PrismaClient
@@ -618,8 +1056,15 @@ export async function compareStockScorecards(
   const scorecards: StockScorecard[] = [];
 
   for (const sym of cleanSymbols) {
-    const card = await evaluateStockScorecard(sym);
-    if (card) scorecards.push(card);
+    // Read from DB first
+    const saved = await prisma.stockScorecardRecord.findUnique({ where: { symbol: sym } });
+    if (saved) {
+      const card = await evaluateStockScorecard(sym, undefined, undefined, prisma);
+      if (card) scorecards.push(card);
+    } else {
+      const card = await evaluateStockScorecard(sym, undefined, undefined, prisma);
+      if (card) scorecards.push(card);
+    }
   }
 
   if (scorecards.length === 0) {
@@ -637,9 +1082,9 @@ export async function compareStockScorecards(
   const bestSafety = [...scorecards].sort((a, b) => b.metrics.upsideToFairValuePct - a.metrics.upsideToFairValuePct)[0];
 
   const takeaways: string[] = [
-    `${bestOverall.symbol} leads the group with an Overall Conviction Score of ${bestOverall.overallScore}/100 (${bestOverall.gradeLabel}).`,
-    `${bestFund.symbol} exhibits the highest quality profile with a Fundamentals Score of ${bestFund.fundamentalsScore}/100 and ${bestFund.metrics.operatingMarginPct ?? 'N/A'}% operating margin.`,
-    `${bestVal.symbol} represents the most attractive valuation multiple with a Valuation Score of ${bestVal.valuationScore}/100.`,
+    `${bestOverall.symbol} leads the cohort with an Overall Conviction Score of ${bestOverall.overallScore}/10 (${bestOverall.gradeLabel}).`,
+    `${bestFund.symbol} exhibits the highest quality profile with a Fundamentals Score of ${bestFund.fundamentalsScore}/10 and ${bestFund.metrics.operatingMarginPct ?? 'N/A'}% operating margin.`,
+    `${bestVal.symbol} represents the most compelling valuation posture with a Valuation Score of ${bestVal.valuationScore}/10.`,
   ];
 
   return {

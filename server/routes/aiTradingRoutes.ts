@@ -3,7 +3,9 @@ import { alpacaService } from '../services/alpacaService';
 import { aiTradingGuardrails } from '../services/aiTradingGuardrails';
 import { alpacaBacktestService } from '../services/alpacaBacktestService';
 import { fetchTastyOrders } from '../services/tastytradeService';
-import { getAllDraftOrders, executeApprovedDraft, cancelDraft } from '../services/tastytradeToolService';
+import { fetchIbkrOrders } from '../services/ibkrService';
+import { getAllDraftOrders, executeApprovedDraft, cancelDraft, getDraftOrder, switchDraftBroker } from '../services/tastytradeToolService';
+import { calculateBuyingPowerComparison } from '../services/buyingPowerService';
 
 export function createAiTradingRouter(): Router {
   const router = Router();
@@ -107,6 +109,62 @@ export function createAiTradingRouter(): Router {
     }
   });
 
+  // POST /api/ai-trading/drafts/:id/route - Switch draft broker routing
+  router.post('/drafts/:id/route', async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { broker } = req.body;
+      if (!broker || !['tastytrade', 'ibkr', 'alpaca'].includes(broker.toLowerCase())) {
+        return res.status(400).json({ error: 'Valid broker (tastytrade, ibkr, alpaca) is required' });
+      }
+      const updatedDraft = await switchDraftBroker(id, broker.toLowerCase() as any);
+      res.json({ success: true, draft: updatedDraft });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // POST /api/ai-trading/analyze-buying-power - Standalone or draft-based buying power analysis
+  router.post('/analyze-buying-power', async (req: Request, res: Response) => {
+    try {
+      const { draftId, symbol, action, quantity, price, orderType, instrumentType, optionDetails } = req.body || {};
+
+      let params = {
+        symbol: symbol || '',
+        action: action || 'BUY',
+        quantity: quantity || 1,
+        price: price ? parseFloat(price) : undefined,
+        orderType: orderType || 'Limit',
+        instrumentType: instrumentType || 'Equity',
+        optionDetails
+      };
+
+      if (draftId) {
+        const draft = getDraftOrder(draftId);
+        if (draft) {
+          params = {
+            symbol: draft.symbol,
+            action: draft.action,
+            quantity: draft.quantity,
+            price: draft.price,
+            orderType: draft.orderType,
+            instrumentType: draft.instrumentType,
+            optionDetails: draft.optionDetails
+          };
+        }
+      }
+
+      if (!params.symbol) {
+        return res.status(400).json({ error: 'Ticker symbol is required for buying power analysis' });
+      }
+
+      const comparison = await calculateBuyingPowerComparison(params);
+      res.json({ success: true, comparison });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // GET /api/ai-trading/orders - Multi-broker orders endpoint
   router.get('/orders', async (req: Request, res: Response) => {
     try {
@@ -135,8 +193,25 @@ export function createAiTradingRouter(): Router {
           return res.json([]);
         }
       } else if (broker === 'ibkr') {
-        // IBKR simulated / live orders
-        return res.json([]);
+        try {
+          const ibkrOrders = await fetchIbkrOrders();
+          const normalized = (ibkrOrders || []).map((o: any) => ({
+            id: String(o.id || o.orderId),
+            broker: 'ibkr',
+            symbol: o.symbol || 'N/A',
+            side: (o.side || 'BUY').toUpperCase(),
+            type: o.orderType || 'LMT',
+            price: o.price ? parseFloat(o.price) : undefined,
+            qty: o.quantity || o.qty || 1,
+            status: o.status || 'Submitted',
+            submitted_at: o.submittedAt || new Date().toISOString(),
+            time_in_force: o.tif || 'Day',
+          }));
+          return res.json(normalized);
+        } catch (e: any) {
+          console.warn('[AI Trading] Error fetching IBKR orders:', e.message);
+          return res.json([]);
+        }
       } else {
         // Default Alpaca
         const orders = await alpacaService.getOrders(status, limit);

@@ -68,6 +68,22 @@ vi.mock('@/services/plannedTradeService', () => ({
     mutateAsync: vi.fn().mockResolvedValue({ success: true, messageId: 99 }),
     isPending: false,
   })),
+  useProposeTradeEntry: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
+  useTelegramStatus: vi.fn(() => ({
+    data: { connected: false, enabled: false, executionThreadId: null },
+    isLoading: false,
+  })),
+  useSyncTelegramBuffer: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
+  useUpdateExecutionThreadId: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  })),
 }));
 
 describe('ExecutionQueueManager Component', () => {

@@ -217,19 +217,19 @@ Return ONLY valid JSON with this exact structure:
       // Clean and validate parsed LLM output
       const baseGrowth = Number(parsed.scenarios.base.revenueGrowthRate ?? 10);
       const baseMargin = Number(parsed.scenarios.base.targetMargin ?? baselines.operatingMargin);
-      const baseMultiple = Number(parsed.scenarios.base.exitMultiple ?? baselines.trailingPE);
-      const baseDiscount = Number(parsed.scenarios.base.discountRate ?? estimatedCapmWacc);
-      const baseShareChange = Number(parsed.scenarios.base.annualShareChangePct ?? -1.0);
+      const baseMultiple = Math.max(8.0, Math.min(80.0, Math.abs(Number(parsed.scenarios.base.exitMultiple ?? baselines.trailingPE)) || 22.0));
+      const baseDiscount = Math.max(6.0, Math.min(20.0, Number(parsed.scenarios.base.discountRate ?? estimatedCapmWacc)));
+      const baseShareChange = Math.max(-5.0, Math.min(5.0, Number(parsed.scenarios.base.annualShareChangePct ?? -1.0)));
 
       const bullGrowth = Number(parsed.scenarios.bull?.revenueGrowthRate ?? (baseGrowth * 1.4));
       const bullMargin = Number(parsed.scenarios.bull?.targetMargin ?? (baseMargin * 1.2));
-      const bullMultiple = Number(parsed.scenarios.bull?.exitMultiple ?? (baseMultiple * 1.25));
+      const bullMultiple = Math.max(8.0, Math.min(100.0, Math.abs(Number(parsed.scenarios.bull?.exitMultiple ?? (baseMultiple * 1.25))) || 28.0));
       const bullDiscount = Number(parsed.scenarios.bull?.discountRate ?? (baseDiscount - 0.5));
       const bullShareChange = Number(parsed.scenarios.bull?.annualShareChangePct ?? (baseShareChange - 0.8));
 
       const bearGrowth = Number(parsed.scenarios.bear?.revenueGrowthRate ?? (baseGrowth * 0.5));
       const bearMargin = Number(parsed.scenarios.bear?.targetMargin ?? (baseMargin * 0.75));
-      const bearMultiple = Number(parsed.scenarios.bear?.exitMultiple ?? (baseMultiple * 0.7));
+      const bearMultiple = Math.max(6.0, Math.min(50.0, Math.abs(Number(parsed.scenarios.bear?.exitMultiple ?? (baseMultiple * 0.7))) || 15.0));
       const bearDiscount = Number(parsed.scenarios.bear?.discountRate ?? (baseDiscount + 1.0));
       const bearShareChange = Number(parsed.scenarios.bear?.annualShareChangePct ?? (baseShareChange + 1.5));
 
@@ -290,9 +290,9 @@ Return ONLY valid JSON with this exact structure:
           : ['Macroeconomic deceleration impacting discretionary demand', 'Input cost inflation or margin compression', 'Multiple compression in higher interest rate regime'],
         recommendedInputs: {
           startingPrice: Number(effectivePrice.toFixed(2)),
-          startingRevenue: Number(baselines.revenueBillions.toFixed(2)),
+          startingRevenue: baselines.revenueBillions > 0 ? baselines.revenueBillions : 0.05,
           startingMargin: Number(baselines.operatingMargin.toFixed(1)),
-          startingShares: Number(baselines.sharesOutstandingBillions.toFixed(3)),
+          startingShares: baselines.sharesOutstandingBillions > 0 ? baselines.sharesOutstandingBillions : 0.1,
           revenueGrowthRate: Number(baseGrowth.toFixed(1)),
           targetMargin: Number(baseMargin.toFixed(1)),
           exitMultiple: Number(baseMultiple.toFixed(1)),
@@ -454,9 +454,9 @@ function createCalibratedFallbackScenarios(
     ],
     recommendedInputs: {
       startingPrice: Number(price.toFixed(2)),
-      startingRevenue: Number(baselines.revenueBillions.toFixed(2)),
+      startingRevenue: baselines.revenueBillions > 0 ? baselines.revenueBillions : 0.05,
       startingMargin: Number(baselines.operatingMargin.toFixed(1)),
-      startingShares: Number(baselines.sharesOutstandingBillions.toFixed(3)),
+      startingShares: baselines.sharesOutstandingBillions > 0 ? baselines.sharesOutstandingBillions : 0.1,
       revenueGrowthRate: baseGrowth,
       targetMargin: baseMargin,
       exitMultiple: baseMultiple,

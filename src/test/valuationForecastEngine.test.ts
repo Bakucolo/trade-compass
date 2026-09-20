@@ -97,4 +97,80 @@ describe('valuationForecastEngine', () => {
     expect(presets.BULL.revenueGrowthRate).toBeGreaterThan(baseInputs.revenueGrowthRate);
     expect(presets.BULL.exitMultiple).toBeGreaterThan(baseInputs.exitMultiple);
   });
+
+  it('correctly models small-cap growth stocks like SATL ($31.9M revenue) with high precision', () => {
+    const satlInputs: ValuationInputs = {
+      startingPrice: 5.11,
+      startingRevenue: 0.0319, // $31.9M
+      startingMargin: 1.7, // 1.7%
+      startingShares: 0.1432, // 143.2M shares
+      revenueGrowthRate: 35.0, // 35% CAGR
+      targetMargin: 18.0, // mature margin
+      exitMultiple: 22.0, // 22x P/E
+      discountRate: 10.0,
+      annualShareChangePct: 0.0,
+      horizonYears: 5,
+      valuationMetric: 'PE',
+    };
+
+    const result = calculateValuationForecast(satlInputs);
+
+    // Revenue precision should be preserved (not truncated to 0.00 or 0.03)
+    expect(result.path[0].revenue).toBeCloseTo(0.0319, 3);
+    // Year 5 revenue: 0.0319 * (1.35)^5 = ~0.143B ($143M)
+    expect(result.terminalRevenue).toBeGreaterThan(0.12);
+    // Target price should be realistic and positive (not $0.01)
+    expect(result.projectedTargetPrice).toBeGreaterThan(2.0);
+    expect(result.projectedTargetPrice).toBeLessThan(25.0);
+    // Margin of safety should be bounded and reasonable (not -51,000%)
+    expect(result.marginOfSafetyPct).toBeGreaterThan(-100);
+    expect(result.marginOfSafetyPct).toBeLessThan(100);
+  });
+
+  it('sanitizes negative exit multiples and negative margins to prevent $0.01 price collapse', () => {
+    const brokenInputs: ValuationInputs = {
+      startingPrice: 5.11,
+      startingRevenue: 0.0319,
+      startingMargin: -30.0,
+      startingShares: 0.1432,
+      revenueGrowthRate: 20.0,
+      targetMargin: -10.0, // negative margin
+      exitMultiple: -170.3, // invalid negative PE from Yahoo
+      discountRate: 10.0,
+      annualShareChangePct: 0.0,
+      horizonYears: 5,
+    };
+
+    const result = calculateValuationForecast(brokenInputs);
+
+    // Must never collapse to 1 cent
+    expect(result.projectedTargetPrice).toBeGreaterThan(0.5);
+    expect(result.discountedFairValue).toBeGreaterThan(0.3);
+    // Margin of safety must not be -51,000%
+    expect(result.marginOfSafetyPct).toBeGreaterThan(-100);
+  });
+
+  it('supports Price-to-Sales (PS) methodology for early commercial space/tech stocks', () => {
+    const psInputs: ValuationInputs = {
+      startingPrice: 5.11,
+      startingRevenue: 0.0319, // $31.9M
+      startingMargin: 1.7,
+      startingShares: 0.1432, // 143.2M shares -> Rev/Share = $0.22
+      revenueGrowthRate: 35.0,
+      targetMargin: 15.0,
+      exitMultiple: 8.0, // 8x P/S
+      discountRate: 10.0,
+      annualShareChangePct: 0.0,
+      horizonYears: 5,
+      valuationMetric: 'PS',
+    };
+
+    const result = calculateValuationForecast(psInputs);
+
+    // Year 5: ~$143M revenue / 143.2M shares = ~$1.00 rev/share
+    // 8x P/S -> Target Price = ~$8.00
+    expect(result.projectedTargetPrice).toBeCloseTo(8.0, 0);
+    expect(result.totalReturnPct).toBeGreaterThan(40);
+    expect(result.discountedFairValue).toBeCloseTo(4.97, 0);
+  });
 });

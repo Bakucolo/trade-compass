@@ -181,3 +181,112 @@ export function useSendPlannedTradesPdfToTelegram() {
     mutationFn: sendPlannedTradesTelegram,
   });
 }
+
+export interface TelegramBufferStatus {
+  isConfigured: boolean;
+  bufferUrl: string | null;
+  executionThreadId: string | null;
+  alertsThreadId: string | null;
+  appThreadId: string | null;
+  lastSyncTimestamp: string | null;
+  lastSyncCount: number;
+}
+
+export const fetchTelegramStatus = async (): Promise<TelegramBufferStatus> => {
+  const res = await fetch('/api/telegram/status');
+  if (!res.ok) throw new Error('Failed to fetch Telegram status');
+  return res.json();
+};
+
+export const syncTelegramBuffer = async (): Promise<{ success: boolean; consumedCount: number; message: string }> => {
+  const res = await fetch('/api/telegram/sync-buffer', { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to sync Telegram buffer');
+  return res.json();
+};
+
+export const updateExecutionThreadId = async (threadId: string | number): Promise<{ success: boolean; threadId: string }> => {
+  const res = await fetch('/api/telegram/config-execution-thread', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ threadId }),
+  });
+  if (!res.ok) throw new Error('Failed to update execution thread ID');
+  return res.json();
+};
+
+export function useTelegramStatus() {
+  return useQuery({
+    queryKey: ['telegramStatus'],
+    queryFn: fetchTelegramStatus,
+    refetchInterval: 15000,
+  });
+}
+
+export function useSyncTelegramBuffer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: syncTelegramBuffer,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['plannedTrades'] });
+      queryClient.invalidateQueries({ queryKey: ['telegramStatus'] });
+      queryClient.invalidateQueries({ queryKey: ['thoughtLogs'] });
+    },
+  });
+}
+
+export function useUpdateExecutionThreadId() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: updateExecutionThreadId,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['telegramStatus'] });
+    },
+  });
+}
+
+export interface TradeEntryProposal {
+  symbol: string;
+  companyName: string;
+  currentPrice: number;
+  action: string;
+  orderType: string;
+  timeframe: string;
+  primaryEntryPrice: number;
+  conservativeEntryPrice: number;
+  aggressiveEntryPrice: number;
+  stopLoss: number;
+  stopLossPercent: number;
+  targetExit: number;
+  targetExitPercent: number;
+  rewardToRiskRatio: number;
+  setupQuality: 'PRIME' | 'GOOD' | 'CHOPPY' | 'HIGH_RISK';
+  recommendedOrderType: 'LIMIT' | 'STOP_LIMIT';
+  recommendedTimeframe: 'DAY' | 'WEEK';
+  tacticalRationale: string;
+  invalidationCondition: string;
+  keySupportLevels: number[];
+  keyResistanceLevels: number[];
+  rsi?: number;
+  atr?: number;
+  marketStage?: string;
+  analyzedAt: string;
+}
+
+export const proposeTradeEntry = async (tradeId: string): Promise<{ success: boolean; proposal: TradeEntryProposal; trade: PlannedTrade }> => {
+  const res = await fetch(`/api/management/planned-trades/${tradeId}/propose-entry`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ error: 'Failed to analyze trade entry' }));
+    throw new Error(error.error || 'Failed to analyze trade entry');
+  }
+  return res.json();
+};
+
+export function useProposeTradeEntry() {
+  return useMutation({
+    mutationFn: (tradeId: string) => proposeTradeEntry(tradeId),
+  });
+}
+

@@ -6,9 +6,15 @@ import {
   useDeletePlannedTrade,
   useReorderPlannedTrades,
   useSendPlannedTradesPdfToTelegram,
+  useTelegramStatus,
+  useSyncTelegramBuffer,
+  useUpdateExecutionThreadId,
+  useProposeTradeEntry,
+  TradeEntryProposal,
 } from '@/services/plannedTradeService';
 import { PlannedTradeModal } from './PlannedTradeModal';
 import { PriceAlertModal } from '../PriceAlertModal';
+import { TradeEntryProposalModal } from './TradeEntryProposalModal';
 import { useCreateTrade } from '@/services/tradeService';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -34,6 +40,8 @@ import {
   ArrowUpDown,
   Sparkles,
   Bell,
+  RefreshCw,
+  Settings2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -58,6 +66,24 @@ export function ExecutionQueueManager({
   const [isAlertModalOpen, setIsAlertModalOpen] = useState(false);
   const [selectedTradeForAlert, setSelectedTradeForAlert] = useState<PlannedTrade | null>(null);
 
+  // AI Entry Proposal State
+  const [isProposalModalOpen, setIsProposalModalOpen] = useState(false);
+  const [selectedTradeForProposal, setSelectedTradeForProposal] = useState<PlannedTrade | null>(null);
+  const [proposalData, setProposalData] = useState<TradeEntryProposal | null>(null);
+  const proposeEntryMutation = useProposeTradeEntry();
+
+  const handleProposeEntry = async (trade: PlannedTrade) => {
+    setSelectedTradeForProposal(trade);
+    setProposalData(null);
+    setIsProposalModalOpen(true);
+    try {
+      const res = await proposeEntryMutation.mutateAsync(trade.id);
+      setProposalData(res.proposal);
+    } catch (err: any) {
+      toast.error(`Entry analysis failed: ${err.message}`);
+    }
+  };
+
   // Drag and Drop state
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
   const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
@@ -69,6 +95,38 @@ export function ExecutionQueueManager({
   const reorderMutation = useReorderPlannedTrades();
   const sendTelegramMutation = useSendPlannedTradesPdfToTelegram();
   const createTradeMutation = useCreateTrade();
+
+  // Telegram Buffer & Execution Topic Sync
+  const { data: telegramStatus } = useTelegramStatus();
+  const syncTelegramMutation = useSyncTelegramBuffer();
+  const updateThreadIdMutation = useUpdateExecutionThreadId();
+  const [isEditingThreadId, setIsEditingThreadId] = useState(false);
+  const [customThreadId, setCustomThreadId] = useState('');
+
+  const handleSyncTelegram = async () => {
+    try {
+      const res = await syncTelegramMutation.mutateAsync();
+      refetch();
+      if (res.consumedCount > 0) {
+        toast.success(`Synced ${res.consumedCount} new trade(s) from Telegram!`);
+      } else {
+        toast.info('Telegram execution buffer is up to date (0 new trades)');
+      }
+    } catch (err: any) {
+      toast.error(`Telegram sync error: ${err.message}`);
+    }
+  };
+
+  const handleSaveThreadId = async () => {
+    if (!customThreadId.trim()) return;
+    try {
+      await updateThreadIdMutation.mutateAsync(customThreadId.trim());
+      setIsEditingThreadId(false);
+      toast.success(`Telegram Execution Topic linked to thread #${customThreadId.trim()}`);
+    } catch (err: any) {
+      toast.error(`Failed to save thread ID: ${err.message}`);
+    }
+  };
 
   // Sort trades strictly by rank ascending
   const sortedTrades = useMemo(() => {
@@ -314,6 +372,94 @@ export function ExecutionQueueManager({
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Plan New Trade</span>
+            </Button>
+          </div>
+        </div>
+
+        {/* ================= TELEGRAM EXECUTION TOPIC SYNC BANNER ================= */}
+        <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
+              <Send className="w-4 h-4 text-primary" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  Telegram &ldquo;Execution&rdquo; Topic Auto-Ingestion
+                </span>
+                {telegramStatus?.executionThreadId ? (
+                  <Badge variant="outline" className="text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
+                    Linked (Topic #{telegramStatus.executionThreadId})
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[10px] font-mono font-bold bg-amber-500/10 text-amber-300 border-amber-500/30">
+                    Auto-Discovering (Awaiting 1st Msg)
+                  </Badge>
+                )}
+                {telegramStatus?.lastSyncTimestamp && (
+                  <span className="text-[10px] text-muted-foreground">
+                    Synced {new Date(telegramStatus.lastSyncTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Orders sent to your Telegram <span className="text-primary font-semibold">execution</span> topic (e.g. &ldquo;BUY 100 AAPL @ 150&rdquo;) are automatically added to this execution queue.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto shrink-0 justify-end">
+            {isEditingThreadId ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  placeholder="Thread ID (e.g. 5)"
+                  value={customThreadId}
+                  onChange={(e) => setCustomThreadId(e.target.value)}
+                  className="h-7 w-28 text-xs px-2 rounded-lg bg-background border border-border focus:outline-none focus:ring-1 focus:ring-primary font-mono"
+                />
+                <Button
+                  size="sm"
+                  onClick={handleSaveThreadId}
+                  disabled={updateThreadIdMutation.isPending}
+                  className="h-7 text-[11px] px-2.5 font-bold"
+                >
+                  Save
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setIsEditingThreadId(false)}
+                  className="h-7 text-[11px] px-2"
+                >
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setCustomThreadId(telegramStatus?.executionThreadId || '');
+                  setIsEditingThreadId(true);
+                }}
+                className="h-7 text-[11px] text-muted-foreground hover:text-foreground gap-1 px-2 font-medium"
+                title="Configure Execution Topic Thread ID"
+              >
+                <Settings2 className="w-3.5 h-3.5" />
+                <span>{telegramStatus?.executionThreadId ? 'Edit Topic ID' : 'Set Topic ID'}</span>
+              </Button>
+            )}
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSyncTelegram}
+              disabled={syncTelegramMutation.isPending}
+              className="h-7 text-[11px] gap-1.5 border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 font-semibold"
+            >
+              <RefreshCw className={cn("w-3 h-3 text-primary", syncTelegramMutation.isPending && "animate-spin")} />
+              <span>{syncTelegramMutation.isPending ? 'Syncing...' : 'Sync Now'}</span>
             </Button>
           </div>
         </div>
@@ -724,6 +870,21 @@ export function ExecutionQueueManager({
                       </div>
                     )}
 
+                    {/* AI Entry Level Analyst Button */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleProposeEntry(trade);
+                      }}
+                      className="h-7 px-2 text-[11px] font-bold bg-primary/10 hover:bg-primary/20 text-primary border-primary/30 hover:border-primary/50 transition-all flex items-center gap-1 shadow-xs"
+                      title="AI Agent: Propose optimal entry levels & stop loss"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-primary" />
+                      <span>AI Entry</span>
+                    </Button>
+
                     {/* Set Price Alert Button */}
                     <Button
                       variant="ghost"
@@ -825,6 +986,26 @@ export function ExecutionQueueManager({
             ? `Execution queue trigger: ${selectedTradeForAlert.action} ${selectedTradeForAlert.symbol}`
             : ''
         }
+      />
+
+      {/* AI Entry Level Proposal Modal */}
+      <TradeEntryProposalModal
+        isOpen={isProposalModalOpen}
+        onOpenChange={(open) => {
+          setIsProposalModalOpen(open);
+          if (!open) {
+            setSelectedTradeForProposal(null);
+            setProposalData(null);
+          }
+        }}
+        trade={selectedTradeForProposal}
+        proposal={proposalData}
+        isLoading={proposeEntryMutation.isPending}
+        onReanalyze={() => selectedTradeForProposal && handleProposeEntry(selectedTradeForProposal)}
+        onOpenPriceAlert={(t, targetP) => {
+          setSelectedTradeForAlert(t);
+          setIsAlertModalOpen(true);
+        }}
       />
     </div>
   );

@@ -356,10 +356,90 @@ model PlannedTrade {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
+  @@index([symbol])
   @@index([timeframe])
   @@index([status])
   @@index([rank])
   @@index([createdAt])
 }
 
+model PositionFolder {
+  id          String                     @id @default(uuid())
+  name        String
+  color       String                     @default("blue")
+  icon        String                     @default("Folder")
+  description String?
+  sortOrder   Int                        @default(0)
+  createdAt   DateTime                   @default(now())
+  updatedAt   DateTime                   @updatedAt
+  assignments PositionFolderAssignment[]
+
+  @@index([sortOrder])
+}
+
+model PositionFolderAssignment {
+  id          String         @id @default(uuid())
+  folderId    String
+  folder      PositionFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  positionKey String         @unique
+  symbol      String
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([folderId])
+  @@index([symbol])
+}
+
+model StockScorecardRecord {
+  id                          String   @id @default(uuid())
+  symbol                      String   @unique
+  name                        String
+  price                       Float
+  change                      Float
+  changePercent               Float
+  currency                    String   @default("USD")
+  sector                      String   @default("General")
+  industry                    String   @default("General")
+  marketCap                   Float    @default(0)
+  beta                        Float    @default(1.0)
+
+  // 1 to 10 Normalized Scores
+  overallScore                Float    // 1.0 - 10.0
+  buyingConvictionScore       Float    // 1.0 - 10.0
+  fundamentalsScore           Float    // 1.0 - 10.0
+  valuationScore              Float    // 1.0 - 10.0
+  momentumScore               Float    @default(5.0) // 1.0 - 10.0
+  grade                       String   // e.g. "STRONG_BUY", "BUY_ACCUMULATE", "HOLD_MONITOR", "TRIM_DEFENSIVE", "AVOID_HIGH_RISK"
+  gradeLabel                  String   // e.g. "Prime Strong Buy"
+  healthStatus                String   // "PRISTINE", "STABLE", "MODERATE_DEBT", "HIGH_LEVERAGE", "DISTRESSED"
+  valuationPosture            String   // "DEEP_VALUE", "FAIR_VALUE", "RICHLY_VALUED", "SPECULATIVE_BUBBLE"
+
+  // AI Narrative & Explanations
+  scoreJustification          String   // Detailed rationale for 1-10 scores
+  fundamentalSituation        String   // Operational & financial health, competitive moat, margins, debt
+  bullCase                    String
+  bearCase                    String
+  tacticalAction              String
+
+  // Fair Value & Targets
+  fairValueEstimate           Float
+  upsideToFairValuePct        Float
+  suggestedBuyZoneMin         Float
+  suggestedBuyZoneMax         Float
+  targetPrice                 Float
+  stopLossAnchor              Float
+  recommendedMaxAllocationPct Float    @default(5.0)
+
+  // Key metrics & Raw Data
+  metricsJson                 String   // JSON stringified ScorecardSubMetrics
+  rawCardJson                 String   // Full JSON snapshot
+
+  analyzedAt                  DateTime @default(now())
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  @@index([symbol])
+  @@index([overallScore])
+  @@index([analyzedAt])
+}
 

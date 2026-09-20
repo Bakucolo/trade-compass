@@ -122,7 +122,88 @@ export interface StagedDraftOrder {
         executedAt?: string;
         status?: string;
     };
+    buyingPowerComparison?: BuyingPowerComparisonResult;
 }
+
+export interface BrokerMarginImpact {
+    broker: 'tastytrade' | 'ibkr';
+    accountNumber: string;
+    currency: string;
+    totalAvailableBuyingPower: number;
+    buyingPowerRequirement: number;
+    initialMarginRequirement: number;
+    maintenanceMarginRequirement: number;
+    estimatedCommission: number;
+    estimatedRegulatoryFees: number;
+    totalCashOutlay: number;
+    postTradeAvailableBuyingPower: number;
+    remainingBufferPercentage: number;
+    isFeasible: boolean;
+    warnings: string[];
+}
+
+export interface BuyingPowerComparisonResult {
+    symbol: string;
+    action: string;
+    quantity: number;
+    price?: number;
+    orderType: string;
+    instrumentType: string;
+    tastytrade: BrokerMarginImpact;
+    ibkr: BrokerMarginImpact;
+    verdict: {
+        recommendedBroker: 'tastytrade' | 'ibkr' | 'either';
+        capitalEfficiencyWinner: 'tastytrade' | 'ibkr' | 'equal';
+        feeWinner: 'tastytrade' | 'ibkr' | 'equal';
+        buyingPowerDifference: number;
+        feeDifference: number;
+        summary: string;
+        rationale: string[];
+    };
+    calculatedAt: string;
+}
+
+export const analyzeBuyingPower = async (params: {
+    draftId?: string;
+    symbol?: string;
+    action?: string;
+    quantity?: number;
+    price?: number;
+    orderType?: string;
+    instrumentType?: string;
+    optionDetails?: {
+        expirationDate: string;
+        strikePrice: number;
+        optionType: 'Call' | 'Put';
+    };
+}): Promise<{ success: boolean; comparison: BuyingPowerComparisonResult }> => {
+    const response = await fetch('/api/ai-trading/analyze-buying-power', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Failed to analyze buying power (${response.status})`);
+    }
+    return response.json();
+};
+
+export const switchDraftBroker = async (
+    draftId: string,
+    targetBroker: 'tastytrade' | 'ibkr' | 'alpaca'
+): Promise<{ success: boolean; draft: StagedDraftOrder }> => {
+    const response = await fetch(`/api/ai-trading/drafts/${draftId}/route`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ broker: targetBroker }),
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Failed to switch broker (${response.status})`);
+    }
+    return response.json();
+};
 
 export const approveDraftOrder = async (
     draftId: string,

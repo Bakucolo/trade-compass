@@ -89,10 +89,12 @@ export interface CompanyBaselinesData {
   currentPrice: number;
   revenue: number;
   revenueBillions: number;
+  revenueMillions: number;
   operatingMargin: number;
   profitMargin: number;
   sharesOutstanding: number;
   sharesOutstandingBillions: number;
+  sharesOutstandingMillions: number;
   freeCashFlow: number;
   fcfBillions: number;
   trailingPE: number;
@@ -100,6 +102,7 @@ export interface CompanyBaselinesData {
   revenueGrowth: number;
   beta: number;
   marketCap: number;
+  isPreProfit?: boolean;
 }
 
 export async function fetchCompanyBaselines(ticker: string): Promise<CompanyBaselinesData> {
