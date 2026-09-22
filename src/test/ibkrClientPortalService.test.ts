@@ -37,15 +37,15 @@ describe('Interactive Brokers (IBKR) Client Portal Gateway Architecture', () => 
     it('defaults to IBKR Paper Trading account and Client Portal Gateway URL', () => {
       const config = getIbkrConfig();
       expect(config.gatewayUrl).toBe('https://localhost:5000/v1/api');
-      expect(config.paperAccountId).toBe('DU1234567');
-      expect(config.env).toBe('paper');
+      expect(config.paperAccountId).toBe(process.env.IBKR_ACCOUNT_ID || 'DU1234567');
+      expect(config.env).toBe(process.env.IBKR_ENV || 'paper');
       expect(config.heartbeatIntervalMs).toBe(120000);
     });
 
     it('session status accurately reports paper environment and heartbeat cadence', () => {
       const status = getIbkrSessionStatus();
-      expect(status.environment).toBe('paper');
-      expect(status.paperAccountId).toBe('DU1234567');
+      expect(status.environment).toBe(process.env.IBKR_ENV || 'paper');
+      expect(status.paperAccountId).toBe(process.env.IBKR_ACCOUNT_ID || 'DU1234567');
       expect(status.tickleIntervalMs).toBe(120000);
     });
   });
@@ -134,7 +134,7 @@ describe('Interactive Brokers (IBKR) Client Portal Gateway Architecture', () => 
 
       expect(draft.draftId).toBeDefined();
       expect(draft.broker).toBe('ibkr');
-      expect(draft.accountNumber).toBe('DU1234567');
+      expect(draft.accountNumber).toBe(process.env.IBKR_ACCOUNT_ID || 'DU1234567');
       expect(draft.status).toBe('PENDING_APPROVAL');
       expect(draft.symbol).toBe('AAPL');
       expect(draft.quantity).toBe(10);

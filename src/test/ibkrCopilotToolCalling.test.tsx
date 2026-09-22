@@ -83,7 +83,7 @@ describe('IBKR Copilot Tool-Calling UI & Human-in-the-Loop Trade Approval', () =
     });
   });
 
-  it('renders AiTradingBrokerBar with IBKR Client Portal (Paper) badge and Heartbeat pill', () => {
+  it('renders AiTradingBrokerBar with IBKR Live Margin badge and Heartbeat pill', () => {
     render(
       <QueryClientProvider client={queryClient}>
         <AiTradingBrokerBar
@@ -96,11 +96,11 @@ describe('IBKR Copilot Tool-Calling UI & Human-in-the-Loop Trade Approval', () =
     );
 
     // Verify broker tab badge
-    expect(screen.getByText(/Client Portal \(Paper\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Live Margin \(GIA\)/i)).toBeInTheDocument();
 
     // Verify endpoint info
-    expect(screen.getByText(/IBKR Gateway \(Paper DU1234567\)/i)).toBeInTheDocument();
-    expect(screen.getByText(/localhost:5000\/v1\/api/i)).toBeInTheDocument();
+    expect(screen.getByText(/IBKR Gateway \(Live U15491236\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/TWS\/Gateway 7497/i)).toBeInTheDocument();
 
     // Verify Tickle Heartbeat status pill
     expect(screen.getByText(/Tickle Heartbeat \(2m\)/i)).toBeInTheDocument();

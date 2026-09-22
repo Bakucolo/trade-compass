@@ -75,9 +75,9 @@ export const AiTradingBrokerBar: React.FC<AiTradingBrokerBarProps> = ({
     {
       id: 'ibkr',
       name: 'Interactive Brokers',
-      badge: 'Client Portal (Paper)',
-      envName: 'IBKR Gateway (Paper DU1234567)',
-      endpoint: 'localhost:5000/v1/api',
+      badge: 'Live Margin (GIA)',
+      envName: 'IBKR Gateway (Live U15491236)',
+      endpoint: 'TWS/Gateway 7497 & Client Portal',
       instruments: 'Equities, Options & Tool Calling',
       color: 'text-blue-400',
       borderColor: 'border-blue-500/40',

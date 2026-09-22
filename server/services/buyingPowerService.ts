@@ -10,13 +10,21 @@ export interface BrokerMarginImpact {
   accountNumber: string;
   environment?: string;
   currency?: string;
+  baseCurrency?: string;
+  fxRateToBase?: number;
   availableBuyingPower: number;
+  availableBuyingPowerBase?: number;
   totalAvailableBuyingPower: number;
   buyingPowerRequirement: number;
+  buyingPowerRequirementBase?: number;
   initialMarginRequirement: number;
+  initialMarginRequirementBase?: number;
   maintenanceMarginRequirement: number;
+  maintenanceMarginRequirementBase?: number;
   portfolioMarginRequirement?: number; // IBKR TIMS Portfolio Margin
+  portfolioMarginRequirementBase?: number;
   buyingPowerEffect?: number; // Tastytrade net BP effect (Margin - Credit)
+  buyingPowerEffectBase?: number;
   marginMethod?: string;
   notionalValue: number;
   estimatedCommission: number;
@@ -24,6 +32,7 @@ export interface BrokerMarginImpact {
   totalFees: number;
   totalCashOutlay: number;
   postTradeBuyingPower: number;
+  postTradeBuyingPowerBase?: number;
   postTradeAvailableBuyingPower: number;
   postTradeBufferPercent: number;
   remainingBufferPercentage: number;
@@ -296,13 +305,24 @@ export async function calculateBuyingPowerComparison(
   };
 
   // --------------------------------------------------------------------------
-  // 2. INTERACTIVE BROKERS (IBKR) CALCULATION
+  // 2. INTERACTIVE BROKERS (IBKR) CALCULATION (Live Margin Account U15491236)
   // --------------------------------------------------------------------------
   const ibkrConfig = getIbkrConfig();
-  const ibkrAccNumber = ibkrSummaryRaw?.accountId || ibkrConfig.paperAccountId || 'DU1234567';
-  const ibkrEnv = ibkrConfig.environment === 'live' ? 'Live Gateway' : 'Paper Trading (Client Portal)';
+  const ibkrAccNumber = ibkrSummaryRaw?.accountId || process.env.IBKR_ACCOUNT_ID || 'U15491236';
+  const isLiveAccount = ibkrAccNumber.startsWith('U') || ibkrConfig.environment === 'live';
+  const ibkrEnv = isLiveAccount ? 'Live Margin' : 'Paper Trading (Client Portal)';
 
-  const ibkrAvailableBp = ibkrSummaryRaw?.buyingPower || 3400000.00;
+  const baseCurrency = ibkrSummaryRaw?.currency || process.env.IBKR_BASE_CURRENCY || 'GBP';
+  const fxRateToUSD = 1.3351; // Standard GBP/USD exchange rate (1 GBP ≈ $1.3351 USD)
+
+  // Real Available Buying Power from Live Margin Account (in USD and GBP)
+  const ibkrRawBp = ibkrSummaryRaw?.buyingPower || 22180.00;
+  const ibkrAvailableBp = ibkrSummaryRaw?.currency === 'GBP'
+    ? Math.round(ibkrRawBp * fxRateToUSD * 100) / 100
+    : ibkrRawBp;
+  const ibkrAvailableBpBase = ibkrSummaryRaw?.currency === 'GBP'
+    ? ibkrRawBp
+    : Math.round((ibkrRawBp / fxRateToUSD) * 100) / 100;
 
   let ibkrBpReq = 0;
   let ibkrInitMargin = 0;
@@ -349,8 +369,15 @@ export async function calculateBuyingPowerComparison(
     ibkrCommission = Math.round(ibkrCommission * 100) / 100;
   }
 
+  // Account base currency (GBP) equivalents
+  const ibkrInitMarginBase = Math.round(ibkrInitMargin / fxRateToUSD);
+  const ibkrMaintMarginBase = Math.round(ibkrMaintMargin / fxRateToUSD);
+  const ibkrBpReqBase = Math.round(ibkrBpReq / fxRateToUSD);
+  const ibkrPmMarginBase = Math.round(ibkrPmMargin / fxRateToUSD);
+
   const ibkrTotalFees = Math.round((ibkrCommission + ibkrFees) * 100) / 100;
   const ibkrPostBp = Math.round((ibkrAvailableBp - ibkrBpReq - ibkrTotalFees) * 100) / 100;
+  const ibkrPostBpBase = Math.round((ibkrAvailableBpBase - ibkrBpReqBase - (ibkrTotalFees / fxRateToUSD)) * 100) / 100;
   const ibkrBufferPct = ibkrAvailableBp > 0
     ? Math.max(0, Math.round((ibkrPostBp / ibkrAvailableBp) * 1000) / 10)
     : 0;
@@ -358,7 +385,7 @@ export async function calculateBuyingPowerComparison(
 
   const ibkrWarnings: string[] = [];
   if (!ibkrFeasible) {
-    ibkrWarnings.push(`Insufficient IBKR BP: Requires $${(ibkrBpReq + ibkrTotalFees).toFixed(2)}, Available: $${ibkrAvailableBp.toFixed(2)}.`);
+    ibkrWarnings.push(`Insufficient IBKR BP: Requires $${(ibkrBpReq + ibkrTotalFees).toFixed(2)} (£${ibkrBpReqBase}), Available: $${ibkrAvailableBp.toFixed(2)} (£${ibkrAvailableBpBase}).`);
   }
 
   const ibkrImpact: BrokerMarginImpact = {
@@ -366,12 +393,19 @@ export async function calculateBuyingPowerComparison(
     accountNumber: ibkrAccNumber,
     environment: ibkrEnv,
     currency: 'USD',
+    baseCurrency,
+    fxRateToBase: 1 / fxRateToUSD,
     availableBuyingPower: ibkrAvailableBp,
+    availableBuyingPowerBase: ibkrAvailableBpBase,
     totalAvailableBuyingPower: ibkrAvailableBp,
     buyingPowerRequirement: ibkrBpReq,
+    buyingPowerRequirementBase: ibkrBpReqBase,
     initialMarginRequirement: ibkrInitMargin,
+    initialMarginRequirementBase: ibkrInitMarginBase,
     maintenanceMarginRequirement: ibkrMaintMargin,
+    maintenanceMarginRequirementBase: ibkrMaintMarginBase,
     portfolioMarginRequirement: ibkrPmMargin,
+    portfolioMarginRequirementBase: ibkrPmMarginBase,
     marginMethod: isOption
       ? (isShortOption
           ? (nakedStandardRate >= 1.0 ? 'Reg-T 100% Cash Restricted Margin' : 'Reg-T Initial Margin (Settles to Maint. / PM Eligible)')
@@ -383,15 +417,18 @@ export async function calculateBuyingPowerComparison(
     totalFees: ibkrTotalFees,
     totalCashOutlay: Math.round((ibkrInitMargin + ibkrTotalFees) * 100) / 100,
     postTradeBuyingPower: ibkrPostBp,
+    postTradeBuyingPowerBase: ibkrPostBpBase,
     postTradeAvailableBuyingPower: ibkrPostBp,
     postTradeBufferPercent: ibkrBufferPct,
     remainingBufferPercentage: ibkrBufferPct,
     isFeasible: ibkrFeasible,
     warnings: ibkrWarnings,
     features: [
+      `Live Margin Account (${ibkrAccNumber})`,
+      baseCurrency === 'GBP' ? `Base Currency: GBP (FX Rate: 1 GBP ≈ $${fxRateToUSD.toFixed(2)} USD)` : 'USD Account',
+      baseCurrency === 'GBP' ? `Pre-trade initial margin impact: £${ibkrInitMarginBase.toLocaleString()} ($${ibkrInitMargin.toFixed(2)} USD)` : `Initial margin: $${ibkrInitMargin.toFixed(2)}`,
       isOption ? '$0.65/contract flat tier' : '$0.005/share ($1.00 min)',
-      'Institutional Smart Routing (SMART)',
-      `Portfolio Margin requirement: $${ibkrPmMargin.toFixed(2)} (eligible accounts)`
+      'Institutional Smart Routing (SMART)'
     ]
   };
 

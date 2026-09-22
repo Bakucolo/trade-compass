@@ -31,7 +31,8 @@ import {
   fetchIbkrAccountSummary,
   fetchIbkrPositions,
   fetchIbkrOrders,
-  getIbkrConfig
+  getIbkrConfig,
+  registerLiveIbkrAccountData
 } from './services/ibkrService';
 import { fetchLiveOptionChains, buildOptionPricingContext, validateAndEnforcePlanPricing } from './services/optionDefenseService';
 import { runPortfolioAuditAgent, savePortfolioAuditToDb, listPortfolioAuditsFromDb, getPortfolioAuditByIdFromDb, deletePortfolioAuditFromDb } from './services/portfolioAnalyserService';
@@ -1023,6 +1024,21 @@ app.get('/api/portfolio/balances', async (req, res) => {
       accruedDividend: giaLiveAcct?.accruedDividend || 0,
       rawMetrics: giaLiveAcct?.rawMetrics || {}
     };
+
+    // Register live margin account telemetry for Buying Power service
+    registerLiveIbkrAccountData(IBKR_GIA_ACCOUNT, {
+      accountId: IBKR_GIA_ACCOUNT,
+      netLiquidation: giaNetLiqUSD,
+      netLiquidationValue: giaNetLiqUSD,
+      cashBalance: giaLiveAcct?.cash || 0,
+      buyingPower: giaBP,
+      availableFunds: giaLiveAcct?.availableFunds || giaBP,
+      maintenanceMargin: giaLiveAcct?.maintMargin || Math.max(0, giaNetLiqUSD * 0.28),
+      initialMargin: giaLiveAcct?.initMargin || giaBP,
+      currency: giaLiveAcct?.currency || 'GBP',
+      unrealizedPnL: giaUnPnLUSD,
+      realizedPnL: giaLiveAcct?.realizedPnL || 0
+    });
 
     const ibkrAccountsList = [acctISA, acctGIA];
 

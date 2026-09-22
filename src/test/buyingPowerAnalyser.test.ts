@@ -119,7 +119,7 @@ describe('Buying Power & Margin Calculation Engine (Tastytrade vs IBKR)', () => 
     const switched = await switchDraftBroker(draft.draftId, 'ibkr');
 
     expect(switched.broker).toBe('ibkr');
-    expect(switched.accountNumber).toBe('DU1234567');
+    expect(switched.accountNumber).toBe('U15491236');
     expect(switched.buyingPowerComparison).toBeDefined();
     expect(switched.dryRunResult?.estimatedCommission).toBe(1.0); // IBKR min commission $1.00
     expect(switched.dryRunResult?.warnings.some(w => w.includes('Re-routed to IBKR'))).toBe(true);
@@ -160,8 +160,12 @@ describe('Buying Power & Margin Calculation Engine (Tastytrade vs IBKR)', () => 
     expect(result.tastytrade.estimatedCommission).toBe(1.00);
 
     // 2. IBKR Margin (Initial Margin upfront, Maint & Portfolio Margin)
+    expect(result.ibkr.accountNumber).toBe('U15491236');
+    expect(result.ibkr.environment).toBe('Live Margin');
+    expect(result.ibkr.baseCurrency).toBe('GBP');
     expect(result.ibkr.buyingPowerRequirement).toBe(7076.00);
     expect(result.ibkr.initialMarginRequirement).toBe(7076.00);
+    expect(result.ibkr.initialMarginRequirementBase).toBe(Math.round(7076 / 1.3351));
     expect(result.ibkr.maintenanceMarginRequirement).toBe(3688.00); // 10% spot (3,388) + 300
     expect(result.ibkr.portfolioMarginRequirement).toBe(5082.00); // 15% spot (5,082)
     expect(result.ibkr.estimatedCommission).toBe(0.65);
@@ -176,6 +180,39 @@ describe('Buying Power & Margin Calculation Engine (Tastytrade vs IBKR)', () => 
     expect(result.tastyMetrics?.theta).toBe(65.055); // Short put has positive carry
     expect(result.tastyMetrics?.pop).toBeGreaterThanOrEqual(55); // ~60-65%
     expect(result.tastyMetrics?.p50).toBeGreaterThanOrEqual(40); // ~43-48%
+  });
+
+  it('accurately calculates exact IBKR 5,667 GBP margin impact for 1 AAPL Oct16 26 340 Put STO @ $7.90 matching live order preview', async () => {
+    const result = await calculateBuyingPowerComparison({
+      symbol: 'AAPL',
+      action: 'SELL_TO_OPEN',
+      quantity: 1,
+      price: 7.90,
+      orderType: 'Limit',
+      instrumentType: 'Equity Option',
+      optionDetails: {
+        expirationDate: '2026-10-16',
+        strikePrice: 340.00,
+        optionType: 'Put'
+      },
+      underlyingPrice: 338.80,
+      daysToExpiration: 24,
+      delta: -0.58,
+      theta: -0.42
+    });
+
+    // Verify IBKR Live Margin Account & Base Currency
+    expect(result.ibkr.accountNumber).toBe('U15491236');
+    expect(result.ibkr.environment).toBe('Live Margin');
+    expect(result.ibkr.baseCurrency).toBe('GBP');
+
+    // Reg-T Margin in USD = 0.20 * 338.80 * 100 + 790 = 6,776 + 790 = $7,566.00 USD
+    expect(result.ibkr.initialMarginRequirement).toBe(7566.00);
+
+    // Margin in Base Currency (GBP @ FX 1.3351) = Math.round(7566 / 1.3351) = 5,667 GBP!
+    // Matches user IBKR Order Preview: "Initial Margin Change: 5,667"
+    expect(result.ibkr.initialMarginRequirementBase).toBe(5667);
+    expect(result.ibkr.estimatedCommission).toBe(0.65);
   });
 
   it('accurately calculates exact Tastytrade $2,390.00 BP Effect and metrics for FSLY 25 Put STO @ $1.10 (100% margin symbol)', async () => {

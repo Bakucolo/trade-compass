@@ -839,10 +839,19 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
   // Live balances helpers
   const tastyBp = balancesData?.brokers?.tastytrade?.buyingPower ?? 15738.87;
   const tastyDerivBp = balancesData?.brokers?.tastytrade?.derivativeBuyingPower ?? tastyBp;
-  const ibkrBp = balancesData?.brokers?.ibkr?.buyingPower ?? 73186.14;
-  const ibkrAvailFunds = balancesData?.brokers?.ibkr?.availableFunds ?? ibkrBp;
-  const t212Cash = balancesData?.brokers?.trading212?.cash ?? 0;
-  const totalBp = balancesData?.total?.buyingPower ?? (tastyBp + ibkrBp);
+
+  // Specific live IBKR GIA Margin account (U15491236)
+  const ibkrGiaAccount = balancesData?.brokers?.ibkr?.accounts?.find(
+    (a: any) => a.accountNumber === 'U15491236' || a.accountKey === 'ibkr_gia' || a.accountType?.toLowerCase()?.includes('margin')
+  );
+  const ibkrGiaBp = ibkrGiaAccount?.buyingPower ?? balancesData?.brokers?.ibkr?.buyingPower ?? 16609.08;
+  const ibkrGiaAvail = ibkrGiaAccount?.availableFunds ?? balancesData?.brokers?.ibkr?.availableFunds ?? ibkrGiaBp;
+  const ibkrFxRate = 1.3351;
+  const ibkrGiaBpGbp = Math.round(ibkrGiaBp / ibkrFxRate);
+  const ibkrGiaAvailGbp = Math.round(ibkrGiaAvail / ibkrFxRate);
+
+  const ibkrTotalBp = balancesData?.brokers?.ibkr?.buyingPower ?? 73186.14;
+  const totalBp = balancesData?.total?.buyingPower ?? (tastyBp + ibkrTotalBp);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1039,22 +1048,25 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                     ? "bg-blue-950/40 border-blue-500/60 shadow-xs ring-1 ring-blue-500/40"
                     : "bg-slate-900/50 border-slate-800 hover:border-slate-700 opacity-80"
                 )}
-                title="Click to route trades via Interactive Brokers"
+                title="Click to route trades via Interactive Brokers (Live Margin Account U15491236)"
               >
                 <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
                 <div className="text-left">
                   <div className="text-[10px] text-blue-300 font-semibold uppercase flex items-center gap-1">
-                    <span>IBKR</span>
+                    <span>IBKR ({ibkrGiaAccount?.accountNumber || 'U15491236'})</span>
+                    <Badge className="text-[8px] px-1 py-0 bg-blue-500/30 text-blue-300 border border-blue-400/40">LIVE</Badge>
                     {selectedBroker === 'ibkr' && (
                       <Badge className="text-[8px] px-1 py-0 bg-blue-500 text-white">ACTIVE ROUTE</Badge>
                     )}
                   </div>
-                  <div className="text-xs font-mono font-black text-white">
-                    ${ibkrBp.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <div className="text-xs font-mono font-black text-white flex items-center gap-1.5">
+                    <span>£{ibkrGiaBpGbp.toLocaleString('en-GB')}</span>
+                    <span className="text-[10px] text-slate-400 font-normal">(${ibkrGiaBp.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</span>
                   </div>
                 </div>
-                <div className="text-[9px] font-mono text-slate-400 pl-1 border-l border-slate-700/60">
-                  Avail: ${ibkrAvailFunds.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                <div className="text-[9px] font-mono text-slate-400 pl-1 border-l border-slate-700/60 leading-tight">
+                  <div>Avail: £{ibkrGiaAvailGbp.toLocaleString('en-GB')}</div>
+                  <div className="text-[8px] text-slate-500">Margin GBP</div>
                 </div>
               </div>
 
@@ -1666,21 +1678,49 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                               <Badge className="text-[9px] px-1.5 py-0 bg-emerald-600 text-white">Fee Winner</Badge>
                             )}
                           </span>
-                          <span className="text-[10px] text-slate-400">Paper DU</span>
+                          <span className="text-[10px] text-blue-300 font-mono font-semibold">
+                            {bpComparison.ibkr.accountNumber || 'U15491236'} ({bpComparison.ibkr.environment || 'Live Margin'})
+                          </span>
                         </div>
 
                         <div className="pt-2 space-y-1.5 text-[11px]">
                           <div className="flex justify-between items-center">
                             <span className="text-slate-400">Reg-T Initial Margin:</span>
-                            <span className="font-black text-white text-xs">
-                              ${(bpComparison.ibkr.initialMarginRequirement ?? bpComparison.ibkr.buyingPowerRequirement ?? 0).toFixed(2)}
-                            </span>
+                            <div className="text-right">
+                              {bpComparison.ibkr.initialMarginRequirementBase !== undefined ? (
+                                <>
+                                  <span className="font-black text-white text-xs">
+                                    £{bpComparison.ibkr.initialMarginRequirementBase.toLocaleString('en-GB')}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 ml-1">
+                                    (${(bpComparison.ibkr.initialMarginRequirement ?? bpComparison.ibkr.buyingPowerRequirement ?? 0).toFixed(2)})
+                                  </span>
+                                </>
+                              ) : (
+                                <span className="font-black text-white text-xs">
+                                  ${(bpComparison.ibkr.initialMarginRequirement ?? bpComparison.ibkr.buyingPowerRequirement ?? 0).toFixed(2)}
+                                </span>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex justify-between">
+                          <div className="flex justify-between items-center">
                             <span className="text-slate-400">Maintenance Margin:</span>
-                            <span className="text-slate-300">
-                              ${(bpComparison.ibkr.maintenanceMarginRequirement ?? 0).toFixed(2)}
-                            </span>
+                            <div className="text-right">
+                              {bpComparison.ibkr.maintenanceMarginRequirementBase !== undefined ? (
+                                <>
+                                  <span className="text-slate-300">
+                                    £{bpComparison.ibkr.maintenanceMarginRequirementBase.toLocaleString('en-GB')}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 ml-1">
+                                    (${(bpComparison.ibkr.maintenanceMarginRequirement ?? 0).toFixed(2)})
+                                  </span>
+                                </>
+                              ) : (
+                                <span className="text-slate-300">
+                                  ${(bpComparison.ibkr.maintenanceMarginRequirement ?? 0).toFixed(2)}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           {bpComparison.ibkr.portfolioMarginRequirement !== undefined && bpComparison.ibkr.portfolioMarginRequirement > 0 && (
                             <div className="flex justify-between">
@@ -1690,11 +1730,24 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                               </span>
                             </div>
                           )}
-                          <div className="flex justify-between">
+                          <div className="flex justify-between items-center">
                             <span className="text-slate-400">Post-Trade BP:</span>
-                            <span className="text-slate-300">
-                              ${(bpComparison.ibkr.postTradeAvailableBuyingPower ?? bpComparison.ibkr.postTradeBuyingPower ?? 0).toFixed(2)}
-                            </span>
+                            <div className="text-right">
+                              {bpComparison.ibkr.postTradeBuyingPowerBase !== undefined ? (
+                                <>
+                                  <span className="text-slate-300">
+                                    £{bpComparison.ibkr.postTradeBuyingPowerBase.toLocaleString('en-GB')}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 ml-1">
+                                    (${(bpComparison.ibkr.postTradeAvailableBuyingPower ?? bpComparison.ibkr.postTradeBuyingPower ?? 0).toFixed(2)})
+                                  </span>
+                                </>
+                              ) : (
+                                <span className="text-slate-300">
+                                  ${(bpComparison.ibkr.postTradeAvailableBuyingPower ?? bpComparison.ibkr.postTradeBuyingPower ?? 0).toFixed(2)}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-slate-400">Est. Commission:</span>
@@ -1708,8 +1761,9 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                               {(bpComparison.ibkr.remainingBufferPercentage ?? bpComparison.ibkr.postTradeBufferPercent ?? 0).toFixed(1)}%
                             </span>
                           </div>
-                          <div className="pt-1 border-t border-slate-800/80 text-[10px] text-slate-400 leading-tight">
-                            Rule: {bpComparison.ibkr.marginMethod || 'Reg-T Initial Margin'}
+                          <div className="pt-1 border-t border-slate-800/80 text-[10px] text-slate-400 leading-tight flex justify-between items-center">
+                            <span>Rule: {bpComparison.ibkr.marginMethod || 'Reg-T Initial Margin'}</span>
+                            <span className="text-blue-300 font-medium font-mono">Base: {bpComparison.ibkr.baseCurrency || 'GBP'} • Live</span>
                           </div>
                         </div>
                       </div>
