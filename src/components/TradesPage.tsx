@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useDebounce } from '@/hooks/useDebounce';
 import {
@@ -9,6 +10,7 @@ import {
   UnifiedTrade,
   TradeFilterParams
 } from '@/services/tradeService';
+import { OptionsTradeOpportunity } from '@/services/optionsTradeAgentService';
 import {
   Search,
   RefreshCw,

@@ -133,6 +133,9 @@ export interface BrokerMarginImpact {
     buyingPowerRequirement: number;
     initialMarginRequirement: number;
     maintenanceMarginRequirement: number;
+    portfolioMarginRequirement?: number;
+    buyingPowerEffect?: number;
+    marginMethod?: string;
     estimatedCommission: number;
     estimatedRegulatoryFees: number;
     totalCashOutlay: number;
@@ -140,6 +143,22 @@ export interface BrokerMarginImpact {
     remainingBufferPercentage: number;
     isFeasible: boolean;
     warnings: string[];
+    features?: string[];
+}
+
+export interface TastytradeMetrics {
+    pop: number; // Probability of Profit (%)
+    ext: number; // Extrinsic value ($)
+    p50: number; // Probability of 50% Profit (%)
+    cvar: number; // Conditional Value at Risk ($)
+    delta: number; // Position delta
+    theta: number; // Position theta ($/day)
+    gamma?: number; // Position gamma
+    vega?: number; // Position vega
+    maxProfit: number | 'Unlimited'; // Max profit ($)
+    maxLoss: number | 'Undefined'; // Max loss ($)
+    bpEff: number; // Buying power effect ($)
+    bpEffDirection: 'db' | 'cr'; // debit or credit
 }
 
 export interface BuyingPowerComparisonResult {
@@ -149,8 +168,10 @@ export interface BuyingPowerComparisonResult {
     price?: number;
     orderType: string;
     instrumentType: string;
+    underlyingPrice?: number;
     tastytrade: BrokerMarginImpact;
     ibkr: BrokerMarginImpact;
+    tastyMetrics?: TastytradeMetrics;
     verdict: {
         recommendedBroker: 'tastytrade' | 'ibkr' | 'either';
         capitalEfficiencyWinner: 'tastytrade' | 'ibkr' | 'equal';
@@ -176,6 +197,13 @@ export const analyzeBuyingPower = async (params: {
         strikePrice: number;
         optionType: 'Call' | 'Put';
     };
+    underlyingPrice?: number;
+    impliedVolatility?: number;
+    delta?: number;
+    theta?: number;
+    gamma?: number;
+    vega?: number;
+    daysToExpiration?: number;
 }): Promise<{ success: boolean; comparison: BuyingPowerComparisonResult }> => {
     const response = await fetch('/api/ai-trading/analyze-buying-power', {
         method: 'POST',
@@ -269,4 +297,36 @@ export interface FormattedOptionChain {
     underlyingPrice?: number;
     expirations: FormattedOptionExpiration[];
 }
+
+export interface CreateDraftOrderParams {
+    symbol: string;
+    action: string;
+    broker?: 'tastytrade' | 'alpaca' | 'ibkr';
+    instrumentType?: 'Equity' | 'Equity Option';
+    quantity: number;
+    orderType: 'Limit' | 'Market';
+    price?: number;
+    timeInForce?: 'Day' | 'GTC';
+    optionDetails?: {
+        expirationDate: string;
+        strikePrice: number;
+        optionType: 'Call' | 'Put';
+    };
+    notes?: string;
+}
+
+export const createDraftOrder = async (
+    params: CreateDraftOrderParams
+): Promise<{ success: boolean; draft: StagedDraftOrder }> => {
+    const response = await fetch('/api/ai-trading/drafts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+    });
+    if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `Failed to create draft order (${response.status})`);
+    }
+    return response.json();
+};
 

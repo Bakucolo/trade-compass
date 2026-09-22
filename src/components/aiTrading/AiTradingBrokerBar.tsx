@@ -9,7 +9,8 @@ import {
   CheckCircle2, 
   Cpu, 
   Lock,
-  Activity
+  Activity,
+  Zap
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -26,6 +27,7 @@ interface AiTradingBrokerBarProps {
   onSelectModel: (model: string) => void;
   onClearChat?: () => void;
   isChatEmpty?: boolean;
+  onOpenTradeStation?: () => void;
 }
 
 export const AiTradingBrokerBar: React.FC<AiTradingBrokerBarProps> = ({
@@ -35,6 +37,7 @@ export const AiTradingBrokerBar: React.FC<AiTradingBrokerBarProps> = ({
   onSelectModel,
   onClearChat,
   isChatEmpty = false,
+  onOpenTradeStation,
 }) => {
   const brokers: {
     id: SupportedBroker;
@@ -133,6 +136,22 @@ export const AiTradingBrokerBar: React.FC<AiTradingBrokerBarProps> = ({
 
           {/* Quick Buying Power & Margin Analyser */}
           <BuyingPowerModal />
+
+          {/* Full-Window Options Trade Station Button */}
+          {onOpenTradeStation && (
+            <Button
+              size="sm"
+              onClick={onOpenTradeStation}
+              className="h-8 px-3 text-xs font-bold bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-md shadow-purple-950/40 border border-purple-400/30 flex items-center gap-1.5 rounded-xl cursor-pointer transition-all hover:scale-[1.02]"
+              title="Launch Full-Window Options Trade Station"
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-300" />
+              <span>Options Trade Station</span>
+              <Badge className="ml-0.5 text-[9px] px-1 py-0 bg-white/20 text-white font-mono border-0">
+                PRO
+              </Badge>
+            </Button>
+          )}
 
           {/* Clear chat action */}
           {onClearChat && (

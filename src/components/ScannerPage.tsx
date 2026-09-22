@@ -918,14 +918,14 @@ export function ScannerPage({
       {/* Standalone Price Alert Modal */}
       {alertModalStock && (
         <PriceAlertModal
-          isOpen={isAlertModalOpen}
-          onClose={() => {
-            setIsAlertModalOpen(false);
-            setAlertModalStock(null);
+          open={isAlertModalOpen}
+          onOpenChange={(open) => {
+            setIsAlertModalOpen(open);
+            if (!open) setAlertModalStock(null);
           }}
-          symbol={alertModalStock.symbol}
-          currentPrice={alertModalStock.price}
-          companyName={alertModalStock.name}
+          initialSymbol={alertModalStock.symbol}
+          initialPrice={alertModalStock.price}
+          initialStockName={alertModalStock.name}
         />
       )}
     </div>

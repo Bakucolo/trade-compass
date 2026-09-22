@@ -374,7 +374,7 @@ export function ScorecardsPage({ onNavigateToResearch }: ScorecardsPageProps) {
         }
         return sortDirection === 'asc' ? delta : -delta;
       });
-  }, [rawScorecards, sourceFilter, selectedSector, sortBy, sortDirection, searchQuery]);
+  }, [rawScorecards, sourceCategory, selectedBroker, selectedWatchlist, selectedSector, sortBy, sortDirection, searchQuery]);
 
   // Find Upgrade Opportunities
   const upgradeOpportunities = useMemo(() => {

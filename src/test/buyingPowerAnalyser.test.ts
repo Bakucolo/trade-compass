@@ -128,4 +128,98 @@ describe('Buying Power & Margin Calculation Engine (Tastytrade vs IBKR)', () => 
     const retrieved = getDraftOrder(draft.draftId);
     expect(retrieved?.broker).toBe('ibkr');
   });
+
+  it('accurately calculates exact Tastytrade $6,776.00 BP Effect and IBKR margin for AAPL 340 Put STO @ $3.00', async () => {
+    const result = await calculateBuyingPowerComparison({
+      symbol: 'AAPL',
+      action: 'SELL_TO_OPEN',
+      quantity: 1,
+      price: 3.00,
+      orderType: 'Limit',
+      instrumentType: 'Equity Option',
+      optionDetails: {
+        expirationDate: '2026-09-23',
+        strikePrice: 340.00,
+        optionType: 'Put'
+      },
+      underlyingPrice: 338.80,
+      daysToExpiration: 2,
+      delta: -0.5744,
+      theta: -0.65055
+    });
+
+    // 1. Tastytrade Buying Power Effect
+    // Underlying = $338.80, Strike = $340.00 (Put is ITM, OTM = 0)
+    // Rule 1: 0.20 * 338.80 * 100 + 300 = 6,776.00 + 300 = 7,076.00
+    // Rule 2: 0.10 * 340.00 * 100 + 300 = 3,400.00 + 300 = 3,700.00
+    // Margin Requirement = $7,076.00
+    // Buying Power Effect = Margin - Premium = 7,076.00 - 300.00 = $6,776.00 db
+    expect(result.tastytrade.buyingPowerRequirement).toBe(6776.00);
+    expect(result.tastytrade.initialMarginRequirement).toBe(7076.00);
+    expect(result.tastytrade.buyingPowerEffect).toBe(6776.00);
+    expect(result.tastytrade.estimatedCommission).toBe(1.00);
+
+    // 2. IBKR Margin (Initial Margin upfront, Maint & Portfolio Margin)
+    expect(result.ibkr.buyingPowerRequirement).toBe(7076.00);
+    expect(result.ibkr.initialMarginRequirement).toBe(7076.00);
+    expect(result.ibkr.maintenanceMarginRequirement).toBe(3688.00); // 10% spot (3,388) + 300
+    expect(result.ibkr.portfolioMarginRequirement).toBe(5082.00); // 15% spot (5,082)
+    expect(result.ibkr.estimatedCommission).toBe(0.65);
+
+    // 3. Signature Tastytrade Quantitative Metrics
+    expect(result.tastyMetrics).toBeDefined();
+    expect(result.tastyMetrics?.bpEff).toBe(6776.00);
+    expect(result.tastyMetrics?.bpEffDirection).toBe('db');
+    expect(result.tastyMetrics?.maxProfit).toBe(300);
+    expect(result.tastyMetrics?.maxLoss).toBe(33700);
+    expect(result.tastyMetrics?.delta).toBe(57.44); // Short put has positive shares delta
+    expect(result.tastyMetrics?.theta).toBe(65.055); // Short put has positive carry
+    expect(result.tastyMetrics?.pop).toBeGreaterThanOrEqual(55); // ~60-65%
+    expect(result.tastyMetrics?.p50).toBeGreaterThanOrEqual(40); // ~43-48%
+  });
+
+  it('accurately calculates exact Tastytrade $2,390.00 BP Effect and metrics for FSLY 25 Put STO @ $1.10 (100% margin symbol)', async () => {
+    const result = await calculateBuyingPowerComparison({
+      symbol: 'FSLY',
+      action: 'SELL_TO_OPEN',
+      quantity: 1,
+      price: 1.10,
+      orderType: 'Limit',
+      instrumentType: 'Equity Option',
+      optionDetails: {
+        expirationDate: '2026-10-16',
+        strikePrice: 25.00,
+        optionType: 'Put'
+      },
+      underlyingPrice: 27.41,
+      impliedVolatility: 0.92,
+      daysToExpiration: 25,
+      delta: -0.303,
+      theta: -0.04394
+    });
+
+    // 1. Tastytrade Buying Power Effect for FSLY (100% margin rate in Apex Clearing)
+    // Strike = $25.00, Spot = $27.41, Credit = $1.10
+    // Max Strike Capital = $2,500.00
+    // Initial Margin Req = $2,500.00
+    // Buying Power Effect = $2,500.00 - $110.00 = $2,390.00 db
+    expect(result.tastytrade.buyingPowerRequirement).toBe(2390.00);
+    expect(result.tastytrade.initialMarginRequirement).toBe(2500.00);
+    expect(result.tastytrade.buyingPowerEffect).toBe(2390.00);
+    expect(result.tastytrade.estimatedCommission).toBe(1.00);
+
+    // 2. Tastytrade Quant Ribbon Metrics
+    expect(result.tastyMetrics).toBeDefined();
+    expect(result.tastyMetrics?.bpEff).toBe(2390.00);
+    expect(result.tastyMetrics?.bpEffDirection).toBe('db');
+    expect(result.tastyMetrics?.maxProfit).toBe(110.00);
+    expect(result.tastyMetrics?.maxLoss).toBe(2390.00);
+    expect(result.tastyMetrics?.ext).toBe(110.00);
+    expect(result.tastyMetrics?.pop).toBe(67);
+    expect(result.tastyMetrics?.p50).toBe(78);
+    expect(result.tastyMetrics?.delta).toBe(30.3);
+    expect(result.tastyMetrics?.theta).toBe(4.394);
+    expect(result.tastyMetrics?.cvar).toBeCloseTo(-684.31, 0);
+  });
 });
+

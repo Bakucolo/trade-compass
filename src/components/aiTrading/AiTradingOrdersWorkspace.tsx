@@ -18,7 +18,8 @@ import {
   Inbox,
   Scale,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Zap
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -45,11 +46,13 @@ export interface UnifiedOrder {
 interface AiTradingOrdersWorkspaceProps {
   activeBroker: SupportedBroker;
   onRefreshNeeded?: () => void;
+  onOpenTradeStation?: () => void;
 }
 
 export const AiTradingOrdersWorkspace: React.FC<AiTradingOrdersWorkspaceProps> = ({
   activeBroker,
   onRefreshNeeded,
+  onOpenTradeStation,
 }) => {
   const [drafts, setDrafts] = useState<StagedDraftOrder[]>([]);
   const [orders, setOrders] = useState<UnifiedOrder[]>([]);
@@ -171,6 +174,19 @@ export const AiTradingOrdersWorkspace: React.FC<AiTradingOrdersWorkspaceProps> =
         </div>
 
         <div className="flex items-center gap-2">
+          {onOpenTradeStation && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onOpenTradeStation}
+              className="h-8 px-2.5 text-xs font-semibold text-purple-300 border-purple-500/40 bg-purple-500/10 hover:bg-purple-500/20 cursor-pointer flex items-center gap-1.5"
+              title="Open Full-Window Options Trade Station"
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-300" />
+              <span>Trade Station</span>
+            </Button>
+          )}
+
           <Button
             variant="outline"
             size="sm"

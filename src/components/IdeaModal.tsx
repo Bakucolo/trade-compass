@@ -43,6 +43,7 @@ interface IdeaModalProps {
   onClose: () => void;
   ideaToEdit?: TradeIdea | null;
   initialSymbol?: string;
+  initialContent?: string;
 }
 
 const PRESET_TAGS = [
@@ -107,6 +108,7 @@ export function IdeaModal({
   onClose,
   ideaToEdit,
   initialSymbol = '',
+  initialContent = '',
 }: IdeaModalProps) {
   const isEditing = Boolean(ideaToEdit);
 
@@ -157,7 +159,7 @@ export function IdeaModal({
         setStopLoss('');
         setConfidenceScore(80);
         setStatus('ACTIVE');
-        setContent(TEMPLATES[0].text);
+        setContent(initialContent || TEMPLATES[0].text);
         setTags(['Growth', 'Swing Trade']);
       }
       setConfirmDelete(false);

@@ -4,7 +4,7 @@ import { aiTradingGuardrails } from '../services/aiTradingGuardrails';
 import { alpacaBacktestService } from '../services/alpacaBacktestService';
 import { fetchTastyOrders } from '../services/tastytradeService';
 import { fetchIbkrOrders } from '../services/ibkrService';
-import { getAllDraftOrders, executeApprovedDraft, cancelDraft, getDraftOrder, switchDraftBroker } from '../services/tastytradeToolService';
+import { getAllDraftOrders, executeApprovedDraft, cancelDraft, getDraftOrder, switchDraftBroker, stageDraftOrder } from '../services/tastytradeToolService';
 import { calculateBuyingPowerComparison } from '../services/buyingPowerService';
 
 export function createAiTradingRouter(): Router {
@@ -82,6 +82,16 @@ export function createAiTradingRouter(): Router {
     }
   });
 
+  // POST /api/ai-trading/drafts - Stage a new draft order
+  router.post('/drafts', async (req: Request, res: Response) => {
+    try {
+      const draft = await stageDraftOrder(req.body);
+      res.json({ success: true, draft });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // POST /api/ai-trading/drafts/:id/approve - Physical approval hard stop
   router.post('/drafts/:id/approve', async (req: Request, res: Response) => {
     try {
@@ -127,22 +137,45 @@ export function createAiTradingRouter(): Router {
   // POST /api/ai-trading/analyze-buying-power - Standalone or draft-based buying power analysis
   router.post('/analyze-buying-power', async (req: Request, res: Response) => {
     try {
-      const { draftId, symbol, action, quantity, price, orderType, instrumentType, optionDetails } = req.body || {};
+      const {
+        draftId,
+        symbol,
+        action,
+        quantity,
+        price,
+        orderType,
+        instrumentType,
+        optionDetails,
+        underlyingPrice,
+        impliedVolatility,
+        delta,
+        theta,
+        gamma,
+        vega,
+        daysToExpiration
+      } = req.body || {};
 
-      let params = {
+      let params: any = {
         symbol: symbol || '',
         action: action || 'BUY',
         quantity: quantity || 1,
-        price: price ? parseFloat(price) : undefined,
-        orderType: orderType || 'Limit',
-        instrumentType: instrumentType || 'Equity',
-        optionDetails
+        price: price !== undefined && price !== null ? parseFloat(price) : undefined,
+        instrumentType: instrumentType || (optionDetails ? 'Equity Option' : 'Equity'),
+        optionDetails,
+        underlyingPrice: underlyingPrice ? parseFloat(underlyingPrice) : undefined,
+        impliedVolatility: impliedVolatility ? parseFloat(impliedVolatility) : undefined,
+        delta: delta !== undefined ? parseFloat(delta) : undefined,
+        theta: theta !== undefined ? parseFloat(theta) : undefined,
+        gamma: gamma !== undefined ? parseFloat(gamma) : undefined,
+        vega: vega !== undefined ? parseFloat(vega) : undefined,
+        daysToExpiration: daysToExpiration ? parseInt(daysToExpiration, 10) : undefined
       };
 
       if (draftId) {
         const draft = getDraftOrder(draftId);
         if (draft) {
           params = {
+            ...params,
             symbol: draft.symbol,
             action: draft.action,
             quantity: draft.quantity,

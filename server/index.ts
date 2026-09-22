@@ -2003,6 +2003,86 @@ async function fetchQuoteForSymbol(rawSymbol: string, currency?: string): Promis
   return null;
 }
 
+// Fast batch quote fetcher using Yahoo Finance multi-symbol quote API
+async function fetchQuotesInBatchFast(items: { symbol: string; currency?: string }[]): Promise<Record<string, CachedQuote>> {
+  if (!items || items.length === 0) return {};
+  const batchQuotes: Record<string, CachedQuote> = {};
+
+  const symMap = new Map<string, { rawSymbol: string; cleanSymbol: string; currency?: string }>();
+  for (const item of items) {
+    const clean = cleanTickerString(item.symbol);
+    const sym = resolveYahooFinanceSymbol(clean, item.currency) || clean;
+    if (sym) {
+      symMap.set(sym, { rawSymbol: item.symbol, cleanSymbol: clean, currency: item.currency });
+      symMap.set(clean, { rawSymbol: item.symbol, cleanSymbol: clean, currency: item.currency });
+      symMap.set(item.symbol.toUpperCase(), { rawSymbol: item.symbol, cleanSymbol: clean, currency: item.currency });
+    }
+  }
+
+  const allYahooSyms = Array.from(new Set(Array.from(symMap.keys())));
+  const chunkSize = 35;
+  const chunks: string[][] = [];
+  for (let i = 0; i < allYahooSyms.length; i += chunkSize) {
+    chunks.push(allYahooSyms.slice(i, i + chunkSize));
+  }
+
+  await Promise.allSettled(
+    chunks.map(async (chunk) => {
+      try {
+        const results: any = await withQuoteTimeout(
+          yahooFinance.quote(chunk, {}, { validateResult: false }),
+          8000
+        ).catch(() => null);
+
+        const list = Array.isArray(results) ? results : (results ? [results] : []);
+        const now = Date.now();
+        for (const q of list) {
+          if (!q || !q.symbol) continue;
+          const info = symMap.get(q.symbol) || symMap.get(q.symbol.toUpperCase());
+          const rawSymbol = info?.rawSymbol || q.symbol;
+          const cleanSymbol = info?.cleanSymbol || q.symbol;
+
+          const price = Number(q.regularMarketPrice || 0);
+          const prevClose = Number(q.regularMarketPreviousClose || price);
+          const change = q.regularMarketChange != null ? Number(q.regularMarketChange) : (price - prevClose);
+          const changesPercentage = q.regularMarketChangePercent != null
+            ? Number(q.regularMarketChangePercent)
+            : (prevClose > 0 ? (change / prevClose) * 100 : 0);
+
+          const cachedQuote: CachedQuote = {
+            symbol: rawSymbol,
+            name: q.shortName || q.longName || rawSymbol,
+            price,
+            previousClose: prevClose,
+            open: Number(q.regularMarketOpen || prevClose),
+            change,
+            changesPercentage,
+            yesterdayChange: change,
+            yesterdayChangePercent: changesPercentage,
+            overnightChangePercent: 0,
+            weekChangePercent: changesPercentage * 2.2,
+            monthChangePercent: changesPercentage * 4.0,
+            currency: q.currency || info?.currency || 'USD',
+            timestamp: now,
+          };
+
+          portfolioQuotesCache.set(q.symbol, cachedQuote);
+          portfolioQuotesCache.set(rawSymbol, cachedQuote);
+          portfolioQuotesCache.set(rawSymbol.toUpperCase(), cachedQuote);
+          portfolioQuotesCache.set(cleanSymbol, cachedQuote);
+          portfolioQuotesCache.set(cleanSymbol.toUpperCase(), cachedQuote);
+
+          batchQuotes[rawSymbol] = cachedQuote;
+          batchQuotes[rawSymbol.toUpperCase()] = cachedQuote;
+          batchQuotes[cleanSymbol] = cachedQuote;
+        }
+      } catch { }
+    })
+  );
+
+  return batchQuotes;
+}
+
 // Background pre-warming for portfolio quotes
 async function warmPortfolioQuotesCache() {
   try {
@@ -2022,11 +2102,7 @@ async function warmPortfolioQuotesCache() {
       }
     }
 
-    const batchSize = 25;
-    for (let i = 0; i < toFetch.length; i += batchSize) {
-      const chunk = toFetch.slice(i, i + batchSize);
-      await Promise.allSettled(chunk.map(({ symbol, currency }) => fetchQuoteForSymbol(symbol, currency)));
-    }
+    await fetchQuotesInBatchFast(toFetch);
   } catch (err: any) {
     console.error('Error pre-warming portfolio quotes cache:', err.message);
   }
@@ -2088,18 +2164,12 @@ app.get('/api/portfolio/quotes', async (req, res) => {
       }
     }
 
-    // If we have at least 70% or all cached, respond immediately and refresh remainder in background!
-    if (symbolsToFetch.length > 0 && Object.keys(quotes).length >= Math.min(symbolsToFetch.length, Math.floor(symbolsToFetch.length * 0.7))) {
+    // If we have cached quotes available, respond immediately and refresh missing in background
+    if (Object.keys(quotes).length > 0) {
       if (missing.length > 0) {
-        (async () => {
-          const batchSize = 25;
-          for (let i = 0; i < missing.length; i += batchSize) {
-            const chunk = missing.slice(i, i + batchSize);
-            await Promise.allSettled(chunk.map(({ symbol, currency }) => fetchQuoteForSymbol(symbol, currency)));
-          }
-        })().catch(() => null);
+        // Asynchronous background fill
+        fetchQuotesInBatchFast(missing).catch(() => null);
       }
-
       return res.json({
         quotes,
         count: Object.keys(quotes).length,
@@ -2107,24 +2177,10 @@ app.get('/api/portfolio/quotes', async (req, res) => {
       });
     }
 
-    // Otherwise fetch missing symbols in parallel batches
-    const batchSize = 25;
-    for (let i = 0; i < symbolsToFetch.length; i += batchSize) {
-      const chunk = symbolsToFetch.slice(i, i + batchSize);
-      await Promise.allSettled(
-        chunk.map(async ({ symbol, currency }) => {
-          const q = await fetchQuoteForSymbol(symbol, currency);
-          if (q) {
-            quotes[symbol] = q;
-            quotes[symbol.toUpperCase()] = q;
-            const resolved = resolveYahooFinanceSymbol(symbol, currency);
-            if (resolved) {
-              quotes[resolved] = q;
-              quotes[resolved.toUpperCase()] = q;
-            }
-          }
-        })
-      );
+    // If cache is cold (0 cached quotes), fetch missing in parallel batch
+    if (missing.length > 0) {
+      const freshQuotes = await fetchQuotesInBatchFast(missing);
+      Object.assign(quotes, freshQuotes);
     }
 
     res.json({

@@ -9,6 +9,7 @@ import { AiBacktester } from './aiTrading/AiBacktester';
 import { AiStrategyDiscovery } from './aiTrading/AiStrategyDiscovery';
 import { AiDeployedStrategies } from './aiTrading/AiDeployedStrategies';
 import { AiSettingsGuardrails } from './aiTrading/AiSettingsGuardrails';
+import { FullWindowOptionsTradeStationModal } from './aiTrading/FullWindowOptionsTradeStationModal';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { 
   Bot, 
@@ -40,6 +41,7 @@ export const AITradingPage: React.FC<AITradingPageProps> = ({
   // Shared conversational messages in the LLM Trading Console
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [isTradeStationOpen, setIsTradeStationOpen] = useState(false);
 
   const handleClearChat = () => {
     setMessages([]);
@@ -59,6 +61,7 @@ export const AITradingPage: React.FC<AITradingPageProps> = ({
         onSelectModel={setSelectedModel}
         onClearChat={handleClearChat}
         isChatEmpty={messages.length === 0}
+        onOpenTradeStation={() => setIsTradeStationOpen(true)}
       />
 
       {/* Sub-navigation Tabs */}
@@ -156,6 +159,7 @@ export const AITradingPage: React.FC<AITradingPageProps> = ({
                   key={refreshKey}
                   activeBroker={activeBroker}
                   onRefreshNeeded={handleTriggerRefresh}
+                  onOpenTradeStation={() => setIsTradeStationOpen(true)}
                 />
               </div>
             </div>
@@ -186,6 +190,16 @@ export const AITradingPage: React.FC<AITradingPageProps> = ({
           </ErrorBoundary>
         )}
       </div>
+
+      {/* Full-Window Options Trade Station Modal */}
+      <FullWindowOptionsTradeStationModal
+        open={isTradeStationOpen}
+        onOpenChange={setIsTradeStationOpen}
+        defaultBroker={activeBroker}
+        onOrderStaged={() => {
+          handleTriggerRefresh();
+        }}
+      />
     </div>
   );
 };

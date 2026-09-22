@@ -266,6 +266,56 @@ export const fetchTastyMarketMetrics = async (symbols: string[]): Promise<any | 
     }
 };
 
+// In-memory cache for underlying margin requirements (5 minute TTL)
+const marginRequirementsCache = new Map<string, { data: any; expiresAt: number }>();
+
+/**
+ * Fetch effective margin requirements for an underlying symbol from Tastytrade
+ * (GET /accounts/{account_number}/margin-requirements/{symbol}/effective)
+ * Returns naked-option-standard, naked-option-minimum, naked-option-floor, long/short equity rates.
+ */
+export const fetchTastyMarginRequirements = async (symbol: string, accountNumber?: string): Promise<any | null> => {
+    if (!symbol) return null;
+    const cleanSymbol = symbol.trim().toUpperCase().replace('$', '');
+    const accNumber = accountNumber || process.env.TASTY_ACCOUNT_NUMBER || '5WT67220';
+    const cacheKey = `${accNumber}:${cleanSymbol}`;
+
+    const cached = marginRequirementsCache.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt) {
+        return cached.data;
+    }
+
+    try {
+        const token = await getTastyAccessToken();
+        const baseUrl = getTastyBaseUrl();
+        const response = await fetch(`${baseUrl}/accounts/${accNumber}/margin-requirements/${cleanSymbol}/effective`, {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Accept': 'application/json',
+                'User-Agent': 'TradeCompass/1.0'
+            }
+        });
+
+        if (!response.ok) {
+            return null;
+        }
+
+        const data: any = await response.json();
+        const result = data?.data || null;
+        if (result) {
+            marginRequirementsCache.set(cacheKey, {
+                data: result,
+                expiresAt: Date.now() + 5 * 60 * 1000 // 5 minutes
+            });
+        }
+        return result;
+    } catch (error) {
+        console.warn(`Error fetching margin requirements for ${cleanSymbol}:`, error);
+        return null;
+    }
+};
+
 /**
  * Fetch orders for account (live, queued, or filled)
  */

@@ -66,7 +66,9 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
   const [isDefenseModalOpen, setIsDefenseModalOpen] = useState(false);
   const [advisorPosition, setAdvisorPosition] = useState<any>(null);
   const [isAdvisorOpen, setIsAdvisorOpen] = useState(false);
-  const [isBalancesOpen, setIsBalancesOpen] = useState(false);
+  const [isBalancesOpen, setIsBalancesOpen] = useState<boolean>(() => {
+    return localStorage.getItem('isPortfolioBalancesOpen') !== 'false'; // Default to visible
+  });
   const [isThetaModalOpen, setIsThetaModalOpen] = useState(false);
   const sendReportMutation = useSendTelegramReport();
 
@@ -108,6 +110,14 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
     setIsPrivacyMode((prev) => {
       const next = !prev;
       localStorage.setItem('isPrivacyMode', String(next));
+      return next;
+    });
+  };
+
+  const toggleBalances = (val?: boolean) => {
+    setIsBalancesOpen((prev) => {
+      const next = typeof val === 'boolean' ? val : !prev;
+      localStorage.setItem('isPortfolioBalancesOpen', String(next));
       return next;
     });
   };
@@ -469,7 +479,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setIsBalancesOpen((prev) => !prev)}
+            onClick={() => toggleBalances()}
             className={cn(
               "h-9 text-xs gap-1.5 border-border/70 hover:bg-accent/40 font-semibold transition-all",
               isBalancesOpen ? "bg-primary/10 border-primary/40 text-primary" : "text-muted-foreground"
@@ -574,7 +584,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
               <Wallet className="w-3.5 h-3.5 text-primary" /> Top Portfolio Balances & Net Liquidation
             </span>
             <button
-              onClick={() => setIsBalancesOpen(false)}
+              onClick={() => toggleBalances(false)}
               className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
             >
               <span>Hide Balances</span>
@@ -615,7 +625,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setIsBalancesOpen(true)}
+            onClick={() => toggleBalances(true)}
             className="h-7 text-xs text-primary hover:text-primary hover:bg-primary/10 gap-1 font-semibold"
           >
             <span>Show Balances</span>

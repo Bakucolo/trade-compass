@@ -81,14 +81,14 @@ export function BrokersPage({ onNavigateToResearch, onNavigateToGraphs }: Broker
     return new Map();
   });
 
-  // Privacy Mode (Persisted)
+  // Privacy Mode (Persisted - Visible by default)
   const [isPrivacyMode, setIsPrivacyMode] = useState<boolean>(() => {
-    return localStorage.getItem('isPrivacyMode') !== 'false'; // Default true
+    return localStorage.getItem('isPrivacyMode') === 'true'; // Default false (visible)
   });
 
-  // Balances Open state (Persisted - Hidden by default)
+  // Balances Open state (Persisted - Visible by default)
   const [isBalancesOpen, setIsBalancesOpen] = useState<boolean>(() => {
-    return localStorage.getItem('isPortfolioBalancesOpen') === 'true'; // Default false (hidden)
+    return localStorage.getItem('isPortfolioBalancesOpen') !== 'false'; // Default true (visible)
   });
 
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
