@@ -228,7 +228,7 @@ ${allocations}
         className={cn(
           "bg-slate-950/95 border border-slate-800 text-foreground transition-all duration-300 flex flex-col p-0 overflow-hidden shadow-2xl backdrop-blur-2xl",
           isFullScreen
-            ? "fixed inset-0 w-screen h-screen max-w-none max-h-none rounded-none z-[100]"
+            ? "!fixed !inset-0 !left-0 !top-0 !translate-x-0 !translate-y-0 !w-screen !h-screen !max-w-none !max-h-none !rounded-none !border-0 !m-0 z-[100]"
             : "sm:max-w-[1250px] w-[95vw] h-[90vh] rounded-2xl"
         )}
       >

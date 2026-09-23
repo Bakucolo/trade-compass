@@ -204,6 +204,7 @@ describe('Redesigned AI Trading Section', () => {
     // Filter tabs exist
     expect(screen.getByRole('button', { name: /All/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /Pending Drafts/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Executed/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /Live \/ Open/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /Filled/i })).toBeDefined();
 
@@ -216,4 +217,64 @@ describe('Redesigned AI Trading Section', () => {
     expect(screen.queryByText(/Cash Balance/i)).toBeNull();
     expect(screen.queryByText(/Account Buying Power/i)).toBeNull();
   });
+
+  it('6. Renders Executed Trades tab and displays executed draft trades with order details and audit info', async () => {
+    // Mock drafts to return both a pending and an executed draft
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/api/ai-trading/drafts')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            drafts: [
+              {
+                draftId: 'draft_exec_test',
+                broker: 'tastytrade',
+                accountNumber: '5WT67220',
+                createdAt: new Date().toISOString(),
+                expiresAt: new Date(Date.now() + 900000).toISOString(),
+                status: 'EXECUTED',
+                symbol: 'NVDA',
+                action: 'BUY_TO_OPEN',
+                instrumentType: 'Equity Option',
+                quantity: 2,
+                orderType: 'Limit',
+                price: 3.50,
+                timeInForce: 'Day',
+                executionResult: {
+                  orderId: 'TT_LIVE_998877',
+                  executedAt: new Date().toISOString(),
+                  status: 'Submitted',
+                },
+              },
+            ],
+          }),
+        });
+      }
+
+      return Promise.resolve({
+        ok: true,
+        json: async () => [],
+      });
+    });
+
+    render(
+      <AiTradingOrdersWorkspace activeBroker="tastytrade" />,
+      { wrapper: createWrapper() }
+    );
+
+    // Verify Executed tab button exists and shows badge 1
+    const executedTab = await screen.findByRole('button', { name: /Executed/i });
+    expect(executedTab).toBeDefined();
+
+    // Switch to Executed tab
+    fireEvent.click(executedTab);
+
+    // Verify NVDA executed trade is visible
+    await waitFor(() => {
+      expect(screen.getByText(/NVDA/i)).toBeDefined();
+      expect(screen.getByText(/#TT_LIVE_998877/i)).toBeDefined();
+      expect(screen.getByText(/Executed & Approved Trades/i)).toBeDefined();
+    });
+  });
 });
+

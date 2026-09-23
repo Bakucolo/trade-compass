@@ -120,6 +120,27 @@ const formatStrike = (st: number) => {
   return Number.isInteger(st) ? st.toString() : st.toFixed(1);
 };
 
+export const isWeeklyExpiration = (exp: ExpirationMeta): boolean => {
+  if (exp.type === 'WEEKLY') return true;
+  if (exp.type === 'MONTHLY' || exp.type === 'LEAP' || exp.isMonthlyOpex) return false;
+
+  try {
+    const parts = exp.date.split('-');
+    if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const d = new Date(Date.UTC(year, month, day, 12, 0, 0));
+      const dayOfWeek = d.getUTCDay(); // 5 = Friday
+      const isThirdFriday = dayOfWeek === 5 && day >= 15 && day <= 21;
+      return !isThirdFriday;
+    }
+  } catch {
+    // fallback
+  }
+  return false;
+};
+
 export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTradeStationModalProps> = ({
   open,
   onOpenChange,
@@ -211,6 +232,38 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
     const end = Math.min(strikes.length, centerIdx + half);
     return strikes.slice(start, end);
   }, [chainData?.strikes, strikeRange, moneynessFilter]);
+
+  // 1 Standard Deviation Expected Move Calculations
+  const spotPrice = chainData?.underlyingPrice || 0;
+  const chainDte = chainData?.selectedDte || 30;
+  const atmIv = chainData?.analytics?.impliedVolatilityAtm || 30;
+
+  const expectedMoveDollars = useMemo(() => {
+    if (chainData?.analytics?.expectedMoveDollars && chainData.analytics.expectedMoveDollars > 0) {
+      return chainData.analytics.expectedMoveDollars;
+    }
+    if (spotPrice > 0 && atmIv > 0) {
+      return Math.round(spotPrice * (atmIv / 100) * Math.sqrt(Math.max(1, chainDte) / 365) * 100) / 100;
+    }
+    return 0;
+  }, [chainData?.analytics?.expectedMoveDollars, spotPrice, atmIv, chainDte]);
+
+  const upperBound = useMemo(() => {
+    return spotPrice > 0 && expectedMoveDollars > 0
+      ? Math.round((spotPrice + expectedMoveDollars) * 100) / 100
+      : 0;
+  }, [spotPrice, expectedMoveDollars]);
+
+  const lowerBound = useMemo(() => {
+    return spotPrice > 0 && expectedMoveDollars > 0
+      ? Math.max(0, Math.round((spotPrice - expectedMoveDollars) * 100) / 100)
+      : 0;
+  }, [spotPrice, expectedMoveDollars]);
+
+  const isAscending = useMemo(() => {
+    if (filteredStrikes.length < 2) return true;
+    return filteredStrikes[0].strike < filteredStrikes[filteredStrikes.length - 1].strike;
+  }, [filteredStrikes]);
 
   // 1-Click add or toggle leg from option chain
   const handleToggleChainLeg = (
@@ -850,16 +903,16 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
   const ibkrGiaBpGbp = Math.round(ibkrGiaBp / ibkrFxRate);
   const ibkrGiaAvailGbp = Math.round(ibkrGiaAvail / ibkrFxRate);
 
-  const ibkrTotalBp = balancesData?.brokers?.ibkr?.buyingPower ?? 73186.14;
-  const totalBp = balancesData?.total?.buyingPower ?? (tastyBp + ibkrTotalBp);
+  // Total options buying power is strictly the sum of the 2 options accounts (Tastytrade + IBKR GIA Margin)
+  const totalBp = tastyBp + ibkrGiaBp;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className={cn(
-          "p-0 gap-0 overflow-hidden bg-slate-950 text-slate-100 border border-purple-500/30 shadow-2xl backdrop-blur-3xl flex flex-col transition-all duration-200",
+          "p-0 gap-0 overflow-hidden bg-slate-950 text-slate-100 border border-purple-500/30 shadow-2xl backdrop-blur-3xl flex flex-col transition-all duration-200 [&>button:last-child]:hidden",
           isFullscreen
-            ? "fixed inset-0 w-screen h-screen max-w-none max-h-none rounded-none z-[100]"
+            ? "!fixed !inset-0 !left-0 !top-0 !translate-x-0 !translate-y-0 !w-screen !h-screen !max-w-none !max-h-none !rounded-none !border-0 !m-0 z-[100]"
             : "w-[98vw] max-w-[1720px] h-[95vh] rounded-2xl"
         )}
       >
@@ -1070,11 +1123,14 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                 </div>
               </div>
 
-              {/* Total Buying Power */}
-              <div className="px-3 py-1.5 rounded-xl bg-slate-900/70 border border-slate-800 flex items-center gap-2 shrink-0">
+              {/* Total Options Buying Power (Sum of Tastytrade + IBKR GIA Margin) */}
+              <div
+                className="px-3 py-1.5 rounded-xl bg-slate-900/70 border border-slate-800 flex items-center gap-2 shrink-0"
+                title={`Total Options Buying Power: Tastytrade ($${tastyBp.toLocaleString('en-US', { minimumFractionDigits: 2 })}) + IBKR ($${ibkrGiaBp.toLocaleString('en-US', { minimumFractionDigits: 2 })})`}
+              >
                 <Scale className="w-3.5 h-3.5 text-purple-400" />
                 <div>
-                  <div className="text-[9px] text-slate-400 uppercase font-semibold">Total Portfolio BP</div>
+                  <div className="text-[9px] text-slate-400 uppercase font-semibold">Total Options BP</div>
                   <div className="text-xs font-mono font-bold text-purple-300">
                     ${totalBp.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
@@ -1097,42 +1153,82 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
               <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-thin py-0.5">
                 {chainData?.expirations?.map(exp => {
                   const isSelected = exp.date === selectedExpiration;
+                  const isWeekly = isWeeklyExpiration(exp);
+                  const isMonthly = !isWeekly && (exp.type === 'MONTHLY' || exp.isMonthlyOpex);
+
                   return (
                     <button
                       key={exp.date}
                       type="button"
                       onClick={() => setSelectedExpiration(exp.date)}
                       className={cn(
-                        "px-2.5 py-1 rounded-xl text-xs font-mono transition-all flex items-center gap-1 shrink-0 border cursor-pointer",
+                        "px-2.5 py-1 rounded-xl text-xs font-mono transition-all flex items-center gap-1.5 shrink-0 border cursor-pointer select-none",
                         isSelected
-                          ? "bg-purple-600 text-white font-bold border-purple-400 shadow-md"
+                          ? "bg-purple-600 text-white font-bold border-purple-400 shadow-md ring-1 ring-purple-400/40"
                           : "bg-slate-900/80 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-200"
                       )}
+                      title={isWeekly ? "Weekly Expiration Cycle" : isMonthly ? "Monthly OPEX Cycle" : "Expiration Cycle"}
                     >
                       <span>{exp.formattedDate || exp.date}</span>
+                      {isWeekly ? (
+                        <span
+                          className={cn(
+                            "text-[9px] font-black px-1 py-0.2 rounded border leading-none shrink-0 tracking-tight",
+                            isSelected
+                              ? "bg-amber-400 text-slate-950 border-amber-300 shadow-xs"
+                              : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                          )}
+                        >
+                          W
+                        </span>
+                      ) : isMonthly ? (
+                        <span
+                          className={cn(
+                            "text-[9px] font-bold px-1 py-0.2 rounded border leading-none shrink-0 tracking-tight",
+                            isSelected
+                              ? "bg-purple-300 text-purple-950 border-purple-200"
+                              : "bg-purple-500/20 text-purple-300 border-purple-500/30"
+                          )}
+                        >
+                          M
+                        </span>
+                      ) : null}
                       <span className="text-[10px] opacity-75">({exp.dte}d)</span>
                     </button>
                   );
                 })}
               </div>
 
-              {/* Range Filter */}
-              <div className="flex items-center gap-1 text-[11px] font-mono shrink-0 pl-2">
-                <span className="text-slate-500">Strikes:</span>
-                {(['10', '20', 'all'] as const).map(r => (
-                  <button
-                    key={r}
-                    onClick={() => setStrikeRange(r)}
-                    className={cn(
-                      "px-1.5 py-0.5 rounded text-[10px] transition-colors cursor-pointer",
-                      strikeRange === r
-                        ? "bg-secondary text-foreground font-bold"
-                        : "text-muted-foreground hover:text-foreground"
-                    )}
+              {/* Expected Move Pill + Range Filter */}
+              <div className="flex items-center gap-2 shrink-0">
+                {spotPrice > 0 && expectedMoveDollars > 0 && (
+                  <div
+                    className="hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-[10.5px] font-mono text-amber-300 shadow-xs"
+                    title={`1 Standard Deviation Expected Move based on IV ${atmIv.toFixed(1)}% over ${chainDte} days`}
                   >
-                    {r.toUpperCase()}
-                  </button>
-                ))}
+                    <span className="text-amber-400/80 text-[10px]">IVx: {atmIv.toFixed(1)}%</span>
+                    <span className="font-extrabold text-amber-300">(±${expectedMoveDollars.toFixed(2)})</span>
+                  </div>
+                )}
+
+                {/* Range Filter */}
+                <div className="flex items-center gap-1 text-[11px] font-mono shrink-0 pl-1 border-l border-slate-800">
+                  <span className="text-slate-500">Strikes:</span>
+                  {(['10', '20', 'all'] as const).map(r => (
+                    <button
+                      key={r}
+                      onClick={() => setStrikeRange(r)}
+                      className={cn(
+                        "px-1.5 py-0.5 rounded text-[10px] transition-colors cursor-pointer",
+                        strikeRange === r
+                          ? "bg-secondary text-foreground font-bold"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {r.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -1145,8 +1241,13 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                 <span>Bid</span>
                 <span className="text-emerald-400 font-bold">Ask (Buy)</span>
               </div>
-              <div className="col-span-2 text-center text-amber-300 font-bold">
-                STRIKE
+              <div className="col-span-2 text-center text-amber-300 font-bold flex items-center justify-center gap-1">
+                <span>STRIKE</span>
+                {expectedMoveDollars > 0 && (
+                  <span className="text-[9px] text-amber-400/80 font-normal hidden sm:inline" title="1 Standard Deviation Expected Move Bracket">
+                    (1σ)
+                  </span>
+                )}
               </div>
               <div className="col-span-5 grid grid-cols-5 text-right">
                 <span className="text-rose-400 font-bold text-left">Bid (Sell)</span>
@@ -1168,107 +1269,271 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                 <div className="p-8 text-center text-slate-400">
                   No option strikes available for selected cycle.
                 </div>
-              ) : (
-                filteredStrikes.map(row => {
-                  const strike = row.strike;
-                  const callLeg = legs.find(l => l.strike === strike && l.type === 'CALL');
-                  const putLeg = legs.find(l => l.strike === strike && l.type === 'PUT');
+              ) : (() => {
+                const renderedBoundaries = new Set<string>();
+
+                const getDividersForIndex = (idx: number) => {
+                  if (!spotPrice || !expectedMoveDollars) return [];
+                  const prevStrike = idx > 0 ? filteredStrikes[idx - 1].strike : null;
+                  const currStrike = filteredStrikes[idx].strike;
+
+                  const list: Array<{ id: 'LOWER' | 'SPOT' | 'UPPER'; val: number; label: string; delta: string }> = isAscending
+                    ? [
+                        { id: 'LOWER', val: lowerBound, label: '-1σ Expected Move', delta: `-$${expectedMoveDollars.toFixed(2)}` },
+                        { id: 'SPOT', val: spotPrice, label: 'Spot Price', delta: 'Current Last' },
+                        { id: 'UPPER', val: upperBound, label: '+1σ Expected Move', delta: `+$${expectedMoveDollars.toFixed(2)}` },
+                      ]
+                    : [
+                        { id: 'UPPER', val: upperBound, label: '+1σ Expected Move', delta: `+$${expectedMoveDollars.toFixed(2)}` },
+                        { id: 'SPOT', val: spotPrice, label: 'Spot Price', delta: 'Current Last' },
+                        { id: 'LOWER', val: lowerBound, label: '-1σ Expected Move', delta: `-$${expectedMoveDollars.toFixed(2)}` },
+                      ];
+
+                  const toRender: typeof list = [];
+
+                  list.forEach(b => {
+                    if (b.val <= 0 || renderedBoundaries.has(b.id)) return;
+
+                    if (prevStrike === null) {
+                      const step = filteredStrikes.length > 1 ? Math.abs(filteredStrikes[1].strike - currStrike) : 5;
+                      if (isAscending && currStrike >= b.val && currStrike - b.val <= step * 1.5) {
+                        renderedBoundaries.add(b.id);
+                        toRender.push(b);
+                      } else if (!isAscending && currStrike <= b.val && b.val - currStrike <= step * 1.5) {
+                        renderedBoundaries.add(b.id);
+                        toRender.push(b);
+                      }
+                    } else {
+                      if (isAscending && prevStrike < b.val && currStrike >= b.val) {
+                        renderedBoundaries.add(b.id);
+                        toRender.push(b);
+                      } else if (!isAscending && prevStrike > b.val && currStrike <= b.val) {
+                        renderedBoundaries.add(b.id);
+                        toRender.push(b);
+                      }
+                    }
+                  });
+
+                  return toRender;
+                };
+
+                const getTrailingDividers = () => {
+                  if (!spotPrice || !expectedMoveDollars || filteredStrikes.length === 0) return [];
+                  const lastStrike = filteredStrikes[filteredStrikes.length - 1].strike;
+                  const step = filteredStrikes.length > 1 ? Math.abs(filteredStrikes[filteredStrikes.length - 1].strike - filteredStrikes[filteredStrikes.length - 2].strike) : 5;
+
+                  const trailing: Array<{ id: 'LOWER' | 'SPOT' | 'UPPER'; val: number; label: string; delta: string }> = [];
+                  if (!renderedBoundaries.has('UPPER') && upperBound > 0) {
+                    if (isAscending && upperBound > lastStrike && upperBound - lastStrike <= step * 1.5) {
+                      trailing.push({ id: 'UPPER', val: upperBound, label: '+1σ Expected Move', delta: `+$${expectedMoveDollars.toFixed(2)}` });
+                    }
+                  }
+                  if (!renderedBoundaries.has('LOWER') && lowerBound > 0) {
+                    if (!isAscending && lowerBound < lastStrike && lastStrike - lowerBound <= step * 1.5) {
+                      trailing.push({ id: 'LOWER', val: lowerBound, label: '-1σ Expected Move', delta: `-$${expectedMoveDollars.toFixed(2)}` });
+                    }
+                  }
+                  return trailing;
+                };
+
+                const renderDividerLine = (item: { id: 'LOWER' | 'SPOT' | 'UPPER'; val: number; label: string; delta: string }) => {
+                  if (item.id === 'SPOT') {
+                    return (
+                      <div
+                        key={`divider-spot-${item.val}`}
+                        className="relative my-1.5 py-0.5 flex items-center justify-center select-none"
+                        data-testid="spot-price-line"
+                      >
+                        <div className="absolute inset-0 flex items-center">
+                          <div className="w-full border-t-2 border-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]" />
+                        </div>
+                        <div className="relative z-10 px-3 py-0.5 rounded-full bg-amber-500 text-slate-950 font-mono font-black text-[11px] flex items-center gap-1.5 shadow-lg border border-amber-300">
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-ping" />
+                          <span>SPOT PRICE: ${item.val.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (item.id === 'UPPER') {
+                    return (
+                      <div
+                        key={`divider-upper-${item.val}`}
+                        className="relative my-1.5 py-0.5 flex items-center justify-center select-none"
+                        data-testid="expected-move-upper-line"
+                      >
+                        <div className="absolute inset-0 flex items-center">
+                          <div className="w-full border-t border-dashed border-amber-400/80 shadow-[0_0_6px_rgba(245,158,11,0.3)]" />
+                        </div>
+                        <div className="relative z-10 px-2.5 py-0.5 rounded-full bg-slate-900 border border-amber-400 text-amber-300 font-mono font-bold text-[10px] flex items-center gap-1.5 shadow-md">
+                          <span className="text-amber-400 font-black">+1σ Expected Move</span>
+                          <span className="text-white font-extrabold">${item.val.toFixed(2)}</span>
+                          <span className="text-amber-400/80 text-[9px]">({item.delta})</span>
+                        </div>
+                      </div>
+                    );
+                  }
 
                   return (
                     <div
-                      key={strike}
-                      className={cn(
-                        "grid grid-cols-12 items-center py-1 px-2 rounded-lg transition-colors border",
-                        row.isAtm
-                          ? "bg-purple-950/30 border-purple-500/40"
-                          : "border-transparent hover:bg-slate-900/60"
-                      )}
+                      key={`divider-lower-${item.val}`}
+                      className="relative my-1.5 py-0.5 flex items-center justify-center select-none"
+                      data-testid="expected-move-lower-line"
                     >
-                      {/* Calls Side (Col 5) */}
-                      <div className="col-span-5 grid grid-cols-5 items-center text-left text-[11px]">
-                        <span
-                          className="text-slate-400 truncate cursor-default"
-                          title={`Call Vol: ${(row.call?.volume || 0).toLocaleString()} | OI: ${(row.call?.openInterest || 0).toLocaleString()}`}
-                        >
-                          {callLeg ? (
-                            <Badge className="text-[9px] px-1 py-0 bg-purple-600 text-white">
-                              {callLeg.action}
-                            </Badge>
-                          ) : (
-                            formatVol(row.call?.volume)
-                          )}
-                        </span>
-                        <span className="text-slate-300">{row.call?.delta ? row.call.delta.toFixed(2) : '-'}</span>
-                        <span className="text-slate-400">{row.call?.impliedVolatility ? `${row.call.impliedVolatility.toFixed(0)}%` : '-'}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleToggleChainLeg('SELL', 'CALL', strike, row.call)}
-                          className="hover:text-amber-300 text-slate-300 font-mono transition-colors text-left cursor-pointer"
-                          title={`Sell ${strike} Call @ $${row.call?.bid?.toFixed(2) || '0.00'}`}
-                        >
-                          {row.call?.bid ? `$${row.call.bid.toFixed(2)}` : '-'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleToggleChainLeg('BUY', 'CALL', strike, row.call)}
-                          className="font-bold text-emerald-400 hover:text-emerald-300 transition-colors text-left cursor-pointer"
-                          title={`Buy ${strike} Call @ $${row.call?.ask?.toFixed(2) || '0.00'}`}
-                        >
-                          {row.call?.ask ? `$${row.call.ask.toFixed(2)}` : '-'}
-                        </button>
+                      <div className="absolute inset-0 flex items-center">
+                        <div className="w-full border-t border-dashed border-amber-400/80 shadow-[0_0_6px_rgba(245,158,11,0.3)]" />
                       </div>
-
-                      {/* Center Strike Ladder (Col 2) */}
-                      <div className="col-span-2 text-center">
-                        <span
-                          className={cn(
-                            "px-2 py-0.5 rounded font-black tracking-wider text-xs",
-                            row.isAtm
-                              ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
-                              : "text-white"
-                          )}
-                        >
-                          ${strike.toFixed(1)}
-                        </span>
-                      </div>
-
-                      {/* Puts Side (Col 5) */}
-                      <div className="col-span-5 grid grid-cols-5 items-center text-right text-[11px]">
-                        <button
-                          type="button"
-                          onClick={() => handleToggleChainLeg('SELL', 'PUT', strike, row.put)}
-                          className="font-bold text-rose-400 hover:text-rose-300 transition-colors text-left cursor-pointer"
-                          title={`Sell ${strike} Put @ $${row.put?.bid?.toFixed(2) || '0.00'}`}
-                        >
-                          {row.put?.bid ? `$${row.put.bid.toFixed(2)}` : '-'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleToggleChainLeg('BUY', 'PUT', strike, row.put)}
-                          className="hover:text-amber-300 text-slate-300 font-mono transition-colors text-right cursor-pointer"
-                          title={`Buy ${strike} Put @ $${row.put?.ask?.toFixed(2) || '0.00'}`}
-                        >
-                          {row.put?.ask ? `$${row.put.ask.toFixed(2)}` : '-'}
-                        </button>
-                        <span className="text-slate-400">{row.put?.impliedVolatility ? `${row.put.impliedVolatility.toFixed(0)}%` : '-'}</span>
-                        <span className="text-slate-300">{row.put?.delta ? row.put.delta.toFixed(2) : '-'}</span>
-                        <span
-                          className="text-slate-400 truncate cursor-default"
-                          title={`Put Vol: ${(row.put?.volume || 0).toLocaleString()} | OI: ${(row.put?.openInterest || 0).toLocaleString()}`}
-                        >
-                          {putLeg ? (
-                            <Badge className="text-[9px] px-1 py-0 bg-purple-600 text-white">
-                              {putLeg.action}
-                            </Badge>
-                          ) : (
-                            formatVol(row.put?.volume)
-                          )}
-                        </span>
+                      <div className="relative z-10 px-2.5 py-0.5 rounded-full bg-slate-900 border border-amber-400 text-amber-300 font-mono font-bold text-[10px] flex items-center gap-1.5 shadow-md">
+                        <span className="text-amber-400 font-black">-1σ Expected Move</span>
+                        <span className="text-white font-extrabold">${item.val.toFixed(2)}</span>
+                        <span className="text-amber-400/80 text-[9px]">({item.delta})</span>
                       </div>
                     </div>
                   );
-                })
-              )}
+                };
+
+                return (
+                  <>
+                    {filteredStrikes.map((row, idx) => {
+                      const strike = row.strike;
+                      const callLeg = legs.find(l => l.strike === strike && l.type === 'CALL');
+                      const putLeg = legs.find(l => l.strike === strike && l.type === 'PUT');
+
+                      // ITM checks: Calls ITM if strike <= spotPrice; Puts ITM if strike >= spotPrice
+                      const isCallItm = row.call?.inTheMoney ?? (spotPrice > 0 && strike <= spotPrice);
+                      const isPutItm = row.put?.inTheMoney ?? (spotPrice > 0 && strike >= spotPrice);
+
+                      // 1 SD Expected Move Bracket check along Strike column
+                      const isWithinExpectedMove = spotPrice > 0 && expectedMoveDollars > 0 && strike >= lowerBound && strike <= upperBound;
+
+                      const dividersBefore = getDividersForIndex(idx);
+
+                      return (
+                        <React.Fragment key={`frag-${strike}`}>
+                          {dividersBefore.map(renderDividerLine)}
+
+                          <div
+                            key={strike}
+                            className={cn(
+                              "grid grid-cols-12 items-center rounded-lg transition-colors my-0.5",
+                              row.isAtm
+                                ? "ring-1 ring-purple-500/50 shadow-xs"
+                                : ""
+                            )}
+                          >
+                            {/* Calls Side (Col 5) - Shaded slate background if ITM */}
+                            <div
+                              className={cn(
+                                "col-span-5 grid grid-cols-5 items-center text-left text-[11px] py-1 px-2 rounded-l-lg transition-colors border-y border-l",
+                                isCallItm
+                                  ? "bg-slate-800/65 text-slate-100 border-slate-700/50 hover:bg-slate-800/85"
+                                  : "bg-slate-950/40 text-slate-400 border-transparent hover:bg-slate-900/60"
+                              )}
+                              data-testid={isCallItm ? "itm-call-cell" : "otm-call-cell"}
+                            >
+                              <span
+                                className="text-slate-400 truncate cursor-default"
+                                title={`Call Vol: ${(row.call?.volume || 0).toLocaleString()} | OI: ${(row.call?.openInterest || 0).toLocaleString()}`}
+                              >
+                                {callLeg ? (
+                                  <Badge className="text-[9px] px-1 py-0 bg-purple-600 text-white">
+                                    {callLeg.action}
+                                  </Badge>
+                                ) : (
+                                  formatVol(row.call?.volume)
+                                )}
+                              </span>
+                              <span className="text-slate-300">{row.call?.delta ? row.call.delta.toFixed(2) : '-'}</span>
+                              <span className="text-slate-400">{row.call?.impliedVolatility ? `${row.call.impliedVolatility.toFixed(0)}%` : '-'}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleChainLeg('SELL', 'CALL', strike, row.call)}
+                                className="hover:text-amber-300 text-slate-300 font-mono transition-colors text-left cursor-pointer"
+                                title={`Sell ${strike} Call @ $${row.call?.bid?.toFixed(2) || '0.00'}`}
+                              >
+                                {row.call?.bid ? `$${row.call.bid.toFixed(2)}` : '-'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleChainLeg('BUY', 'CALL', strike, row.call)}
+                                className="font-bold text-emerald-400 hover:text-emerald-300 transition-colors text-left cursor-pointer"
+                                title={`Buy ${strike} Call @ $${row.call?.ask?.toFixed(2) || '0.00'}`}
+                              >
+                                {row.call?.ask ? `$${row.call.ask.toFixed(2)}` : '-'}
+                              </button>
+                            </div>
+
+                            {/* Center Strike Ladder (Col 2) with 1 SD Vertical Ruler */}
+                            <div className="col-span-2 text-center relative py-1 flex items-center justify-center">
+                              <span
+                                className={cn(
+                                  "px-2 py-0.5 rounded font-black tracking-wider text-xs",
+                                  row.isAtm
+                                    ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                                    : isWithinExpectedMove
+                                    ? "text-amber-100 font-bold"
+                                    : "text-slate-300"
+                                )}
+                              >
+                                ${strike.toFixed(1)}
+                              </span>
+                              {isWithinExpectedMove && (
+                                <div
+                                  className="absolute right-0 top-0 bottom-0 w-1 bg-amber-500/90 shadow-[0_0_6px_rgba(245,158,11,0.5)]"
+                                  title={`Strike $${strike} is within 1σ Expected Move [$${lowerBound.toFixed(2)} – $${upperBound.toFixed(2)}]`}
+                                />
+                              )}
+                            </div>
+
+                            {/* Puts Side (Col 5) - Shaded slate background if ITM */}
+                            <div
+                              className={cn(
+                                "col-span-5 grid grid-cols-5 items-center text-right text-[11px] py-1 px-2 rounded-r-lg transition-colors border-y border-r",
+                                isPutItm
+                                  ? "bg-slate-800/65 text-slate-100 border-slate-700/50 hover:bg-slate-800/85"
+                                  : "bg-slate-950/40 text-slate-400 border-transparent hover:bg-slate-900/60"
+                              )}
+                              data-testid={isPutItm ? "itm-put-cell" : "otm-put-cell"}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => handleToggleChainLeg('SELL', 'PUT', strike, row.put)}
+                                className="font-bold text-rose-400 hover:text-rose-300 transition-colors text-left cursor-pointer"
+                                title={`Sell ${strike} Put @ $${row.put?.bid?.toFixed(2) || '0.00'}`}
+                              >
+                                {row.put?.bid ? `$${row.put.bid.toFixed(2)}` : '-'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleChainLeg('BUY', 'PUT', strike, row.put)}
+                                className="hover:text-amber-300 text-slate-300 font-mono transition-colors text-right cursor-pointer"
+                                title={`Buy ${strike} Put @ $${row.put?.ask?.toFixed(2) || '0.00'}`}
+                              >
+                                {row.put?.ask ? `$${row.put.ask.toFixed(2)}` : '-'}
+                              </button>
+                              <span className="text-slate-400">{row.put?.impliedVolatility ? `${row.put.impliedVolatility.toFixed(0)}%` : '-'}</span>
+                              <span className="text-slate-300">{row.put?.delta ? row.put.delta.toFixed(2) : '-'}</span>
+                              <span
+                                className="text-slate-400 truncate cursor-default"
+                                title={`Put Vol: ${(row.put?.volume || 0).toLocaleString()} | OI: ${(row.put?.openInterest || 0).toLocaleString()}`}
+                              >
+                                {putLeg ? (
+                                  <Badge className="text-[9px] px-1 py-0 bg-purple-600 text-white">
+                                    {putLeg.action}
+                                  </Badge>
+                                ) : (
+                                  formatVol(row.put?.volume)
+                                )}
+                              </span>
+                            </div>
+                          </div>
+                        </React.Fragment>
+                      );
+                    })}
+                    {getTrailingDividers().map(renderDividerLine)}
+                  </>
+                );
+              })()}
             </div>
           </div>
 

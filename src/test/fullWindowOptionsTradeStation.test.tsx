@@ -54,27 +54,34 @@ vi.mock('../services/optionsChainService', () => ({
       underlyingChange: 3.20,
       underlyingChangePercent: 0.95,
       expirations: [
-        { date: '2026-10-16', dte: 24, formattedDate: 'Oct 16, 2026' },
-        { date: '2026-11-20', dte: 59, formattedDate: 'Nov 20, 2026' },
+        { date: '2026-10-16', dte: 24, formattedDate: 'Oct 16, 2026', type: 'MONTHLY' as const },
+        { date: '2026-10-23', dte: 31, formattedDate: 'Oct 23, 2026', type: 'WEEKLY' as const },
+        { date: '2026-11-20', dte: 59, formattedDate: 'Nov 20, 2026', type: 'MONTHLY' as const },
       ],
       strikes: [
         {
+          strike: 320,
+          isAtm: false,
+          call: { strike: 320, bid: 19.5, ask: 19.8, delta: 0.88, impliedVolatility: 27, volume: 110, inTheMoney: true },
+          put: { strike: 320, bid: 0.8, ask: 0.9, delta: -0.12, impliedVolatility: 28, volume: 50, inTheMoney: false },
+        },
+        {
           strike: 330,
           isAtm: false,
-          call: { strike: 330, bid: 11.2, ask: 11.5, delta: 0.72, impliedVolatility: 26, volume: 150 },
-          put: { strike: 330, bid: 2.1, ask: 2.3, delta: -0.28, impliedVolatility: 27, volume: 80 },
+          call: { strike: 330, bid: 11.2, ask: 11.5, delta: 0.72, impliedVolatility: 26, volume: 150, inTheMoney: true },
+          put: { strike: 330, bid: 2.1, ask: 2.3, delta: -0.28, impliedVolatility: 27, volume: 80, inTheMoney: false },
         },
         {
           strike: 340,
           isAtm: true,
-          call: { strike: 340, bid: 4.5, ask: 4.8, delta: 0.49, impliedVolatility: 25, volume: 420 },
-          put: { strike: 340, bid: 5.2, ask: 5.5, delta: -0.51, impliedVolatility: 26, volume: 310 },
+          call: { strike: 340, bid: 4.5, ask: 4.8, delta: 0.49, impliedVolatility: 25, volume: 420, inTheMoney: false },
+          put: { strike: 340, bid: 5.2, ask: 5.5, delta: -0.51, impliedVolatility: 26, volume: 310, inTheMoney: true },
         },
         {
           strike: 350,
           isAtm: false,
-          call: { strike: 350, bid: 1.4, ask: 1.6, delta: 0.25, impliedVolatility: 24, volume: 200 },
-          put: { strike: 350, bid: 11.8, ask: 12.1, delta: -0.75, impliedVolatility: 28, volume: 90 },
+          call: { strike: 350, bid: 1.4, ask: 1.6, delta: 0.25, impliedVolatility: 24, volume: 200, inTheMoney: false },
+          put: { strike: 350, bid: 11.8, ask: 12.1, delta: -0.75, impliedVolatility: 28, volume: 90, inTheMoney: true },
         },
       ],
       analytics: {
@@ -160,8 +167,68 @@ describe('FullWindowOptionsTradeStationModal Component', () => {
     expect(screen.getByText(/\$15,738\.87/i)).toBeInTheDocument();
     // IBKR buying power: $73,186.14
     expect(screen.getByText(/\$73,186\.14/i)).toBeInTheDocument();
-    // Total portfolio BP: $90,758.97
-    expect(screen.getByText(/\$90,758\.97/i)).toBeInTheDocument();
+    // Total options BP: strictly the sum of the 2 brokers ($15,738.87 + $73,186.14 = $88,925.01)
+    expect(screen.getByText(/\$88,925\.01/i)).toBeInTheDocument();
+  });
+
+  it('displays weekly (W) and monthly (M) expiration badges in cycle bubbles', () => {
+    renderComponent();
+    // Expiration date bubbles
+    expect(screen.getByText('Oct 16, 2026')).toBeInTheDocument();
+    expect(screen.getByText('Oct 23, 2026')).toBeInTheDocument();
+
+    // Oct 23 is a weekly expiration -> should render W badge
+    expect(screen.getByText('W')).toBeInTheDocument();
+    // Oct 16 is a monthly expiration -> should render M badge
+    expect(screen.getAllByText('M').length).toBeGreaterThan(0);
+  });
+
+  it('renders the 1 Standard Deviation expected move stats and indicator lines', () => {
+    renderComponent();
+    // Header Expected Move pill
+    expect(screen.getByText(/IVx: 25\.4%/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/±\$9\.80/i).length).toBeGreaterThan(0);
+
+    // Spot Price line: Spot is 338.50
+    const spotLine = screen.getByTestId('spot-price-line');
+    expect(spotLine).toBeInTheDocument();
+    expect(spotLine).toHaveTextContent(/SPOT PRICE: \$338\.50/i);
+
+    // -1σ Expected Move Line: 338.50 - 9.80 = 328.70
+    const lowerLine = screen.getByTestId('expected-move-lower-line');
+    expect(lowerLine).toBeInTheDocument();
+    expect(lowerLine).toHaveTextContent(/\-1σ Expected Move/i);
+    expect(lowerLine).toHaveTextContent(/\$328\.70/i);
+
+    // +1σ Expected Move Line: 338.50 + 9.80 = 348.30
+    const upperLine = screen.getByTestId('expected-move-upper-line');
+    expect(upperLine).toBeInTheDocument();
+    expect(upperLine).toHaveTextContent(/\+1σ Expected Move/i);
+    expect(upperLine).toHaveTextContent(/\$348\.30/i);
+  });
+
+  it('shades ITM Calls and ITM Puts distinctly from OTM options', () => {
+    renderComponent();
+    // Calls with strike <= 338.50 (320, 330) are ITM -> itm-call-cell
+    const itmCallCells = screen.getAllByTestId('itm-call-cell');
+    expect(itmCallCells.length).toBeGreaterThanOrEqual(2);
+    // ITM calls have slate shaded background
+    expect(itmCallCells[0].className).toContain('bg-slate-800/65');
+
+    // Calls with strike > 338.50 (340, 350) are OTM -> otm-call-cell
+    const otmCallCells = screen.getAllByTestId('otm-call-cell');
+    expect(otmCallCells.length).toBeGreaterThanOrEqual(2);
+    expect(otmCallCells[0].className).toContain('bg-slate-950/40');
+
+    // Puts with strike >= 338.50 (340, 350) are ITM -> itm-put-cell
+    const itmPutCells = screen.getAllByTestId('itm-put-cell');
+    expect(itmPutCells.length).toBeGreaterThanOrEqual(2);
+    expect(itmPutCells[0].className).toContain('bg-slate-800/65');
+
+    // Puts with strike < 338.50 (320, 330) are OTM -> otm-put-cell
+    const otmPutCells = screen.getAllByTestId('otm-put-cell');
+    expect(otmPutCells.length).toBeGreaterThanOrEqual(2);
+    expect(otmPutCells[0].className).toContain('bg-slate-950/40');
   });
 
   it('displays strikes and allows adding a call leg to the draft', async () => {
@@ -195,6 +262,21 @@ describe('FullWindowOptionsTradeStationModal Component', () => {
 
     expect(screen.getByText(/P&L Payoff At Expiration/i)).toBeInTheDocument();
     expect(screen.getByText(/Net Greeks Exposure/i)).toBeInTheDocument();
+  });
+
+  it('toggles edge-to-edge fullscreen mode when fullscreen button is clicked', () => {
+    renderComponent();
+
+    const fullscreenBtn = screen.getByTitle('Enter Edge-to-Edge Fullscreen');
+    expect(fullscreenBtn).toBeInTheDocument();
+
+    // Click to enter edge-to-edge fullscreen
+    fireEvent.click(fullscreenBtn);
+    expect(screen.getByTitle('Exit Fullscreen')).toBeInTheDocument();
+
+    // Click again to restore window size
+    fireEvent.click(screen.getByTitle('Exit Fullscreen'));
+    expect(screen.getByTitle('Enter Edge-to-Edge Fullscreen')).toBeInTheDocument();
   });
 });
 

@@ -30,15 +30,18 @@ import {
 } from '@/services/alertService';
 import { PriceAlertModal } from '../PriceAlertModal';
 import { useToast } from '@/components/ui/use-toast';
+import { StockHoverGraphCard } from './StockHoverGraphCard';
 
 interface DashboardAlertsCardProps {
   onNavigateToAlerts?: () => void;
   onNavigateToResearch?: (symbol: string) => void;
+  onNavigateToGraphs?: (symbol: string) => void;
 }
 
 export function DashboardAlertsCard({
   onNavigateToAlerts,
   onNavigateToResearch,
+  onNavigateToGraphs,
 }: DashboardAlertsCardProps) {
   const { toast } = useToast();
   const { data: alerts = [], isLoading } = useAlerts({ sortBy: 'triggeredAt', sortDir: 'desc' });
@@ -272,7 +275,11 @@ export function DashboardAlertsCard({
             return (
               <div
                 key={alert.id}
-                onClick={() => onNavigateToResearch && onNavigateToResearch(alert.symbol)}
+                onClick={() => {
+                  if (onNavigateToGraphs) onNavigateToGraphs(alert.symbol);
+                  else if (onNavigateToResearch) onNavigateToResearch(alert.symbol);
+                  else window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: alert.symbol }));
+                }}
                 className={cn(
                   'p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between group',
                   isTriggered && !isMuted
@@ -297,9 +304,11 @@ export function DashboardAlertsCard({
                   </div>
                   <div>
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-mono font-black text-xs text-foreground group-hover:text-primary transition-colors">
-                        {alert.symbol}
-                      </span>
+                      <StockHoverGraphCard symbol={alert.symbol} onNavigateToGraphs={onNavigateToGraphs}>
+                        <span className="font-mono font-black text-xs text-foreground group-hover:text-primary transition-colors cursor-pointer">
+                          {alert.symbol}
+                        </span>
+                      </StockHoverGraphCard>
                       <span className="text-[10px] font-mono text-muted-foreground">
                         {isAbove ? '≥' : '≤'} ${alert.targetPrice.toFixed(2)}
                       </span>

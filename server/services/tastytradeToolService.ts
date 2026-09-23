@@ -1,9 +1,14 @@
 // server/services/tastytradeToolService.ts
 // Tool-Calling Architecture & Execution Engine for Tastytrade Integration
 
+import * as fs from 'fs';
+import * as path from 'path';
+import { PrismaClient } from '@prisma/client';
 import * as dotenv from 'dotenv';
 dotenv.config({ path: '.env.local' });
 dotenv.config();
+
+const prisma = new PrismaClient();
 
 import {
     fetchTastyBalances,
@@ -108,16 +113,53 @@ export interface CopilotChatResponse {
     error?: string;
 }
 
-// In-memory staged drafts registry (expires after 15 minutes)
-const stagedDrafts = new Map<string, StagedDraftOrder>();
+// Persisted staged drafts registry (stored in server/staged_drafts.json)
+const DRAFTS_FILE_PATH = path.resolve(process.cwd(), 'server', 'staged_drafts.json');
 
-// Clean up expired drafts periodically
+function loadPersistedDrafts(): Map<string, StagedDraftOrder> {
+    const map = new Map<string, StagedDraftOrder>();
+    try {
+        if (fs.existsSync(DRAFTS_FILE_PATH)) {
+            const raw = fs.readFileSync(DRAFTS_FILE_PATH, 'utf-8');
+            const list = JSON.parse(raw);
+            if (Array.isArray(list)) {
+                for (const item of list) {
+                    if (item && item.draftId) {
+                        map.set(item.draftId, item);
+                    }
+                }
+                console.log(`[TastytradeToolService] Loaded ${map.size} persisted staged drafts from disk.`);
+            }
+        }
+    } catch (err: any) {
+        console.warn('[TastytradeToolService] Failed to load persisted staged drafts:', err.message);
+    }
+    return map;
+}
+
+function savePersistedDrafts(): void {
+    try {
+        const list = Array.from(stagedDrafts.values());
+        fs.writeFileSync(DRAFTS_FILE_PATH, JSON.stringify(list, null, 2), 'utf-8');
+    } catch (err: any) {
+        console.warn('[TastytradeToolService] Failed to persist staged drafts to disk:', err.message);
+    }
+}
+
+const stagedDrafts = loadPersistedDrafts();
+
+// Clean up expired pending drafts periodically
 setInterval(() => {
     const now = Date.now();
+    let changed = false;
     for (const [id, draft] of stagedDrafts.entries()) {
         if (new Date(draft.expiresAt).getTime() < now && draft.status === 'PENDING_APPROVAL') {
             draft.status = 'EXPIRED';
+            changed = true;
         }
+    }
+    if (changed) {
+        savePersistedDrafts();
     }
 }, 60000);
 
@@ -1037,6 +1079,7 @@ export async function stageDraftOrder(args: {
     };
 
     stagedDrafts.set(draftId, draftOrder);
+    savePersistedDrafts();
     return draftOrder;
 }
 
@@ -1091,6 +1134,7 @@ export async function switchDraftBroker(
     }
 
     stagedDrafts.set(draftId, draft);
+    savePersistedDrafts();
     return draft;
 }
 
@@ -1109,6 +1153,7 @@ export async function executeApprovedDraft(
 
     if (new Date(draft.expiresAt).getTime() < Date.now()) {
         draft.status = 'EXPIRED';
+        savePersistedDrafts();
         throw new Error('Draft order has expired. Please stage a fresh trade.');
     }
 
@@ -1119,6 +1164,8 @@ export async function executeApprovedDraft(
     if (overrides?.quantity && overrides.quantity > 0) {
         draft.quantity = overrides.quantity;
     }
+
+    let orderId: string | number | undefined;
 
     if (draft.broker === 'alpaca') {
         try {
@@ -1134,21 +1181,18 @@ export async function executeApprovedDraft(
                 source: 'AI_AGENT',
                 strategyName: 'AI Trading Terminal',
             });
-            const orderId = alpacaRes.order?.id || `ALP_${Date.now().toString().slice(-6)}`;
+            orderId = alpacaRes.order?.id || `ALP_${Date.now().toString().slice(-6)}`;
             draft.status = 'EXECUTED';
             draft.executionResult = {
                 orderId,
                 executedAt: new Date().toISOString(),
                 status: alpacaRes.order?.status || 'Accepted',
             };
-            return { success: true, draft, orderId };
         } catch (err: any) {
             draft.status = 'PENDING_APPROVAL';
             throw err;
         }
-    }
-
-    if (draft.broker === 'ibkr') {
+    } else if (draft.broker === 'ibkr') {
         try {
             const side = draft.action.toUpperCase().includes('SELL') ? 'SELL' : 'BUY';
             const orderType = draft.orderType.toUpperCase() === 'MARKET' ? 'MKT' : 'LMT';
@@ -1164,60 +1208,114 @@ export async function executeApprovedDraft(
                 cOID: draft.draftId
             });
 
+            orderId = ibkrRes.orderId;
             draft.status = 'EXECUTED';
             draft.executionResult = {
                 orderId: ibkrRes.orderId,
                 executedAt: ibkrRes.submittedAt,
                 status: ibkrRes.orderStatus || 'Submitted',
             };
-            return { success: true, draft, orderId: ibkrRes.orderId };
         } catch (err: any) {
             draft.status = 'PENDING_APPROVAL';
             throw err;
         }
-    }
-
-    // Default: Tastytrade execution
-    // Build the official order payload
-    const orderPayload = {
-        'time-in-force': draft.timeInForce,
-        'order-type': draft.orderType,
-        price: draft.price ? draft.price.toFixed(2) : undefined,
-        'price-effect': (draft.action.startsWith('BUY') || draft.action === 'BUY') ? 'Debit' : 'Credit',
-        legs: [
-            {
-                'instrument-type': draft.instrumentType === 'Equity Option' ? 'Equity Option' : 'Equity',
-                symbol: draft.symbol,
-                quantity: draft.quantity,
-                action: formatTastyAction(draft.action)
-            }
-        ]
-    };
-
-    try {
-        // Execute the POST /orders request on the backend
-        const result = await submitTastyOrder(draft.accountNumber, orderPayload).catch((err) => {
-            // If Sandbox cert returns 400/mock because market closed or test symbol, create sandbox mock confirmation
-            if (isTastySandbox()) {
-                console.log('[Tastytrade Sandbox Mode] Live API returned error in Sandbox, generating validated sandbox confirmation:', err.message);
-                return { id: `CERT_${Math.floor(100000 + Math.random() * 900000)}`, status: 'Received' };
-            }
-            throw err;
-        });
-
-        const orderId = result?.id || result?.['order-id'] || `CERT_${Date.now().toString().slice(-6)}`;
-        draft.status = 'EXECUTED';
-        draft.executionResult = {
-            orderId,
-            executedAt: new Date().toISOString(),
-            status: result?.status || 'Submitted'
+    } else {
+        // Default: Tastytrade execution
+        // Build the official order payload
+        const orderPayload = {
+            'time-in-force': draft.timeInForce,
+            'order-type': draft.orderType,
+            price: draft.price ? draft.price.toFixed(2) : undefined,
+            'price-effect': (draft.action.startsWith('BUY') || draft.action === 'BUY') ? 'Debit' : 'Credit',
+            legs: [
+                {
+                    'instrument-type': draft.instrumentType === 'Equity Option' ? 'Equity Option' : 'Equity',
+                    symbol: draft.symbol,
+                    quantity: draft.quantity,
+                    action: formatTastyAction(draft.action, draft.instrumentType)
+                }
+            ]
         };
 
-        return { success: true, draft, orderId };
-    } catch (err: any) {
-        draft.status = 'PENDING_APPROVAL'; // Keep as pending if transient failure
-        throw err;
+        try {
+            // Execute the POST /orders request on the backend
+            const result = await submitTastyOrder(draft.accountNumber, orderPayload).catch((err) => {
+                // If Sandbox cert returns 400/mock because market closed or test symbol, create sandbox mock confirmation
+                if (isTastySandbox()) {
+                    console.log('[Tastytrade Sandbox Mode] Live API returned error in Sandbox, generating validated sandbox confirmation:', err.message);
+                    return { id: `CERT_${Math.floor(100000 + Math.random() * 900000)}`, status: 'Received' };
+                }
+                throw err;
+            });
+
+            orderId = result?.id || result?.['order-id'] || `TT_${Date.now().toString().slice(-6)}`;
+            draft.status = 'EXECUTED';
+            draft.executionResult = {
+                orderId,
+                executedAt: new Date().toISOString(),
+                status: result?.status || 'Submitted'
+            };
+        } catch (err: any) {
+            draft.status = 'PENDING_APPROVAL'; // Keep as pending if transient failure
+            throw err;
+        }
     }
+
+    // Persist draft updates to disk
+    stagedDrafts.set(draftId, draft);
+    savePersistedDrafts();
+
+    // Persist to Prisma Database for permanent trade ledger and audit trail
+    try {
+        const isBuy = draft.action.toUpperCase().includes('BUY');
+        const isOption = draft.instrumentType === 'Equity Option';
+        const multiplier = isOption ? 100 : 1;
+        const price = draft.price || 0;
+        const totalVal = price * draft.quantity * multiplier;
+        const brokerName = draft.broker === 'ibkr' ? 'Interactive Brokers' : draft.broker === 'alpaca' ? 'Alpaca' : 'Tastytrade';
+        const brokerTradeId = String(orderId || `DRAFT_${draft.draftId}`);
+
+        await prisma.tradeRecord.upsert({
+            where: {
+                broker_brokerTradeId: {
+                    broker: brokerName,
+                    brokerTradeId: brokerTradeId
+                }
+            },
+            create: {
+                broker: brokerName,
+                brokerTradeId: brokerTradeId,
+                symbol: draft.symbol,
+                underlyingSymbol: draft.optionDetails ? draft.symbol.split(/\d+/)[0] || draft.symbol : draft.symbol,
+                assetType: isOption ? 'OPTION' : 'EQUITY',
+                optionType: draft.optionDetails?.optionType ? draft.optionDetails.optionType.toUpperCase() : null,
+                strikePrice: draft.optionDetails?.strikePrice || null,
+                expiryDate: draft.optionDetails?.expirationDate || null,
+                action: draft.action,
+                side: isBuy ? 'BUY' : 'SELL',
+                positionEffect: isBuy ? 'LONG' : 'SHORT',
+                quantity: draft.quantity,
+                price: price,
+                totalValue: totalVal,
+                valueEffect: isBuy ? 'DEBIT' : 'CREDIT',
+                orderId: String(orderId || draft.draftId),
+                description: `Approved & Executed via Trade Station: ${draft.action} ${draft.quantity}x ${draft.symbol} @ $${price.toFixed(2)}`,
+                executedAt: new Date(),
+            },
+            update: {
+                price: price,
+                quantity: draft.quantity,
+                totalValue: totalVal,
+                orderId: String(orderId || draft.draftId),
+            }
+        }).catch((dbErr: any) => {
+            console.warn('[TastytradeToolService] TradeRecord upsert note:', dbErr.message);
+        });
+    } catch (err: any) {
+        console.warn('[TastytradeToolService] Error writing trade to database:', err.message);
+    }
+
+    return { success: true, draft, orderId };
 }
 
 export function cancelDraft(draftId: string): { success: boolean; draft: StagedDraftOrder } {
@@ -1229,6 +1327,8 @@ export function cancelDraft(draftId: string): { success: boolean; draft: StagedD
         throw new Error('Cannot cancel an order that has already been executed.');
     }
     draft.status = 'CANCELLED';
+    stagedDrafts.set(draftId, draft);
+    savePersistedDrafts();
     return { success: true, draft };
 }
 

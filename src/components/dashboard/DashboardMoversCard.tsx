@@ -15,6 +15,8 @@ import {
   Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { StockHoverGraphCard } from './StockHoverGraphCard';
+import { getCanonicalCompanyName } from '@/utils/tickerUtils';
 
 type MoversTimeframe = 'TODAY' | 'YESTERDAY' | '1W' | '1M' | 'ALL-TIME';
 type AssetFilter = 'ALL' | 'EQUITIES' | 'OPTIONS';
@@ -23,12 +25,14 @@ interface DashboardMoversCardProps {
   positions?: any[];
   onNavigateToPortfolio?: () => void;
   onNavigateToResearch?: (symbol: string) => void;
+  onNavigateToGraphs?: (symbol: string) => void;
 }
 
 export function DashboardMoversCard({
   positions = [],
   onNavigateToPortfolio,
   onNavigateToResearch,
+  onNavigateToGraphs,
 }: DashboardMoversCardProps) {
   const [timeframe, setTimeframe] = useState<MoversTimeframe>('TODAY');
   const [assetFilter, setAssetFilter] = useState<AssetFilter>('EQUITIES');
@@ -129,7 +133,7 @@ export function DashboardMoversCard({
       return {
         id: p.id || `${sym}-${idx}`,
         symbol: sym,
-        name: p.description || p.name || `${sym} Position`,
+        name: getCanonicalCompanyName(sym) || p.description || p.name || `${sym} Position`,
         assetType: isOption ? 'Option' : 'Stock',
         isOption,
         optionType: p.optionType,
@@ -299,14 +303,23 @@ export function DashboardMoversCard({
               {gainers.map((item, idx) => (
                 <div
                   key={`${item.id}-gainer-${idx}`}
-                  onClick={() => onNavigateToResearch && onNavigateToResearch(item.symbol)}
+                  onClick={() => {
+                    if (onNavigateToGraphs) onNavigateToGraphs(item.symbol);
+                    else window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: item.symbol }));
+                  }}
                   className="p-2.5 rounded-xl bg-accent/20 hover:bg-emerald-950/20 border border-border/50 hover:border-emerald-500/30 transition-all cursor-pointer flex items-center justify-between group"
                 >
                   <div className="flex items-center gap-2.5">
                     <div className="flex items-center gap-1.5">
-                      <span className="font-mono font-black text-xs text-foreground group-hover:text-primary transition-colors">
-                        {item.symbol}
-                      </span>
+                      <StockHoverGraphCard
+                        symbol={item.symbol}
+                        name={item.name}
+                        onNavigateToGraphs={onNavigateToGraphs}
+                      >
+                        <span className="font-mono font-black text-xs text-foreground group-hover:text-primary transition-colors">
+                          {item.symbol}
+                        </span>
+                      </StockHoverGraphCard>
                       {item.isOption ? (
                         <Badge variant="outline" className="text-[8px] font-mono px-1 py-0 bg-purple-500/10 text-purple-400 border-purple-500/30">
                           {item.strike && item.optionType ? `${item.strike}${item.optionType[0]}` : 'OPT'}
@@ -356,14 +369,23 @@ export function DashboardMoversCard({
               {losers.map((item, idx) => (
                 <div
                   key={`${item.id}-loser-${idx}`}
-                  onClick={() => onNavigateToResearch && onNavigateToResearch(item.symbol)}
+                  onClick={() => {
+                    if (onNavigateToGraphs) onNavigateToGraphs(item.symbol);
+                    else window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: item.symbol }));
+                  }}
                   className="p-2.5 rounded-xl bg-accent/20 hover:bg-rose-950/20 border border-border/50 hover:border-rose-500/30 transition-all cursor-pointer flex items-center justify-between group"
                 >
                   <div className="flex items-center gap-2.5">
                     <div className="flex items-center gap-1.5">
-                      <span className="font-mono font-black text-xs text-foreground group-hover:text-rose-400 transition-colors">
-                        {item.symbol}
-                      </span>
+                      <StockHoverGraphCard
+                        symbol={item.symbol}
+                        name={item.name}
+                        onNavigateToGraphs={onNavigateToGraphs}
+                      >
+                        <span className="font-mono font-black text-xs text-foreground group-hover:text-rose-400 transition-colors">
+                          {item.symbol}
+                        </span>
+                      </StockHoverGraphCard>
                       {item.isOption ? (
                         <Badge variant="outline" className="text-[8px] font-mono px-1 py-0 bg-purple-500/10 text-purple-400 border-purple-500/30">
                           {item.strike && item.optionType ? `${item.strike}${item.optionType[0]}` : 'OPT'}

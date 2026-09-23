@@ -23,15 +23,18 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
+import { StockHoverGraphCard } from './StockHoverGraphCard';
 
 interface DashboardTradesCardProps {
   onNavigateToTrades?: () => void;
   onNavigateToResearch?: (symbol: string) => void;
+  onNavigateToGraphs?: (symbol: string) => void;
 }
 
 export function DashboardTradesCard({
   onNavigateToTrades,
   onNavigateToResearch,
+  onNavigateToGraphs,
 }: DashboardTradesCardProps) {
   const { toast } = useToast();
   const [filterSide, setFilterSide] = useState<'ALL' | 'BUY' | 'SELL'>('ALL');
@@ -82,10 +85,12 @@ export function DashboardTradesCard({
 
   const handleRowClick = (trade: UnifiedTrade) => {
     const symbolToOpen = trade.underlyingSymbol || trade.symbol.split(' ')[0];
-    if (symbolToOpen && onNavigateToResearch) {
+    if (symbolToOpen && onNavigateToGraphs) {
+      onNavigateToGraphs(symbolToOpen);
+    } else if (symbolToOpen && onNavigateToResearch) {
       onNavigateToResearch(symbolToOpen);
     } else if (symbolToOpen) {
-      window.dispatchEvent(new CustomEvent('select-research-ticker', { detail: symbolToOpen }));
+      window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: symbolToOpen }));
     }
   };
 
@@ -361,9 +366,11 @@ export function DashboardTradesCard({
 
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-mono font-bold text-xs text-foreground group-hover:text-primary transition-colors">
-                        {displaySymbol}
-                      </span>
+                      <StockHoverGraphCard symbol={displaySymbol} onNavigateToGraphs={onNavigateToGraphs}>
+                        <span className="font-mono font-bold text-xs text-foreground group-hover:text-primary transition-colors cursor-pointer">
+                          {displaySymbol}
+                        </span>
+                      </StockHoverGraphCard>
 
                       {/* Side Action Tag */}
                       <Badge

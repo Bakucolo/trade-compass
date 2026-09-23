@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveYahooFinanceSymbol } from '../../server/services/tickerResolutionService';
+import { resolveYahooFinanceSymbol, getCanonicalCompanyName } from '../../server/services/tickerResolutionService';
 
 describe('Dashboard Multi-Session Performance & Movers Differentiation', () => {
   const mockPositions = [
@@ -96,6 +96,17 @@ describe('Dashboard Multi-Session Performance & Movers Differentiation', () => {
     expect(resolveYahooFinanceSymbol('LIB', 'CAD')).toBe('LIB.V');
     expect(resolveYahooFinanceSymbol('APF')).toBe('ECOR.L');
     expect(resolveYahooFinanceSymbol('PLTR', 'USD')).toBe('PLTR');
+    expect(resolveYahooFinanceSymbol('AGX', 'CAD')).toBe('AGX.V');
+    expect(resolveYahooFinanceSymbol('AGX')).toBe('AGX.V');
+    expect(resolveYahooFinanceSymbol('GTII', 'CAD')).toBe('GTII.CN');
+    expect(resolveYahooFinanceSymbol('GTII')).toBe('GTII.CN');
+    expect(resolveYahooFinanceSymbol('GRID', 'CAD')).toBe('GRID.TO');
+
+    expect(getCanonicalCompanyName('AGX')).toBe('Silver X Mining Corp.');
+    expect(getCanonicalCompanyName('AGX.V')).toBe('Silver X Mining Corp.');
+    expect(getCanonicalCompanyName('GTII')).toBe('Green Thumb Industries Inc.');
+    expect(getCanonicalCompanyName('GTII.CN')).toBe('Green Thumb Industries Inc.');
+    expect(getCanonicalCompanyName('GRID')).toBe('Tantalus Systems Holdings Inc.');
   });
 
   it('correctly isolates yesterday performance from today intraday performance in Yesterday Pulse', () => {

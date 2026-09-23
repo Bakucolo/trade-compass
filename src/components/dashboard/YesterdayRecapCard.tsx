@@ -18,6 +18,8 @@ import {
   Moon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { StockHoverGraphCard } from './StockHoverGraphCard';
+import { getCanonicalCompanyName } from '@/utils/tickerUtils';
 
 interface YesterdayRecapCardProps {
   positions?: any[];
@@ -27,6 +29,7 @@ interface YesterdayRecapCardProps {
   isPrivacyMode?: boolean;
   onNavigateToPortfolio?: () => void;
   onNavigateToResearch?: (symbol: string) => void;
+  onNavigateToGraphs?: (symbol: string) => void;
 }
 
 export function YesterdayRecapCard({
@@ -37,7 +40,17 @@ export function YesterdayRecapCard({
   isPrivacyMode = false,
   onNavigateToPortfolio,
   onNavigateToResearch,
+  onNavigateToGraphs,
 }: YesterdayRecapCardProps) {
+  const handleTickerClick = (sym: string) => {
+    if (onNavigateToGraphs) {
+      onNavigateToGraphs(sym);
+    } else if (onNavigateToResearch) {
+      onNavigateToResearch(sym);
+    } else {
+      window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: sym }));
+    }
+  };
   // Compute normalized session performance items (strictly prior session / overnight)
   const normalizedPositions = positions.map((p) => {
     const sym = (p.underlyingSymbol || p.symbol || '').toUpperCase();
@@ -69,7 +82,7 @@ export function YesterdayRecapCard({
 
     return {
       symbol: sym,
-      name: p.description || p.name || `${sym} Position`,
+      name: getCanonicalCompanyName(sym) || p.description || p.name || `${sym} Position`,
       assetType: p.assetType,
       currentPrice: p.currentPrice || p.averageCost || 0,
       marketValue: mktVal,
@@ -218,7 +231,7 @@ export function YesterdayRecapCard({
             </div>
           ) : topGainer ? (
             <div
-              onClick={() => onNavigateToResearch && onNavigateToResearch(topGainer.symbol)}
+              onClick={() => handleTickerClick(topGainer.symbol)}
               className="p-3.5 rounded-xl bg-emerald-950/20 hover:bg-emerald-950/30 border border-emerald-800/40 transition-all cursor-pointer group/card flex items-center justify-between"
             >
               <div className="flex items-center gap-2.5">
@@ -227,9 +240,11 @@ export function YesterdayRecapCard({
                 </div>
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <span className="font-mono font-black text-xs text-foreground group-hover/card:text-primary transition-colors">
-                      {topGainer.symbol}
-                    </span>
+                    <StockHoverGraphCard symbol={topGainer.symbol} onNavigateToGraphs={onNavigateToGraphs}>
+                      <span className="font-mono font-black text-xs text-foreground group-hover/card:text-primary transition-colors cursor-pointer">
+                        {topGainer.symbol}
+                      </span>
+                    </StockHoverGraphCard>
                     <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 text-[9px] px-1 py-0 h-4 uppercase font-bold">
                       Top Driver
                     </Badge>
@@ -266,7 +281,7 @@ export function YesterdayRecapCard({
             </div>
           ) : topLoser ? (
             <div
-              onClick={() => onNavigateToResearch && onNavigateToResearch(topLoser.symbol)}
+              onClick={() => handleTickerClick(topLoser.symbol)}
               className={cn(
                 "p-3.5 rounded-xl transition-all cursor-pointer group/card flex items-center justify-between border",
                 topLoser.returnDollar < 0
@@ -285,9 +300,11 @@ export function YesterdayRecapCard({
                 </div>
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <span className="font-mono font-black text-xs group-hover/card:text-primary transition-colors text-foreground">
-                      {topLoser.symbol}
-                    </span>
+                    <StockHoverGraphCard symbol={topLoser.symbol} onNavigateToGraphs={onNavigateToGraphs}>
+                      <span className="font-mono font-black text-xs group-hover/card:text-primary transition-colors text-foreground cursor-pointer">
+                        {topLoser.symbol}
+                      </span>
+                    </StockHoverGraphCard>
                     <Badge className={cn(
                       "text-[9px] px-1 py-0 h-4 uppercase font-bold",
                       topLoser.returnDollar < 0

@@ -8,13 +8,15 @@ import { IdeaModal } from './IdeaModal';
 import { IdeaDetailModal } from './IdeaDetailModal';
 import { AIIdeaGeneratorModal } from './AIIdeaGeneratorModal';
 import { getIdeaMarketTheme } from '@/utils/ideaThemeUtils';
+import { StockHoverGraphCard } from './dashboard/StockHoverGraphCard';
 
 interface IdeasCardProps {
   onNavigateToIdeas?: () => void;
   onNavigateToResearch?: (symbol: string) => void;
+  onNavigateToGraphs?: (symbol: string) => void;
 }
 
-export function IdeasCard({ onNavigateToIdeas, onNavigateToResearch }: IdeasCardProps) {
+export function IdeasCard({ onNavigateToIdeas, onNavigateToResearch, onNavigateToGraphs }: IdeasCardProps) {
   const { data: ideas = [], isLoading } = useTradeIdeas();
   const [selectedIdea, setSelectedIdea] = useState<any | null>(null);
   const [isWriteModalOpen, setIsWriteModalOpen] = useState(false);
@@ -118,9 +120,19 @@ export function IdeasCard({ onNavigateToIdeas, onNavigateToResearch }: IdeasCard
               >
                 <div className="flex items-start justify-between mb-1.5">
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-foreground ticker-symbol font-mono">
-                      {idea.symbol}
-                    </span>
+                    <StockHoverGraphCard symbol={idea.symbol} onNavigateToGraphs={onNavigateToGraphs}>
+                      <span
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (onNavigateToGraphs) onNavigateToGraphs(idea.symbol);
+                          else if (onNavigateToResearch) onNavigateToResearch(idea.symbol);
+                          else window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: idea.symbol }));
+                        }}
+                        className="font-bold text-foreground ticker-symbol font-mono hover:text-primary transition-colors cursor-pointer"
+                      >
+                        {idea.symbol}
+                      </span>
+                    </StockHoverGraphCard>
                     <span
                       className={cn(
                         'text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border',

@@ -58,7 +58,7 @@ export const AiTradingOrdersWorkspace: React.FC<AiTradingOrdersWorkspaceProps> =
   const [orders, setOrders] = useState<UnifiedOrder[]>([]);
   const [isLoadingDrafts, setIsLoadingDrafts] = useState(false);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<'all' | 'drafts' | 'live' | 'filled' | 'cancelled'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'drafts' | 'executed' | 'live' | 'filled' | 'cancelled'>('all');
   const [processingDraftId, setProcessingDraftId] = useState<string | null>(null);
   const [expandedBpDraftId, setExpandedBpDraftId] = useState<string | null>(null);
 
@@ -112,7 +112,7 @@ export const AiTradingOrdersWorkspace: React.FC<AiTradingOrdersWorkspaceProps> =
     try {
       const res = await approveDraftOrder(draftId);
       toast.success('Trade Approved & Executed!', {
-        description: `Order #${res.orderId || 'SUCCESS'} submitted to ${activeBroker.toUpperCase()}.`
+        description: `Order #${res.orderId || 'SUCCESS'} sent to ${activeBroker.toUpperCase()}. Stored in Executed Trades and portfolio ledger.`
       });
       fetchDrafts();
       fetchOrders();
@@ -137,8 +137,9 @@ export const AiTradingOrdersWorkspace: React.FC<AiTradingOrdersWorkspaceProps> =
     }
   };
 
-  // Filter pending drafts
+  // Filter pending drafts & executed drafts
   const pendingDrafts = drafts.filter((d) => d.status === 'PENDING_APPROVAL');
+  const executedDrafts = drafts.filter((d) => d.status === 'EXECUTED');
 
   // Filtered orders list based on status filter
   const filteredOrders = orders.filter((o) => {
@@ -214,7 +215,7 @@ export const AiTradingOrdersWorkspace: React.FC<AiTradingOrdersWorkspaceProps> =
               : "text-muted-foreground hover:text-foreground"
           )}
         >
-          All ({pendingDrafts.length + orders.length})
+          All ({pendingDrafts.length + executedDrafts.length + orders.length})
         </button>
 
         <button
@@ -231,6 +232,25 @@ export const AiTradingOrdersWorkspace: React.FC<AiTradingOrdersWorkspaceProps> =
           {pendingDrafts.length > 0 && (
             <Badge className="h-4 px-1 text-[9px] bg-amber-500 text-slate-950 font-bold">
               {pendingDrafts.length}
+            </Badge>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setStatusFilter('executed')}
+          className={cn(
+            "px-2.5 py-1 rounded-lg font-medium transition-all flex items-center gap-1",
+            statusFilter === 'executed'
+              ? "bg-emerald-500/15 text-emerald-300 font-semibold shadow-xs"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+          <span>Executed</span>
+          {executedDrafts.length > 0 && (
+            <Badge className="h-4 px-1 text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold">
+              {executedDrafts.length}
             </Badge>
           )}
         </button>
@@ -399,8 +419,109 @@ export const AiTradingOrdersWorkspace: React.FC<AiTradingOrdersWorkspaceProps> =
           </div>
         )}
 
-        {/* SECTION 2: Orders Table (Live / Filled / Cancelled) */}
-        {statusFilter !== 'drafts' && (
+        {/* SECTION 2: Executed & Approved Trades (shown if filter is 'all' or 'executed') */}
+        {(statusFilter === 'all' || statusFilter === 'executed') && (
+          <div className="space-y-2.5 pt-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-mono font-bold uppercase text-emerald-400 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Executed & Approved Trades ({executedDrafts.length})
+              </span>
+              <span className="text-[10px] text-muted-foreground font-mono">
+                Audit Trail & Broker Ledger
+              </span>
+            </div>
+
+            {executedDrafts.length === 0 ? (
+              statusFilter === 'executed' ? (
+                <div className="p-8 rounded-xl border border-dashed border-border/80 text-center text-xs text-muted-foreground bg-secondary/10 flex flex-col items-center justify-center space-y-2">
+                  <CheckCircle2 className="w-8 h-8 text-muted-foreground/60" />
+                  <p>No executed trades currently recorded for {activeBroker.toUpperCase()}.</p>
+                </div>
+              ) : null
+            ) : (
+              <div className="space-y-2">
+                {executedDrafts.map((draft) => {
+                  const isBuy = draft.action.toUpperCase().includes('BUY');
+                  const orderId = draft.executionResult?.orderId || draft.draftId;
+                  const executedTime = draft.executionResult?.executedAt
+                    ? new Date(draft.executionResult.executedAt).toLocaleString()
+                    : new Date(draft.createdAt).toLocaleString();
+                  const isOption = draft.instrumentType === 'Equity Option';
+                  const multiplier = isOption ? 100 : 1;
+                  const totalVal = (draft.price || 0) * draft.quantity * multiplier;
+
+                  return (
+                    <div
+                      key={draft.draftId}
+                      className="p-3.5 rounded-xl bg-secondary/30 border border-emerald-500/30 hover:border-emerald-500/60 transition-all space-y-2 shadow-sm"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span
+                            className={cn(
+                              "font-mono font-bold text-xs px-2 py-0.5 rounded",
+                              isBuy
+                                ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                                : "bg-rose-500/20 text-rose-300 border border-rose-500/30"
+                            )}
+                          >
+                            {draft.action}
+                          </span>
+                          <span className="font-mono font-bold text-sm text-foreground">
+                            {draft.quantity} {draft.symbol}
+                          </span>
+                          <Badge variant="outline" className="text-[10px] font-mono text-muted-foreground border-border">
+                            {draft.orderType}
+                          </Badge>
+                          {draft.price && (
+                            <span className="font-mono text-xs text-primary font-bold">
+                              ${draft.price.toFixed(2)}
+                            </span>
+                          )}
+                          {totalVal > 0 && (
+                            <span className="text-[11px] font-mono text-muted-foreground">
+                              (${totalVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                            </span>
+                          )}
+                        </div>
+
+                        <Badge className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-mono flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          {draft.executionResult?.status || 'Executed'}
+                        </Badge>
+                      </div>
+
+                      {draft.notes && (
+                        <p className="text-[11px] text-muted-foreground font-mono leading-relaxed">
+                          {draft.notes}
+                        </p>
+                      )}
+
+                      <div className="flex items-center justify-between pt-1 border-t border-border/40 text-[10px] font-mono text-muted-foreground">
+                        <div className="flex items-center gap-3">
+                          <span>
+                            Broker: <strong className="text-foreground capitalize">{draft.broker || activeBroker}</strong> ({draft.accountNumber})
+                          </span>
+                          <span>
+                            Order ID: <strong className="text-foreground">#{orderId}</strong>
+                          </span>
+                        </div>
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-muted-foreground" />
+                          {executedTime}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SECTION 3: Orders Table (Live / Filled / Cancelled) */}
+        {statusFilter !== 'drafts' && statusFilter !== 'executed' && (
           <div className="space-y-2.5 pt-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-mono font-bold uppercase text-muted-foreground flex items-center gap-1.5">

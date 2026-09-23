@@ -33,14 +33,16 @@ import { Input } from './ui/input';
 import { Badge } from './ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { AddToWatchlistModal } from './AddToWatchlistModal';
+import { StockHoverGraphCard } from './dashboard/StockHoverGraphCard';
 import { toast } from 'sonner';
 
 interface WatchlistCardProps {
   onNavigateToWatchlist?: () => void;
   onNavigateToResearch?: (symbol: string) => void;
+  onNavigateToGraphs?: (symbol: string) => void;
 }
 
-export function WatchlistCard({ onNavigateToWatchlist, onNavigateToResearch }: WatchlistCardProps) {
+export function WatchlistCard({ onNavigateToWatchlist, onNavigateToResearch, onNavigateToGraphs }: WatchlistCardProps) {
   const { data: watchlists = [], isLoading: isWatchlistsLoading } = useWatchlists();
   
   // Persisted selected watchlist ID in local storage
@@ -190,10 +192,10 @@ export function WatchlistCard({ onNavigateToWatchlist, onNavigateToResearch }: W
   };
 
   const handleRowClick = (symbol: string) => {
-    if (onNavigateToResearch) {
-      onNavigateToResearch(symbol);
+    if (onNavigateToGraphs) {
+      onNavigateToGraphs(symbol);
     } else {
-      window.dispatchEvent(new CustomEvent('select-research-ticker', { detail: symbol }));
+      window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: symbol }));
     }
   };
 
@@ -437,9 +439,17 @@ export function WatchlistCard({ onNavigateToWatchlist, onNavigateToResearch }: W
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-bold text-xs font-mono text-foreground group-hover:text-primary transition-colors">
-                        {item.symbol}
-                      </span>
+                      <StockHoverGraphCard
+                        symbol={item.symbol}
+                        name={item.name}
+                        price={item.price}
+                        changePercent={item.changePercent}
+                        onNavigateToGraphs={onNavigateToGraphs}
+                      >
+                        <span className="font-bold text-xs font-mono text-foreground group-hover:text-primary transition-colors">
+                          {item.symbol}
+                        </span>
+                      </StockHoverGraphCard>
 
                       {/* Investment Style Badge */}
                       <span className={cn("text-[8.5px] px-1 py-0 rounded font-bold border", styleConfig.badgeClass)}>

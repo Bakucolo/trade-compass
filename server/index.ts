@@ -147,10 +147,10 @@ import { createMonteCarloRouter } from './routes/monteCarloRoutes';
 import { createAiTradingRouter } from './routes/aiTradingRoutes';
 import { createPositionFolderRouter } from './routes/positionFolderRoutes';
 import { autoCreateAlertsFromText } from './services/thoughtLogAlertService';
-import { SYMBOL_ALIASES, resolveYahooFinanceSymbol } from './services/tickerResolutionService';
+import { SYMBOL_ALIASES, resolveYahooFinanceSymbol, getCanonicalCompanyName } from './services/tickerResolutionService';
 import { KNOWN_COMPANY_NAMES, getKnownCompanyName } from './services/commonTickers';
 import { analyzeImpliedExpectations } from './services/impliedExpectationsService';
-export { SYMBOL_ALIASES, resolveYahooFinanceSymbol };
+export { SYMBOL_ALIASES, resolveYahooFinanceSymbol, getCanonicalCompanyName };
 import {
   generateAndSendDailyReport,
   fetchComprehensiveReportData,
@@ -1798,6 +1798,188 @@ app.get('/api/yahoo/quote/:symbol', async (req, res) => {
 });
 
 // ==========================================
+// STOCK MINI-CHART & TRAJECTORY PREVIEW ENGINE
+// ==========================================
+
+interface CachedMiniChart {
+  data: any;
+  timestamp: number;
+}
+const miniChartCache = new Map<string, CachedMiniChart>();
+const MINI_CHART_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache TTL
+
+app.get('/api/market/mini-chart/:symbol', async (req, res) => {
+  try {
+    const rawSymbol = req.params.symbol;
+    if (!rawSymbol || !rawSymbol.trim()) {
+      return res.status(400).json({ error: 'Ticker symbol is required' });
+    }
+
+    const range = (req.query.range as string || '1mo').toLowerCase();
+    const cleanRaw = cleanTickerString(rawSymbol);
+    const sym = resolveYahooFinanceSymbol(cleanRaw) || cleanRaw;
+    const cacheKey = `${sym}_${range}`;
+    const cached = miniChartCache.get(cacheKey);
+
+    if (cached && (Date.now() - cached.timestamp) < MINI_CHART_CACHE_TTL_MS) {
+      return res.json(cached.data);
+    }
+
+    let lookbackDays = 30;
+    let yfRange = '1mo';
+    if (range === '1w' || range === '5d' || range === '7d') {
+      lookbackDays = 7;
+      yfRange = '5d';
+    } else if (range === '3mo' || range === '3m') {
+      lookbackDays = 90;
+      yfRange = '3mo';
+    } else if (range === '1y' || range === '12m') {
+      lookbackDays = 365;
+      yfRange = '1y';
+    }
+
+    const period1Date = new Date(Date.now() - lookbackDays * 86400 * 1000);
+    const period1Str = period1Date.toISOString().slice(0, 10);
+
+    let quotes: any[] = [];
+    let meta: any = {};
+
+    // 1. Direct Yahoo Finance REST Chart API (direct, fastest, high reliability)
+    try {
+      const directRes = await withQuoteTimeout(
+        fetch(`https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=${yfRange}`, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+        }),
+        6000
+      );
+      if (directRes && directRes.ok) {
+        const json: any = await directRes.json();
+        const resObj = json.chart?.result?.[0];
+        if (resObj) {
+          meta = resObj.meta || {};
+          const timestamps = resObj.timestamp || [];
+          const quoteObj = resObj.indicators?.quote?.[0] || {};
+          const closes = quoteObj.close || [];
+          const opens = quoteObj.open || [];
+          const highs = quoteObj.high || [];
+          const lows = quoteObj.low || [];
+          const volumes = quoteObj.volume || [];
+
+          quotes = timestamps.map((t: number, i: number) => ({
+            date: new Date(t * 1000),
+            open: opens[i],
+            high: highs[i],
+            low: lows[i],
+            close: closes[i],
+            volume: volumes[i],
+          }));
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[MiniChart] Direct Yahoo fetch failed for ${sym}, falling back:`, e.message);
+    }
+
+    // 2. Fallback to yahooFinance SDK
+    if (!quotes.length) {
+      try {
+        const chartRes = await withQuoteTimeout(
+          yahooFinance.chart(sym, { period1: period1Str, interval: '1d' }, { validateResult: false }),
+          6000
+        ).catch(() => null);
+        quotes = (chartRes?.quotes || []).filter((q: any) => q && q.date);
+        meta = chartRes?.meta || meta;
+      } catch (sdkErr: any) {
+        console.warn(`[MiniChart] SDK Yahoo fetch failed for ${sym}:`, sdkErr.message);
+      }
+    }
+
+    if (!quotes.length) {
+      const cachedQuote = portfolioQuotesCache.get(sym) || portfolioQuotesCache.get(cleanRaw);
+      if (cachedQuote && cachedQuote.price > 0) {
+        const fallbackData = {
+          symbol: cleanRaw,
+          name: getCanonicalCompanyName(cleanRaw) || getCanonicalCompanyName(sym) || cachedQuote.name || cleanRaw,
+          currency: cachedQuote.currency || 'USD',
+          currentPrice: cachedQuote.price,
+          previousClose: cachedQuote.previousClose || cachedQuote.price,
+          dayChange: cachedQuote.change || 0,
+          dayChangePercent: cachedQuote.changesPercentage || 0,
+          periodChange: cachedQuote.change || 0,
+          periodChangePercent: cachedQuote.changesPercentage || 0,
+          periodHigh: cachedQuote.price * 1.05,
+          periodLow: cachedQuote.price * 0.95,
+          fiftyTwoWeekHigh: cachedQuote.price * 1.15,
+          fiftyTwoWeekLow: cachedQuote.price * 0.85,
+          volume: 0,
+          points: [
+            { date: period1Str, close: cachedQuote.previousClose || cachedQuote.price },
+            { date: new Date().toISOString().slice(0, 10), close: cachedQuote.price },
+          ],
+        };
+        miniChartCache.set(cacheKey, { data: fallbackData, timestamp: Date.now() });
+        return res.json(fallbackData);
+      }
+      return res.status(404).json({ error: `Historical chart unavailable for ${sym}` });
+    }
+
+    const points = quotes
+      .map((q: any) => {
+        const val = q.close || q.adjclose;
+        if (val == null || isNaN(val)) return null;
+        return {
+          date: new Date(q.date).toISOString().slice(0, 10),
+          close: Math.round(val * 100) / 100,
+          open: q.open != null ? Math.round(Number(q.open) * 100) / 100 : undefined,
+          high: q.high != null ? Math.round(Number(q.high) * 100) / 100 : undefined,
+          low: q.low != null ? Math.round(Number(q.low) * 100) / 100 : undefined,
+          volume: q.volume != null ? Number(q.volume) : undefined,
+        };
+      })
+      .filter((p: any) => p != null && p.close > 0);
+
+    const firstPoint = points[0];
+    const lastPoint = points[points.length - 1];
+    const currentPrice = Number(meta.regularMarketPrice || lastPoint?.close || 0);
+    const previousClose = Number(meta.regularMarketPreviousClose || meta.chartPreviousClose || firstPoint?.close || currentPrice);
+    const dayChange = currentPrice - previousClose;
+    const dayChangePercent = previousClose > 0 ? (dayChange / previousClose) * 100 : 0;
+
+    const basePeriodPrice = firstPoint?.close || currentPrice;
+    const periodChange = currentPrice - basePeriodPrice;
+    const periodChangePercent = basePeriodPrice > 0 ? (periodChange / basePeriodPrice) * 100 : 0;
+
+    const highPrices = points.map(p => p.high || p.close).filter(Boolean);
+    const lowPrices = points.map(p => p.low || p.close).filter(Boolean);
+    const periodHigh = highPrices.length ? Math.max(...highPrices) : currentPrice;
+    const periodLow = lowPrices.length ? Math.min(...lowPrices) : currentPrice;
+
+    const responsePayload = {
+      symbol: cleanRaw,
+      name: getCanonicalCompanyName(cleanRaw) || getCanonicalCompanyName(sym) || meta.shortName || meta.longName || cleanRaw,
+      currency: meta.currency || 'USD',
+      currentPrice: Math.round(currentPrice * 100) / 100,
+      previousClose: Math.round(previousClose * 100) / 100,
+      dayChange: Math.round(dayChange * 100) / 100,
+      dayChangePercent: Math.round(dayChangePercent * 100) / 100,
+      periodChange: Math.round(periodChange * 100) / 100,
+      periodChangePercent: Math.round(periodChangePercent * 100) / 100,
+      periodHigh: Math.round(periodHigh * 100) / 100,
+      periodLow: Math.round(periodLow * 100) / 100,
+      fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh ? Math.round(Number(meta.fiftyTwoWeekHigh) * 100) / 100 : undefined,
+      fiftyTwoWeekLow: meta.fiftyTwoWeekLow ? Math.round(Number(meta.fiftyTwoWeekLow) * 100) / 100 : undefined,
+      volume: meta.regularMarketVolume || meta.volume || lastPoint?.volume || 0,
+      points
+    };
+
+    miniChartCache.set(cacheKey, { data: responsePayload, timestamp: Date.now() });
+    return res.json(responsePayload);
+  } catch (error: any) {
+    console.error(`[MiniChart] Error fetching chart for ${req.params.symbol}:`, error.message);
+    res.status(500).json({ error: error.message || 'Failed to fetch mini-chart data' });
+  }
+});
+
+// ==========================================
 // PORTFOLIO QUOTES & BATCH MARKET DATA ENGINE
 // ==========================================
 
@@ -1944,9 +2126,10 @@ async function fetchQuoteForSymbol(rawSymbol: string, currency?: string): Promis
         monthChangePercent = ((price - monthAgoClose) / monthAgoClose) * 100;
       }
 
+      const canonicalName = getCanonicalCompanyName(cleanRaw) || getCanonicalCompanyName(sym) || getCanonicalCompanyName(rawSymbol);
       const quote: CachedQuote = {
         symbol: rawSymbol,
-        name: meta.shortName || meta.symbol || rawSymbol,
+        name: canonicalName || meta.shortName || meta.symbol || rawSymbol,
         price,
         previousClose: prevClose,
         open: todayOpen,
@@ -1991,9 +2174,10 @@ async function fetchQuoteForSymbol(rawSymbol: string, currency?: string): Promis
       const fallbackYestChange = rawChange;
       const fallbackYestPct = rawChangePct;
 
+      const canonicalName = getCanonicalCompanyName(cleanRaw) || getCanonicalCompanyName(sym) || getCanonicalCompanyName(rawSymbol);
       const quote: CachedQuote = {
         symbol: rawSymbol,
-        name: q.shortName || q.longName || rawSymbol,
+        name: canonicalName || q.shortName || q.longName || rawSymbol,
         price,
         previousClose: prevClose,
         open: todayOpen,
@@ -2024,18 +2208,18 @@ async function fetchQuotesInBatchFast(items: { symbol: string; currency?: string
   if (!items || items.length === 0) return {};
   const batchQuotes: Record<string, CachedQuote> = {};
 
-  const symMap = new Map<string, { rawSymbol: string; cleanSymbol: string; currency?: string }>();
+  const symToItemsMap = new Map<string, Array<{ rawSymbol: string; cleanSymbol: string; currency?: string }>>();
   for (const item of items) {
     const clean = cleanTickerString(item.symbol);
     const sym = resolveYahooFinanceSymbol(clean, item.currency) || clean;
     if (sym) {
-      symMap.set(sym, { rawSymbol: item.symbol, cleanSymbol: clean, currency: item.currency });
-      symMap.set(clean, { rawSymbol: item.symbol, cleanSymbol: clean, currency: item.currency });
-      symMap.set(item.symbol.toUpperCase(), { rawSymbol: item.symbol, cleanSymbol: clean, currency: item.currency });
+      const list = symToItemsMap.get(sym) || [];
+      list.push({ rawSymbol: item.symbol, cleanSymbol: clean, currency: item.currency });
+      symToItemsMap.set(sym, list);
     }
   }
 
-  const allYahooSyms = Array.from(new Set(Array.from(symMap.keys())));
+  const allYahooSyms = Array.from(symToItemsMap.keys());
   const chunkSize = 35;
   const chunks: string[][] = [];
   for (let i = 0; i < allYahooSyms.length; i += chunkSize) {
@@ -2054,9 +2238,10 @@ async function fetchQuotesInBatchFast(items: { symbol: string; currency?: string
         const now = Date.now();
         for (const q of list) {
           if (!q || !q.symbol) continue;
-          const info = symMap.get(q.symbol) || symMap.get(q.symbol.toUpperCase());
-          const rawSymbol = info?.rawSymbol || q.symbol;
-          const cleanSymbol = info?.cleanSymbol || q.symbol;
+          const matchedItems = symToItemsMap.get(q.symbol) || symToItemsMap.get(q.symbol.toUpperCase()) || [];
+          const targetItems = matchedItems.length > 0 
+            ? matchedItems 
+            : [{ rawSymbol: q.symbol, cleanSymbol: cleanTickerString(q.symbol), currency: q.currency }];
 
           const price = Number(q.regularMarketPrice || 0);
           const prevClose = Number(q.regularMarketPreviousClose || price);
@@ -2065,32 +2250,42 @@ async function fetchQuotesInBatchFast(items: { symbol: string; currency?: string
             ? Number(q.regularMarketChangePercent)
             : (prevClose > 0 ? (change / prevClose) * 100 : 0);
 
-          const cachedQuote: CachedQuote = {
-            symbol: rawSymbol,
-            name: q.shortName || q.longName || rawSymbol,
-            price,
-            previousClose: prevClose,
-            open: Number(q.regularMarketOpen || prevClose),
-            change,
-            changesPercentage,
-            yesterdayChange: change,
-            yesterdayChangePercent: changesPercentage,
-            overnightChangePercent: 0,
-            weekChangePercent: changesPercentage * 2.2,
-            monthChangePercent: changesPercentage * 4.0,
-            currency: q.currency || info?.currency || 'USD',
-            timestamp: now,
-          };
+          for (const info of targetItems) {
+            const rawSymbol = info.rawSymbol;
+            const cleanSymbol = info.cleanSymbol;
+            const canonicalName = getCanonicalCompanyName(cleanSymbol) || getCanonicalCompanyName(rawSymbol) || getCanonicalCompanyName(q.symbol);
 
-          portfolioQuotesCache.set(q.symbol, cachedQuote);
-          portfolioQuotesCache.set(rawSymbol, cachedQuote);
-          portfolioQuotesCache.set(rawSymbol.toUpperCase(), cachedQuote);
-          portfolioQuotesCache.set(cleanSymbol, cachedQuote);
-          portfolioQuotesCache.set(cleanSymbol.toUpperCase(), cachedQuote);
+            const cachedQuote: CachedQuote = {
+              symbol: rawSymbol,
+              name: canonicalName || q.shortName || q.longName || rawSymbol,
+              price,
+              previousClose: prevClose,
+              open: Number(q.regularMarketOpen || prevClose),
+              change,
+              changesPercentage,
+              yesterdayChange: change,
+              yesterdayChangePercent: changesPercentage,
+              overnightChangePercent: 0,
+              weekChangePercent: changesPercentage * 2.2,
+              monthChangePercent: changesPercentage * 4.0,
+              currency: q.currency || info?.currency || 'USD',
+              timestamp: now,
+            };
 
-          batchQuotes[rawSymbol] = cachedQuote;
-          batchQuotes[rawSymbol.toUpperCase()] = cachedQuote;
-          batchQuotes[cleanSymbol] = cachedQuote;
+            portfolioQuotesCache.set(q.symbol, cachedQuote);
+            portfolioQuotesCache.set(q.symbol.toUpperCase(), cachedQuote);
+            portfolioQuotesCache.set(rawSymbol, cachedQuote);
+            portfolioQuotesCache.set(rawSymbol.toUpperCase(), cachedQuote);
+            portfolioQuotesCache.set(cleanSymbol, cachedQuote);
+            portfolioQuotesCache.set(cleanSymbol.toUpperCase(), cachedQuote);
+
+            batchQuotes[rawSymbol] = cachedQuote;
+            batchQuotes[rawSymbol.toUpperCase()] = cachedQuote;
+            batchQuotes[cleanSymbol] = cachedQuote;
+            batchQuotes[cleanSymbol.toUpperCase()] = cachedQuote;
+            batchQuotes[q.symbol] = cachedQuote;
+            batchQuotes[q.symbol.toUpperCase()] = cachedQuote;
+          }
         }
       } catch { }
     })
@@ -2134,12 +2329,25 @@ app.get('/api/portfolio/quotes', async (req, res) => {
 
     if (req.query.symbols && typeof req.query.symbols === 'string') {
       const rawList = req.query.symbols.split(',').map(s => cleanTickerString(s)).filter(Boolean);
+      // Query holdings to infer portfolio currencies for international tickers
+      const holdings = await prisma.holding.findMany({
+        select: { symbol: true, currency: true, underlyingSymbol: true },
+      });
+      const currencyMap = new Map<string, string>();
+      for (const h of holdings) {
+        if (h.currency) {
+          if (h.symbol) currencyMap.set(cleanTickerString(h.symbol), h.currency);
+          if (h.underlyingSymbol) currencyMap.set(cleanTickerString(h.underlyingSymbol), h.currency);
+        }
+      }
+
       const seen = new Set<string>();
       for (const s of rawList) {
         if (/\d{6}[CP]\d{8}/.test(s) || s.length > 12) continue;
         if (!seen.has(s)) {
           seen.add(s);
-          symbolsToFetch.push({ symbol: s });
+          const curr = currencyMap.get(s);
+          symbolsToFetch.push({ symbol: s, currency: curr });
         }
       }
     } else {
@@ -2163,12 +2371,15 @@ app.get('/api/portfolio/quotes', async (req, res) => {
     const quotes: Record<string, CachedQuote> = {};
     const missing: { symbol: string; currency?: string }[] = [];
 
-    // Instant cache lookup (Stale-While-Revalidate)
+    // Instant cache lookup (Stale-While-Revalidate with canonical name validation)
     for (const item of symbolsToFetch) {
       const clean = cleanTickerString(item.symbol);
       const sym = resolveYahooFinanceSymbol(clean, item.currency) || clean;
       const cached = portfolioQuotesCache.get(sym) || portfolioQuotesCache.get(clean) || portfolioQuotesCache.get(item.symbol.toUpperCase());
-      if (cached) {
+      const canonical = getCanonicalCompanyName(clean) || (sym ? getCanonicalCompanyName(sym) : '');
+      const isMismatched = Boolean(canonical && cached && cached.name !== canonical);
+
+      if (cached && !isMismatched) {
         quotes[item.symbol] = cached;
         quotes[item.symbol.toUpperCase()] = cached;
         if (sym) quotes[sym] = cached;
@@ -2176,24 +2387,16 @@ app.get('/api/portfolio/quotes', async (req, res) => {
           missing.push(item);
         }
       } else {
+        if (isMismatched) {
+          portfolioQuotesCache.delete(sym);
+          portfolioQuotesCache.delete(clean);
+          portfolioQuotesCache.delete(item.symbol.toUpperCase());
+        }
         missing.push(item);
       }
     }
 
-    // If we have cached quotes available, respond immediately and refresh missing in background
-    if (Object.keys(quotes).length > 0) {
-      if (missing.length > 0) {
-        // Asynchronous background fill
-        fetchQuotesInBatchFast(missing).catch(() => null);
-      }
-      return res.json({
-        quotes,
-        count: Object.keys(quotes).length,
-        timestamp: Date.now(),
-      });
-    }
-
-    // If cache is cold (0 cached quotes), fetch missing in parallel batch
+    // If there are missing quotes or if focused list requested, fetch in parallel batch
     if (missing.length > 0) {
       const freshQuotes = await fetchQuotesInBatchFast(missing);
       Object.assign(quotes, freshQuotes);

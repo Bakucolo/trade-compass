@@ -41,6 +41,7 @@ import { useDipRadar, useSavedDipReports, DipCandidateItem, BuyScoreBreakdown } 
 import { DipDiagnosticModal } from './DipDiagnosticModal';
 import { AddToWatchlistModal } from '@/components/AddToWatchlistModal';
 import { BulkSaveDipsToWatchlistModal } from './BulkSaveDipsToWatchlistModal';
+import { StockHoverGraphCard } from './StockHoverGraphCard';
 
 type FilterTab = 'ALL' | 'SAVED' | 'HOLDINGS' | 'WATCHLIST' | 'HIGH_SCORE' | 'HIDDEN';
 type SensitivityFilter = 'ALL' | 'DAY_DROP' | 'DEEP_PULLBACK';
@@ -50,6 +51,7 @@ interface DipOpportunityRadarCardProps {
   onNavigateToPortfolio?: () => void;
   onNavigateToWatchlist?: () => void;
   onNavigateToResearch?: (symbol: string) => void;
+  onNavigateToGraphs?: (symbol: string) => void;
 }
 
 export function getBuyScoreDetails(score: number) {
@@ -107,6 +109,7 @@ export function DipOpportunityRadarCard({
   onNavigateToPortfolio,
   onNavigateToWatchlist,
   onNavigateToResearch,
+  onNavigateToGraphs,
 }: DipOpportunityRadarCardProps) {
   const [activeTab, setActiveTab] = useState<FilterTab>('ALL');
   const [sensitivity, setSensitivity] = useState<SensitivityFilter>('ALL');
@@ -516,9 +519,19 @@ export function DipOpportunityRadarCard({
                         </div>
                         <div>
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-bold text-sm text-foreground group-hover:text-primary transition-colors">
-                              {item.symbol}
-                            </span>
+                            <StockHoverGraphCard symbol={item.symbol} onNavigateToGraphs={onNavigateToGraphs}>
+                              <span
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (onNavigateToGraphs) onNavigateToGraphs(item.symbol);
+                                  else if (onNavigateToResearch) onNavigateToResearch(item.symbol);
+                                  else window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: item.symbol }));
+                                }}
+                                className="font-bold text-sm text-foreground hover:text-primary transition-colors cursor-pointer"
+                              >
+                                {item.symbol}
+                              </span>
+                            </StockHoverGraphCard>
                             <Badge
                               variant="outline"
                               className={cn(

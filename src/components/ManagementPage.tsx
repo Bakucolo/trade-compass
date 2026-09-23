@@ -14,7 +14,8 @@ import {
   ArrowRight,
   ShieldAlert,
   Bot,
-  Target
+  Target,
+  CheckCircle2,
 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -58,6 +59,7 @@ export function ManagementPage({
   const { data: plannedTrades = [] } = usePlannedTrades();
 
   const pendingTradesCount = plannedTrades.filter((t) => t.status === 'PENDING').length;
+  const executedTradesCount = plannedTrades.filter((t) => t.status === 'EXECUTED').length;
 
   const allPositions = useMemo(() => {
     const raw = [
@@ -167,6 +169,20 @@ export function ManagementPage({
             )}
           </TabsTrigger>
 
+          {/* Executed Trades Archive Tab */}
+          <TabsTrigger
+            value="executed-trades"
+            className="gap-2 text-xs font-semibold px-3.5 py-2 rounded-xl data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
+          >
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Executed Trades</span>
+            {executedTradesCount > 0 && (
+              <Badge variant="secondary" className="ml-1 text-[10px] px-1.5 py-0 bg-emerald-500/20 text-emerald-300 font-mono font-bold">
+                {executedTradesCount}
+              </Badge>
+            )}
+          </TabsTrigger>
+
           {/* Covered Calls Tab */}
           <TabsTrigger
             value="covered-calls"
@@ -207,8 +223,22 @@ export function ManagementPage({
         {/* ================= 0. DAILY & WEEKLY EXECUTION QUEUE ================= */}
         <TabsContent value="execution-queue" className="space-y-6 animate-in fade-in duration-200">
           <ExecutionQueueManager
+            initialView="QUEUE"
             onNavigateToResearch={onNavigateToResearch}
             onNavigateToPortfolio={onNavigateToPortfolio}
+            onNavigateToGraphs={onNavigateToGraphs}
+            onSelectExecutedTab={() => setActiveTab('executed-trades')}
+          />
+        </TabsContent>
+
+        {/* ================= 0B. EXECUTED TRADES ARCHIVE ================= */}
+        <TabsContent value="executed-trades" className="space-y-6 animate-in fade-in duration-200">
+          <ExecutionQueueManager
+            initialView="EXECUTED"
+            onNavigateToResearch={onNavigateToResearch}
+            onNavigateToPortfolio={onNavigateToPortfolio}
+            onNavigateToGraphs={onNavigateToGraphs}
+            onSelectQueueTab={() => setActiveTab('execution-queue')}
           />
         </TabsContent>
 

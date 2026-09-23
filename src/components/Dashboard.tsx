@@ -48,7 +48,7 @@ import { cn } from '@/lib/utils';
 
 import { usePortfolioQuotes } from '@/services/usePortfolioQuotes';
 import { useSendTelegramReport } from '@/services/telegramReportClientService';
-import { parseTrading212Ticker } from '@/utils/tickerUtils';
+import { parseTrading212Ticker, resolveYahooFinanceSymbol, getCanonicalCompanyName } from '@/utils/tickerUtils';
 import { calculatePortfolioTheta } from '@/utils/greeksUtils';
 
 interface DashboardProps {
@@ -94,6 +94,10 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
       else if (rawSym.endsWith('L_EQ') || rawSym.endsWith('P_EQ')) rawSym = rawSym.replace(/[LP]_EQ$/, '') + '.L';
       else if (rawSym.endsWith('_EQ')) rawSym = rawSym.replace('_EQ', '');
       syms.add(rawSym);
+      const resolved = resolveYahooFinanceSymbol(rawSym, p.currency);
+      if (resolved && resolved !== rawSym) {
+        syms.add(resolved);
+      }
     });
     return Array.from(syms);
   }, [ibkrPositions, tastyPositions, t212Positions]);
@@ -190,36 +194,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
       }
 
       // Resolve international quote symbol if needed
-      let quoteSym = cleanSym;
-      if (cleanSym === 'EOS' || (p.currency === 'AUD' && !cleanSym.includes('.'))) {
-        quoteSym = 'EOS.AX';
-      } else if (cleanSym === 'BP.' || (cleanSym === 'BP' && (p.currency === 'GBP' || p.currency === 'GBX'))) {
-        quoteSym = 'BP.L';
-      } else if (cleanSym === 'ONDO' && (p.currency === 'GBP' || p.currency === 'GBX')) {
-        quoteSym = 'ONDO.L';
-      } else if (cleanSym === 'PNG' && (p.currency === 'CAD' || !p.currency)) {
-        quoteSym = 'PNG.V';
-      } else if (cleanSym === 'BOGO' && p.currency === 'CAD') {
-        quoteSym = 'BOGO.V';
-      } else if (cleanSym === 'LIB' && p.currency === 'CAD') {
-        quoteSym = 'LIB.V';
-      } else if (cleanSym === 'DMET' && p.currency === 'CAD') {
-        quoteSym = 'DMET.V';
-      } else if (cleanSym === 'ZDC' && p.currency === 'CAD') {
-        quoteSym = 'ZDC.V';
-      } else if (cleanSym === 'HSTR' && p.currency === 'CAD') {
-        quoteSym = 'HSTR.V';
-      } else if (cleanSym === 'EMPR' && p.currency === 'CAD') {
-        quoteSym = 'EMPR.V';
-      } else if (cleanSym === 'AUMB' && p.currency === 'CAD') {
-        quoteSym = 'AUMB.V';
-      } else if (cleanSym === 'SWA' && p.currency === 'CAD') {
-        quoteSym = 'SWLF.V';
-      } else if (cleanSym === 'AGX' && p.currency === 'CAD') {
-        quoteSym = 'SIL.V';
-      } else if (cleanSym === 'AYA' && p.currency === 'CAD') {
-        quoteSym = 'AYA.TO';
-      }
+      const quoteSym = resolveYahooFinanceSymbol(cleanSym, p.currency) || cleanSym;
 
       // Map underlying symbol and underlying stock price
       const baseTicker = (p.underlyingSymbol || (isOption ? (cleanSym.match(/^[A-Z]+/)?.[0] || cleanSym) : cleanSym)).trim().toUpperCase();
@@ -323,11 +298,14 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
       let monthReturnPct = quote?.monthChangePercent ?? (dPnLPct * 4.0);
       let monthPnL = mktVal * (monthReturnPct / 100);
 
+      const canonicalName = getCanonicalCompanyName(cleanSym) || getCanonicalCompanyName(quoteSym);
+      const companyName = canonicalName || quote?.name || p.description || p.name || `${cleanSym} Holding`;
+
       seenMap.set(dedupKey, {
         id: p.id || `${cleanSym}-${brokerSource}`,
         symbol: cleanSym,
-        name: quote?.name || p.description || p.name || `${cleanSym} Holding`,
-        description: quote?.name || p.description || p.name || `${cleanSym} Holding`,
+        name: companyName,
+        description: companyName,
         quantity: qty,
         averageCost: avgCost,
         currentPrice: curPrice,
@@ -405,6 +383,17 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
   const goToTab = (tab: string) => {
     if (onNavigateTab) {
       onNavigateTab(tab);
+    }
+  };
+
+  const handleNavigateToGraphs = (sym?: string) => {
+    if (onNavigateToGraphs) {
+      onNavigateToGraphs(sym);
+    } else {
+      goToTab('graphs');
+      if (sym) {
+        window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: sym }));
+      }
     }
   };
 
@@ -645,6 +634,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
           isPrivacyMode={isPrivacyMode}
           onNavigateToPortfolio={() => goToTab('portfolio')}
           onNavigateToResearch={onNavigateToResearch}
+          onNavigateToGraphs={handleNavigateToGraphs}
         />
 
         {/* Movers Spotlight (Today, Yesterday, 1W, 1M) */}
@@ -652,6 +642,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
           positions={allPositions}
           onNavigateToPortfolio={() => goToTab('portfolio')}
           onNavigateToResearch={onNavigateToResearch}
+          onNavigateToGraphs={handleNavigateToGraphs}
         />
       </div>
 
@@ -660,6 +651,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
         onNavigateToPortfolio={() => goToTab('portfolio')}
         onNavigateToWatchlist={() => goToTab('watchlist')}
         onNavigateToResearch={onNavigateToResearch}
+        onNavigateToGraphs={handleNavigateToGraphs}
       />
 
       {/* ================= 4. EQUITY CURVE & CORE WIDGETS ================= */}
@@ -679,6 +671,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
             <DashboardAlertsCard
               onNavigateToAlerts={() => goToTab('alerts')}
               onNavigateToResearch={onNavigateToResearch}
+              onNavigateToGraphs={handleNavigateToGraphs}
             />
 
             {/* Options Expiry & Defense Radar */}
@@ -686,6 +679,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
               positions={allPositions}
               onNavigateToPortfolio={() => goToTab('portfolio')}
               onNavigateToResearch={onNavigateToResearch}
+              onNavigateToGraphs={handleNavigateToGraphs}
             />
           </div>
 
@@ -693,6 +687,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
           <DashboardTradesCard
             onNavigateToTrades={() => goToTab('trades')}
             onNavigateToResearch={onNavigateToResearch}
+            onNavigateToGraphs={handleNavigateToGraphs}
           />
         </div>
 
@@ -702,12 +697,14 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
           <IdeasCard
             onNavigateToIdeas={() => goToTab('ideas')}
             onNavigateToResearch={onNavigateToResearch}
+            onNavigateToGraphs={handleNavigateToGraphs}
           />
 
           {/* Live Watchlist Widget */}
           <WatchlistCard
             onNavigateToWatchlist={() => goToTab('watchlist')}
             onNavigateToResearch={onNavigateToResearch}
+            onNavigateToGraphs={handleNavigateToGraphs}
           />
         </div>
       </div>
@@ -745,12 +742,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
           setIsAdvisorOpen(true);
         }}
         onNavigateToResearch={onNavigateToResearch}
-        onNavigateToGraphs={onNavigateToGraphs || ((sym?: string) => {
-          goToTab('graphs');
-          if (sym) {
-            window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: sym }));
-          }
-        })}
+        onNavigateToGraphs={handleNavigateToGraphs}
       />
 
       {/* Portfolio Theta Breakdown Modal */}

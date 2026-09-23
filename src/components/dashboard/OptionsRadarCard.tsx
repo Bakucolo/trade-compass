@@ -11,17 +11,20 @@ import {
   TrendingDown,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { StockHoverGraphCard } from './StockHoverGraphCard';
 
 interface OptionsRadarCardProps {
   positions?: any[];
   onNavigateToPortfolio?: () => void;
   onNavigateToResearch?: (symbol: string) => void;
+  onNavigateToGraphs?: (symbol: string) => void;
 }
 
 export function OptionsRadarCard({
   positions = [],
   onNavigateToPortfolio,
   onNavigateToResearch,
+  onNavigateToGraphs,
 }: OptionsRadarCardProps) {
   // Filter options from positions
   const safePositions = Array.isArray(positions) ? positions.filter(Boolean) : [];
@@ -120,7 +123,11 @@ export function OptionsRadarCard({
             return (
               <div
                 key={idx}
-                onClick={() => onNavigateToResearch && onNavigateToResearch(sym)}
+                onClick={() => {
+                  if (onNavigateToGraphs) onNavigateToGraphs(sym);
+                  else if (onNavigateToResearch) onNavigateToResearch(sym);
+                  else window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: sym }));
+                }}
                 className="p-3 rounded-xl bg-accent/20 hover:bg-accent/40 border border-border/50 transition-all cursor-pointer flex items-center justify-between group"
               >
                 <div className="flex items-center gap-2.5">
@@ -136,9 +143,11 @@ export function OptionsRadarCard({
                   </div>
                   <div>
                     <div className="flex items-center gap-1.5">
-                      <span className="font-mono font-black text-xs text-foreground group-hover:text-primary transition-colors">
-                        {sym}
-                      </span>
+                      <StockHoverGraphCard symbol={sym} onNavigateToGraphs={onNavigateToGraphs}>
+                        <span className="font-mono font-black text-xs text-foreground group-hover:text-primary transition-colors cursor-pointer">
+                          {sym}
+                        </span>
+                      </StockHoverGraphCard>
                       <span className="text-[10px] font-mono text-muted-foreground">
                         ${strike} {type}
                       </span>

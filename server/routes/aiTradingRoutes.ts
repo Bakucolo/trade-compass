@@ -207,7 +207,7 @@ export function createAiTradingRouter(): Router {
 
       if (broker === 'tastytrade') {
         try {
-          const tastyOrders = await fetchTastyOrders(undefined, status === 'all' ? undefined : status);
+          const tastyOrders = await fetchTastyOrders(undefined, status === 'all' ? undefined : status).catch(() => []);
           const normalized = (tastyOrders || []).map((o: any) => ({
             id: String(o.id || o['order-id']),
             broker: 'tastytrade',
@@ -220,6 +220,31 @@ export function createAiTradingRouter(): Router {
             submitted_at: o['received-at'] || o['updated-at'] || new Date().toISOString(),
             time_in_force: o['time-in-force'] || 'Day',
           }));
+
+          // Merge executed drafts for tastytrade so approved orders are immediately visible
+          const executedDrafts = getAllDraftOrders().filter((d) =>
+            d.status === 'EXECUTED' && (d.broker || 'tastytrade').toLowerCase() === 'tastytrade'
+          );
+
+          for (const d of executedDrafts) {
+            const extId = String(d.executionResult?.orderId || d.draftId);
+            const exists = normalized.some((o: any) => o.id === extId || o.id === d.draftId);
+            if (!exists) {
+              normalized.unshift({
+                id: extId,
+                broker: 'tastytrade',
+                symbol: d.symbol,
+                side: d.action.toUpperCase(),
+                type: d.orderType,
+                price: d.price,
+                qty: d.quantity,
+                status: d.executionResult?.status || 'Executed (Live)',
+                submitted_at: d.executionResult?.executedAt || d.createdAt,
+                time_in_force: d.timeInForce || 'Day',
+              });
+            }
+          }
+
           return res.json(normalized);
         } catch (e: any) {
           console.warn('[AI Trading] Error fetching Tastytrade orders:', e.message);
@@ -227,7 +252,7 @@ export function createAiTradingRouter(): Router {
         }
       } else if (broker === 'ibkr') {
         try {
-          const ibkrOrders = await fetchIbkrOrders();
+          const ibkrOrders = await fetchIbkrOrders().catch(() => []);
           const normalized = (ibkrOrders || []).map((o: any) => ({
             id: String(o.id || o.orderId),
             broker: 'ibkr',
@@ -240,6 +265,31 @@ export function createAiTradingRouter(): Router {
             submitted_at: o.submittedAt || new Date().toISOString(),
             time_in_force: o.tif || 'Day',
           }));
+
+          // Merge executed drafts for IBKR
+          const executedDrafts = getAllDraftOrders().filter((d) =>
+            d.status === 'EXECUTED' && (d.broker || '').toLowerCase() === 'ibkr'
+          );
+
+          for (const d of executedDrafts) {
+            const extId = String(d.executionResult?.orderId || d.draftId);
+            const exists = normalized.some((o: any) => o.id === extId || o.id === d.draftId);
+            if (!exists) {
+              normalized.unshift({
+                id: extId,
+                broker: 'ibkr',
+                symbol: d.symbol,
+                side: d.action.toUpperCase(),
+                type: d.orderType,
+                price: d.price,
+                qty: d.quantity,
+                status: d.executionResult?.status || 'Executed',
+                submitted_at: d.executionResult?.executedAt || d.createdAt,
+                time_in_force: d.timeInForce || 'Day',
+              });
+            }
+          }
+
           return res.json(normalized);
         } catch (e: any) {
           console.warn('[AI Trading] Error fetching IBKR orders:', e.message);
@@ -247,7 +297,7 @@ export function createAiTradingRouter(): Router {
         }
       } else {
         // Default Alpaca
-        const orders = await alpacaService.getOrders(status, limit);
+        const orders = await alpacaService.getOrders(status, limit).catch(() => []);
         const normalized = (orders || []).map((o: any) => ({
           id: o.id,
           broker: 'alpaca',
@@ -260,6 +310,31 @@ export function createAiTradingRouter(): Router {
           submitted_at: o.submitted_at || o.created_at,
           time_in_force: o.time_in_force,
         }));
+
+        // Merge executed drafts for Alpaca
+        const executedDrafts = getAllDraftOrders().filter((d) =>
+          d.status === 'EXECUTED' && (d.broker || '').toLowerCase() === 'alpaca'
+        );
+
+        for (const d of executedDrafts) {
+          const extId = String(d.executionResult?.orderId || d.draftId);
+          const exists = normalized.some((o: any) => o.id === extId || o.id === d.draftId);
+          if (!exists) {
+            normalized.unshift({
+              id: extId,
+              broker: 'alpaca',
+              symbol: d.symbol,
+              side: d.action.toUpperCase(),
+              type: d.orderType,
+              price: d.price,
+              qty: d.quantity,
+              status: d.executionResult?.status || 'Executed',
+              submitted_at: d.executionResult?.executedAt || d.createdAt,
+              time_in_force: d.timeInForce || 'Day',
+            });
+          }
+        }
+
         return res.json(normalized);
       }
     } catch (err: any) {
