@@ -1,4 +1,5 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Sidebar } from '@/components/Sidebar';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { PageSkeleton } from '@/components/PageSkeleton';
@@ -25,9 +26,17 @@ const HybridAgentCopilot = lazy(() => import('@/components/HybridAgentCopilot').
 
 
 const Index = () => {
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [researchTicker, setResearchTicker] = useState('AAPL');
-  const [graphsTicker, setGraphsTicker] = useState('AAPL');
+  const [searchParams] = useSearchParams();
+  const urlTab = searchParams.get('tab');
+  const urlSymbol = searchParams.get('symbol') || searchParams.get('ticker');
+
+  const [activeTab, setActiveTab] = useState(() => urlTab || 'dashboard');
+  const [researchTicker, setResearchTicker] = useState(() => 
+    urlTab === 'research' && urlSymbol ? urlSymbol.toUpperCase() : 'AAPL'
+  );
+  const [graphsTicker, setGraphsTicker] = useState(() => 
+    urlSymbol ? urlSymbol.toUpperCase() : 'AAPL'
+  );
   const [logInitialFolder, setLogInitialFolder] = useState<string | undefined>();
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
 
@@ -49,6 +58,24 @@ const Index = () => {
     setLogInitialFolder(folder);
     setActiveTab('log');
   };
+
+  // Synchronize state when URL search params change (e.g. navigation in new tab/window)
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    const symParam = searchParams.get('symbol') || searchParams.get('ticker');
+    if (tabParam) {
+      setActiveTab(tabParam);
+    }
+    if (symParam) {
+      const clean = symParam.trim().toUpperCase();
+      if (tabParam === 'research') {
+        setResearchTicker(clean);
+      } else {
+        setGraphsTicker(clean);
+        window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: clean }));
+      }
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     const handleTickerEvent = (e: Event) => {
@@ -143,7 +170,12 @@ const Index = () => {
           />
         );
       case 'alerts':
-        return <AlertsPage onNavigateToResearch={handleNavigateToResearch} />;
+        return (
+          <AlertsPage
+            onNavigateToResearch={handleNavigateToResearch}
+            onNavigateToGraphs={handleNavigateToGraphs}
+          />
+        );
       case 'trades':
         return <TradesPage onNavigateToResearch={handleNavigateToResearch} />;
       case 'ideas':

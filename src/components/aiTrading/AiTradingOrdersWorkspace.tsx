@@ -26,7 +26,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { StagedDraftOrder, approveDraftOrder, cancelDraftOrder } from '@/services/tastytrade';
+import { StagedDraftOrder, approveDraftOrder, cancelDraftOrder, fetchTastyEnvironment } from '@/services/tastytrade';
 import { BuyingPowerComparisonCard } from './BuyingPowerComparisonCard';
 import { SupportedBroker } from './AiTradingBrokerBar';
 
@@ -61,6 +61,7 @@ export const AiTradingOrdersWorkspace: React.FC<AiTradingOrdersWorkspaceProps> =
   const [statusFilter, setStatusFilter] = useState<'all' | 'drafts' | 'executed' | 'live' | 'filled' | 'cancelled'>('all');
   const [processingDraftId, setProcessingDraftId] = useState<string | null>(null);
   const [expandedBpDraftId, setExpandedBpDraftId] = useState<string | null>(null);
+  const [tastyConfig, setTastyConfig] = useState<{ scopes?: string; canTrade?: boolean } | null>(null);
 
   // Fetch drafts from backend
   const fetchDrafts = async () => {
@@ -97,6 +98,9 @@ export const AiTradingOrdersWorkspace: React.FC<AiTradingOrdersWorkspaceProps> =
   const handleRefreshAll = () => {
     fetchDrafts();
     fetchOrders();
+    if (activeBroker === 'tastytrade') {
+      fetchTastyEnvironment().then(setTastyConfig).catch(() => {});
+    }
     onRefreshNeeded?.();
     toast.success('Orders refreshed', { description: `Synced latest ${activeBroker.toUpperCase()} drafts and orders.` });
   };
@@ -104,6 +108,9 @@ export const AiTradingOrdersWorkspace: React.FC<AiTradingOrdersWorkspaceProps> =
   useEffect(() => {
     fetchDrafts();
     fetchOrders();
+    if (activeBroker === 'tastytrade') {
+      fetchTastyEnvironment().then(setTastyConfig).catch(() => {});
+    }
   }, [activeBroker]);
 
   // Approve a pending draft
@@ -117,7 +124,14 @@ export const AiTradingOrdersWorkspace: React.FC<AiTradingOrdersWorkspaceProps> =
       fetchDrafts();
       fetchOrders();
     } catch (err: any) {
-      toast.error('Approval failed', { description: err.message });
+      if (err.message?.toLowerCase().includes('scope') || err.message?.toLowerCase().includes('insufficient')) {
+        toast.error('Tastytrade Read-Only Token', {
+          description: "Your token lacks 'trade' scope. Go to my.tastytrade.com -> Manage -> My Profile -> API to generate a grant with 'trade' enabled.",
+          duration: 10000,
+        });
+      } else {
+        toast.error('Approval failed', { description: err.message });
+      }
     } finally {
       setProcessingDraftId(null);
     }
@@ -202,6 +216,25 @@ export const AiTradingOrdersWorkspace: React.FC<AiTradingOrdersWorkspaceProps> =
           </Button>
         </div>
       </div>
+
+      {/* Read-Only Token Notice for Tastytrade */}
+      {activeBroker === 'tastytrade' && tastyConfig && tastyConfig.canTrade === false && (
+        <div className="mx-4 my-2.5 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-start gap-2.5">
+          <AlertCircle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+          <div className="space-y-1">
+            <div className="font-semibold text-amber-300 flex items-center gap-1.5">
+              <span>Tastytrade Token is Read-Only</span>
+              <Badge variant="outline" className="text-[10px] font-mono text-amber-400 border-amber-500/40 bg-amber-500/10">
+                scope: &apos;{tastyConfig.scopes || 'read'}&apos;
+              </Badge>
+            </div>
+            <p className="text-[11px] text-amber-200/80 leading-relaxed">
+              Live order execution failed with <em className="text-white">&quot;Token has insufficient scopes for this request&quot;</em> because your OAuth token only has read permission.
+              To execute live trades, go to <a href="https://my.tastytrade.com" target="_blank" rel="noreferrer" className="underline font-bold text-amber-300 hover:text-white">my.tastytrade.com</a> &rarr; <strong>Manage</strong> &rarr; <strong>My Profile</strong> &rarr; <strong>API</strong> &rarr; <strong>OAuth Applications</strong>, check both <strong>read</strong> and <strong>trade</strong> scopes, create a <strong>New Personal OAuth Grant</strong>, and update <code className="bg-amber-500/20 px-1 py-0.5 rounded font-mono text-[10px]">TASTY_REFRESH_TOKEN</code> in <code className="bg-amber-500/20 px-1 py-0.5 rounded font-mono text-[10px]">.env.local</code>.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Filter Tabs */}
       <div className="px-4 py-2 bg-secondary/20 border-b border-border/60 flex items-center gap-1.5 overflow-x-auto text-xs">

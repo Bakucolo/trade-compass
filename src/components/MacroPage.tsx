@@ -1,12 +1,12 @@
 import { useState, useMemo } from 'react';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 import {
   Globe,
   TrendingUp,
   TrendingDown,
   Activity,
   Zap,
-  ShieldAlert,
   Sparkles,
   RefreshCw,
   LineChart,
@@ -17,15 +17,15 @@ import {
   Coins,
   DollarSign,
   Landmark,
-  ArrowRight,
   Maximize2,
-  ExternalLink,
-  ChevronRight,
+  Minimize2,
+  ChevronDown,
+  ChevronUp,
+  GripVertical,
+  RotateCcw,
   Info,
-  BarChart3,
   Building2,
-  PieChart,
-  ShieldCheck
+  ShieldCheck,
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
 import { Button } from './ui/button';
@@ -36,7 +36,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogDescription
+  DialogDescription,
 } from './ui/dialog';
 import { useMacroOverview, MacroAssetItem } from '@/services/macroService';
 import { useMacroDossiers, isDossierFromToday } from '@/services/macroDossierService';
@@ -45,8 +45,10 @@ import { TradingViewChart } from './graphs/TradingViewChart';
 import { YieldsBondsChartCard } from './macro/YieldsBondsChartCard';
 import { SectorsAndIndustriesCard } from './macro/SectorsAndIndustriesCard';
 import { EconomicCycleCard } from './macro/EconomicCycleCard';
+import { FedFundsCurveCard } from './macro/FedFundsCurveCard';
 import { VolatilityMacroCard } from './macro/VolatilityMacroCard';
 import { TrendFinderCard } from './macro/TrendFinderCard';
+import { GoldMacroRegimeDashboard } from './macro/GoldMacroRegimeDashboard';
 
 interface MacroPageProps {
   onNavigateToResearch?: (symbol: string) => void;
@@ -55,6 +57,49 @@ interface MacroPageProps {
 }
 
 type MacroCategoryTab = 'all' | 'economic' | 'volatility' | 'rates_bonds' | 'indices' | 'currencies' | 'metals' | 'energy';
+
+export type MacroSectionId =
+  | 'gold_macro_regime'
+  | 'macro_trends'
+  | 'volatility'
+  | 'economic_cycle'
+  | 'fed_funds_curve'
+  | 'yields_bonds'
+  | 'sectors_industries'
+  | 'yield_curve_radar'
+  | 'asset_catalog';
+
+const DEFAULT_SECTION_ORDER: MacroSectionId[] = [
+  'gold_macro_regime',
+  'macro_trends',
+  'volatility',
+  'economic_cycle',
+  'fed_funds_curve',
+  'yields_bonds',
+  'sectors_industries',
+  'yield_curve_radar',
+  'asset_catalog',
+];
+
+const MACRO_SECTIONS_STORAGE_KEY = 'macro_page_sections_order_v2';
+
+function loadSavedSectionOrder(): MacroSectionId[] {
+  try {
+    const saved = localStorage.getItem(MACRO_SECTIONS_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const validSet = new Set<MacroSectionId>(DEFAULT_SECTION_ORDER);
+        const filtered = parsed.filter((id): id is MacroSectionId => validSet.has(id));
+        const missing = DEFAULT_SECTION_ORDER.filter((id) => !filtered.includes(id));
+        return [...filtered, ...missing];
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load macro sections order from localStorage', e);
+  }
+  return DEFAULT_SECTION_ORDER;
+}
 
 const CATEGORY_TABS: { id: MacroCategoryTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: 'all', label: 'All Macro', icon: Globe },
@@ -73,6 +118,14 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
   const [activeTab, setActiveTab] = useState<MacroCategoryTab>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isDossierModalOpen, setIsDossierModalOpen] = useState(false);
+
+  // All sections collapsed by default on initial view
+  const [expandedSections, setExpandedSections] = useState<Set<MacroSectionId>>(() => new Set());
+
+  // Draggable section order with localStorage persistence
+  const [sectionOrder, setSectionOrder] = useState<MacroSectionId[]>(loadSavedSectionOrder);
+  const [draggedSectionId, setDraggedSectionId] = useState<MacroSectionId | null>(null);
+  const [dragOverSectionId, setDragOverSectionId] = useState<MacroSectionId | null>(null);
 
   const hasTodayDossier = useMemo(() => {
     return dossiers.some(d => isDossierFromToday(d.createdAt));
@@ -145,12 +198,546 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
     })}`;
   };
 
-  const formatChange = (item: MacroAssetItem) => {
-    const sign = item.change >= 0 ? '+' : '';
-    if (item.format === 'percent') {
-      return `${sign}${item.change.toFixed(2)} pts (${sign}${item.changePercent.toFixed(2)}%)`;
+  // Drag and Drop & Reordering handlers
+  const handleReorder = (newOrder: MacroSectionId[]) => {
+    setSectionOrder(newOrder);
+    try {
+      localStorage.setItem(MACRO_SECTIONS_STORAGE_KEY, JSON.stringify(newOrder));
+    } catch (e) {
+      console.error('Failed to save macro section order', e);
     }
-    return `${sign}${item.change.toFixed(2)} (${sign}${item.changePercent.toFixed(2)}%)`;
+  };
+
+  const handleResetOrder = () => {
+    setSectionOrder(DEFAULT_SECTION_ORDER);
+    try {
+      localStorage.removeItem(MACRO_SECTIONS_STORAGE_KEY);
+      toast.info('Section order reset to default');
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const isOrderModified = useMemo(() => {
+    if (sectionOrder.length !== DEFAULT_SECTION_ORDER.length) return true;
+    return sectionOrder.some((id, index) => id !== DEFAULT_SECTION_ORDER[index]);
+  }, [sectionOrder]);
+
+  const handleDragStart = (e: React.DragEvent, id: MacroSectionId) => {
+    setDraggedSectionId(id);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', id);
+  };
+
+  const handleDragOver = (e: React.DragEvent, id: MacroSectionId) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverSectionId !== id) {
+      setDragOverSectionId(id);
+    }
+  };
+
+  const handleDragEnd = () => {
+    setDraggedSectionId(null);
+    setDragOverSectionId(null);
+  };
+
+  const handleDrop = (e: React.DragEvent, targetId: MacroSectionId) => {
+    e.preventDefault();
+    setDragOverSectionId(null);
+
+    if (!draggedSectionId || draggedSectionId === targetId) {
+      setDraggedSectionId(null);
+      return;
+    }
+
+    const fromIndex = sectionOrder.indexOf(draggedSectionId);
+    const toIndex = sectionOrder.indexOf(targetId);
+
+    if (fromIndex === -1 || toIndex === -1) {
+      setDraggedSectionId(null);
+      return;
+    }
+
+    const newOrder = [...sectionOrder];
+    const [moved] = newOrder.splice(fromIndex, 1);
+    newOrder.splice(toIndex, 0, moved);
+
+    handleReorder(newOrder);
+    setDraggedSectionId(null);
+    toast.success('Section order updated');
+  };
+
+  const handleMoveSection = (id: MacroSectionId, direction: 'UP' | 'DOWN', e: React.MouseEvent) => {
+    e.stopPropagation();
+    const currentIndex = sectionOrder.indexOf(id);
+    if (currentIndex === -1) return;
+    const targetIndex = direction === 'UP' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= sectionOrder.length) return;
+
+    const newOrder = [...sectionOrder];
+    const [removed] = newOrder.splice(currentIndex, 1);
+    newOrder.splice(targetIndex, 0, removed);
+    handleReorder(newOrder);
+  };
+
+  // Expand / Collapse Toggles
+  const toggleSection = (id: MacroSectionId) => {
+    setExpandedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const areAllExpanded = expandedSections.size === sectionOrder.length;
+  const toggleAll = () => {
+    if (areAllExpanded) {
+      setExpandedSections(new Set());
+    } else {
+      setExpandedSections(new Set(sectionOrder));
+    }
+  };
+
+  // Section Configurations
+  const sectionConfigs: Record<MacroSectionId, {
+    title: string;
+    badge: string;
+    subtitle: string;
+    icon: React.ComponentType<{ className?: string }>;
+    iconColorClasses: string;
+    preview: string;
+    renderContent: () => React.ReactNode;
+  }> = {
+    gold_macro_regime: {
+      title: 'Gold Macro Regime & Sovereign Debt Stress Station',
+      badge: 'Institutional Macro',
+      subtitle: 'Deterministic 5-pillar analysis: real rates, fiscal dominance, stagflation pressure, and dollar trends',
+      icon: Coins,
+      iconColorClasses: 'bg-amber-500/15 border-amber-500/40 text-amber-300',
+      preview: '5-Pillar Score • Structural vs Tactical • Fiscal Dominance • Dynamic Pivot Levels',
+      renderContent: () => (
+        <GoldMacroRegimeDashboard
+          onNavigateToResearch={onNavigateToResearch}
+          onNavigateToGraphs={onNavigateToGraphs}
+        />
+      ),
+    },
+    macro_trends: {
+      title: 'Macro Trend Finder & Lifecycle Scanner',
+      badge: 'Cross-Asset Scanner',
+      subtitle: 'Real-time trend identification, moving average ribbons & exhaustion indicators across 45+ macro assets',
+      icon: TrendingUp,
+      iconColorClasses: 'bg-amber-500/15 border-amber-500/40 text-amber-300',
+      preview: 'Moving Average Ribbons • 14-RSI Divergences • 45+ Assets',
+      renderContent: () => (
+        <TrendFinderCard
+          onNavigateToResearch={onNavigateToResearch}
+          onNavigateToGraphs={onNavigateToGraphs}
+          onNavigateToTrades={onNavigateToTrades}
+        />
+      ),
+    },
+    volatility: {
+      title: 'Volatility Term Structure, Dispersion & Signals',
+      badge: 'Risk & Volatility',
+      subtitle: 'VIX term structure (spot vs futures), VVIX tail risk gauge & implied vs realized volatility dispersion',
+      icon: Zap,
+      iconColorClasses: 'bg-violet-500/15 border-violet-500/40 text-violet-300',
+      preview: `VIX: ${regime?.vix ? regime.vix.toFixed(2) : '15.42'} • Term Structure • VVIX & Tail Risk`,
+      renderContent: () => (
+        <VolatilityMacroCard
+          onNavigateToResearch={onNavigateToResearch}
+          onNavigateToTrades={onNavigateToTrades}
+        />
+      ),
+    },
+    economic_cycle: {
+      title: 'Economic Cycle Stage & Macro Regime Station',
+      badge: 'Cycle Framework',
+      subtitle: 'Leading economic indicators (LEI), inflation-growth quadrants & regime transition matrix',
+      icon: Gauge,
+      iconColorClasses: 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300',
+      preview: `${regime?.title || 'Goldilocks Posture'} • 4-Quadrant Macro Model`,
+      renderContent: () => (
+        <EconomicCycleCard
+          onNavigateToResearch={onNavigateToResearch}
+          onNavigateToGraphs={onNavigateToGraphs}
+        />
+      ),
+    },
+    fed_funds_curve: {
+      title: 'Fed Funds Futures (ZQ!) Policy Curve & Rate Hike/Cut Barometer',
+      badge: 'CME FedWatch Model',
+      subtitle: 'CME 30-Day Fed Funds (ZQ) curve, FOMC decision pricing matrix & terminal rate expectations',
+      icon: Landmark,
+      iconColorClasses: 'bg-purple-500/15 border-purple-500/40 text-purple-300',
+      preview: 'CME 30-Day Fed Funds (ZQ) • FOMC Hike/Cut Decision Pricing Matrix',
+      renderContent: () => (
+        <FedFundsCurveCard onNavigateToGraphs={onNavigateToGraphs} />
+      ),
+    },
+    yields_bonds: {
+      title: 'Sovereign Yields & Bond Market Chart Station',
+      badge: 'Rates & Fixed Income',
+      subtitle: 'Global benchmark yields, 10Y/2Y term spreads, real yields (TIPS) & fixed income ETF performance',
+      icon: LineChart,
+      iconColorClasses: 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300',
+      preview: `10Y Treasury: ${regime?.us10y ? regime.us10y.toFixed(2) + '%' : '4.38%'} • US & Global Yields`,
+      renderContent: () => (
+        <YieldsBondsChartCard onNavigateToGraphs={onNavigateToGraphs} />
+      ),
+    },
+    sectors_industries: {
+      title: 'Sectors & Industry Performance & Rotation Analyzer',
+      badge: 'GICS Rotation',
+      subtitle: 'S&P 500 11 GICS sectors, industry relative strength & sector rotation business cycle clock',
+      icon: Layers,
+      iconColorClasses: 'bg-blue-500/15 border-blue-500/40 text-blue-300',
+      preview: '11 GICS Sectors • Relative Strength • Cycle Clock',
+      renderContent: () => (
+        <SectorsAndIndustriesCard
+          onNavigateToResearch={onNavigateToResearch}
+          onNavigateToGraphs={onNavigateToGraphs}
+        />
+      ),
+    },
+    yield_curve_radar: {
+      title: 'US Sovereign Yield Curve Structure & Credit Spreads',
+      badge: 'FRED Telemetry',
+      subtitle: 'FRED Treasury constant maturity yields (1M to 30Y), 2Y/10Y inversion & high yield credit risk',
+      icon: Scale,
+      iconColorClasses: 'bg-indigo-500/15 border-indigo-500/40 text-indigo-300',
+      preview: `2Y/10Y Spread: ${spread2y10y >= 0 ? '+' : ''}${(spread2y10y * 100).toFixed(0)} bps (${isCurveInverted ? 'Inverted' : 'Normal'}) • Fed Funds: ${categorized?.economic?.find(i => i.symbol === 'FEDFUNDS')?.price.toFixed(2) || '4.83'}%`,
+      renderContent: () => (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* US Treasury Yield Curve Visualizer (2 Cols) */}
+          <Card className="lg:col-span-2 bg-card/70 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden">
+            <CardHeader className="p-5 pb-3 border-b border-border/40 bg-accent/10 flex flex-row items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Landmark className="w-4 h-4 text-cyan-400" />
+                <CardTitle className="text-sm font-bold text-foreground">
+                  US Sovereign Yield Curve Structure (FRED Data)
+                </CardTitle>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "text-[10px] font-mono font-bold px-2 py-0.5 border",
+                    isCurveInverted
+                      ? "bg-rose-500/10 text-rose-400 border-rose-500/30"
+                      : "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                  )}
+                >
+                  2Y/10Y Spread: {spread2y10y >= 0 ? '+' : ''}{(spread2y10y * 100).toFixed(0)} bps ({isCurveInverted ? 'Inverted' : 'Normal Curve'})
+                </Badge>
+              </div>
+            </CardHeader>
+
+            <CardContent className="p-5">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-2">
+                {yieldCurve.map((pt) => {
+                  const heightPct = Math.min(100, Math.max(20, (pt.yield / 6) * 100));
+                  const isTenYear = pt.term === '10Y';
+                  return (
+                    <div
+                      key={pt.term}
+                      className={cn(
+                        "p-3 rounded-xl border transition-all flex flex-col items-center justify-between gap-2 relative overflow-hidden group",
+                        isTenYear
+                          ? "bg-cyan-950/20 border-cyan-500/40 ring-1 ring-cyan-500/30"
+                          : "bg-card/40 border-border/40 hover:border-border/70"
+                      )}
+                    >
+                      <span className="text-[11px] font-mono font-bold text-muted-foreground group-hover:text-foreground">
+                        {pt.term}
+                      </span>
+
+                      {/* Mini Visual Yield Column */}
+                      <div className="w-full h-16 bg-slate-950/60 rounded-lg p-1 flex items-end justify-center">
+                        <div
+                          style={{ height: `${heightPct}%` }}
+                          className={cn(
+                            "w-full rounded transition-all duration-500",
+                            isTenYear
+                              ? "bg-gradient-to-t from-cyan-600 to-cyan-400 shadow-cyan-500/50 shadow-sm"
+                              : "bg-gradient-to-t from-primary/60 to-primary"
+                          )}
+                        />
+                      </div>
+
+                      <div className="text-center font-mono">
+                        <span className="text-sm font-black text-foreground block">
+                          {pt.yield.toFixed(2)}%
+                        </span>
+                        <span className="text-[9px] text-muted-foreground truncate max-w-[70px]">
+                          {pt.label}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="mt-4 pt-3 border-t border-border/40 flex items-center justify-between text-[11px] text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <Info className="w-3.5 h-3.5 text-cyan-400" />
+                  Data sourced directly from Federal Reserve Constant Maturity Yield series.
+                </span>
+                <span className="font-mono text-cyan-300">
+                  10Y Yield: {yieldCurve.find(p => p.term === '10Y')?.yield.toFixed(2) || '4.38'}%
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Macro Cross-Asset Correlation Card (1 Col) */}
+          <Card className="bg-card/70 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden flex flex-col justify-between">
+            <CardHeader className="p-5 pb-3 border-b border-border/40 bg-accent/10 flex flex-row items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Scale className="w-4 h-4 text-purple-400" />
+                <CardTitle className="text-sm font-bold text-foreground">
+                  Macro Policy & Credit Spreads
+                </CardTitle>
+              </div>
+              <Badge variant="outline" className="text-[10px] text-purple-300 border-purple-500/30">
+                FRED Telemetry
+              </Badge>
+            </CardHeader>
+
+            <CardContent className="p-5 space-y-3 flex-1 flex flex-col justify-between text-xs">
+              <div className="space-y-2.5">
+                <div className="p-2.5 rounded-xl bg-slate-900/60 border border-border/40 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">🏛️</span>
+                    <span className="font-semibold text-foreground">Fed Funds Rate</span>
+                  </div>
+                  <span className="font-mono text-[11px] text-cyan-400 font-bold">
+                    {categorized?.economic?.find(i => i.symbol === 'FEDFUNDS')?.price.toFixed(2) || '4.83'}%
+                  </span>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-slate-900/60 border border-border/40 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">⚡</span>
+                    <span className="font-semibold text-foreground">High Yield Spread</span>
+                  </div>
+                  <span className="font-mono text-[11px] text-emerald-400 font-bold">
+                    +{categorized?.economic?.find(i => i.symbol === 'BAMLH0A0HYM2')?.price.toFixed(2) || '3.12'}% (Benign)
+                  </span>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-slate-900/60 border border-border/40 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">👥</span>
+                    <span className="font-semibold text-foreground">US Unemployment</span>
+                  </div>
+                  <span className="font-mono text-[11px] text-amber-400 font-bold">
+                    {categorized?.economic?.find(i => i.symbol === 'UNRATE')?.price.toFixed(1) || '4.3'}%
+                  </span>
+                </div>
+              </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onNavigateToGraphs && onNavigateToGraphs('^VIX')}
+                className="w-full text-xs font-bold gap-1.5 border-purple-500/30 hover:bg-purple-950/20 text-purple-300 mt-2"
+              >
+                <LineChart className="w-3.5 h-3.5" />
+                <span>Open VIX in Graphs Terminal</span>
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      ),
+    },
+    asset_catalog: {
+      title: 'Global Macro & FRED Asset Catalog',
+      badge: 'Multi-Asset Catalog',
+      subtitle: 'Cross-asset multi-market terminal across Equities, Rates, Currencies, Metals, Energy & FRED Series',
+      icon: Globe,
+      iconColorClasses: 'bg-rose-500/15 border-rose-500/40 text-rose-300',
+      preview: `${activeItems.length} Instruments • DXY: ${dxyDisplay} • Crude: $${regime?.oil ? regime.oil.toFixed(2) : '71.40'}`,
+      renderContent: () => (
+        <div className="space-y-4">
+          {/* Category Tabs & Search Bar */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-1">
+            {/* Category Tab Pills */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+              {CATEGORY_TABS.map((tab) => {
+                const TabIcon = tab.icon;
+                const isActive = activeTab === tab.id;
+                const count = tab.id === 'all' ? categorized?.all?.length : categorized?.[tab.id]?.length;
+
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={cn(
+                      "px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 border",
+                      isActive
+                        ? "bg-primary text-primary-foreground border-primary shadow-md"
+                        : "bg-card/40 border-border/40 text-muted-foreground hover:text-foreground hover:bg-accent/30"
+                    )}
+                  >
+                    <TabIcon className="w-3.5 h-3.5" />
+                    <span>{tab.label}</span>
+                    {count !== undefined && (
+                      <span className={cn(
+                        "text-[10px] font-mono px-1.5 py-0.2 rounded-full",
+                        isActive ? "bg-black/20 text-white" : "bg-slate-900 text-muted-foreground"
+                      )}>
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Search Input */}
+            <div className="w-full md:w-64 shrink-0">
+              <Input
+                placeholder="Search macro or FRED ticker..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-9 text-xs bg-slate-900/80 border-slate-700/50 rounded-xl"
+              />
+            </div>
+          </div>
+
+          {/* Macro Asset Cards Grid */}
+          {isLoading ? (
+            <div className="py-24 text-center text-xs text-muted-foreground flex flex-col items-center justify-center gap-3">
+              <RefreshCw className="w-6 h-6 animate-spin text-primary" />
+              <span>Synchronizing Federal Reserve and global macro data feeds...</span>
+            </div>
+          ) : activeItems.length === 0 ? (
+            <div className="p-12 text-center text-xs text-muted-foreground border border-dashed border-border/40 rounded-2xl">
+              No macro assets found matching "{searchQuery}".
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {activeItems.map((item) => {
+                const isPositive = item.change >= 0;
+                const isFred = item.source === 'FRED';
+                const rangeSpan = (item.fiftyTwoWeekHigh - item.fiftyTwoWeekLow) || 1;
+                const currentPositionPct = Math.min(100, Math.max(0, ((item.price - item.fiftyTwoWeekLow) / rangeSpan) * 100));
+
+                return (
+                  <Card
+                    key={item.symbol}
+                    className="bg-card/60 backdrop-blur-xl border border-border/60 hover:border-primary/40 transition-all rounded-2xl shadow-md overflow-hidden group flex flex-col justify-between"
+                  >
+                    <CardHeader className="p-4 pb-2 border-b border-border/30 bg-accent/5 flex flex-row items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className={cn(
+                          "w-8 h-8 rounded-xl border flex items-center justify-center font-mono font-bold text-xs shrink-0",
+                          isFred
+                            ? "bg-purple-950/40 border-purple-500/30 text-purple-300"
+                            : "bg-slate-900/80 border-white/5 text-cyan-400"
+                        )}>
+                          {item.symbol.slice(0, 3)}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-mono font-black text-xs text-foreground group-hover:text-primary transition-colors">
+                              {item.symbol}
+                            </span>
+                            <Badge variant="outline" className={cn(
+                              "text-[8.5px] px-1.5 py-0 font-semibold border",
+                              isFred ? "border-purple-500/40 text-purple-300 bg-purple-500/10" : "border-white/10 text-muted-foreground"
+                            )}>
+                              {isFred ? 'FRED' : item.assetType}
+                            </Badge>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground truncate max-w-[170px]" title={item.name}>
+                            {item.name}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* 1-Click Chart Modal Trigger */}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setChartModalSymbol(item)}
+                        className="h-7 w-7 rounded-lg text-muted-foreground hover:text-cyan-300 hover:bg-cyan-950/30 transition-colors"
+                        title={`Expand TradingView Chart for ${item.symbol}`}
+                      >
+                        <Maximize2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </CardHeader>
+
+                    <CardContent className="p-4 space-y-3">
+                      {/* Price and Day Change */}
+                      <div className="flex items-baseline justify-between font-mono">
+                        <span className="text-xl font-black text-foreground tracking-tight">
+                          {formatPrice(item)}
+                        </span>
+                        <div className={cn(
+                          "text-xs font-bold flex items-center gap-0.5 px-2 py-0.5 rounded-lg border",
+                          isPositive
+                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                            : "bg-rose-500/10 text-rose-400 border-rose-500/30"
+                        )}>
+                          {isPositive ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                          <span>{item.changePercent >= 0 ? '+' : ''}{item.changePercent.toFixed(2)}%</span>
+                        </div>
+                      </div>
+
+                      {/* Range or Source Details */}
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-[9.5px] font-mono text-muted-foreground">
+                          <span>{isFred ? 'Series Source: FRED' : `52W L: ${item.fiftyTwoWeekLow.toFixed(2)}`}</span>
+                          <span>{isFred ? `Obs: ${item.lastUpdated?.slice(0, 10)}` : `52W H: ${item.fiftyTwoWeekHigh.toFixed(2)}`}</span>
+                        </div>
+                        <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden relative">
+                          <div
+                            style={{ width: `${currentPositionPct}%` }}
+                            className={cn(
+                              "h-full rounded-full transition-all duration-500",
+                              isPositive ? "bg-emerald-500" : "bg-rose-500"
+                            )}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Quick Action Footer */}
+                      <div className="pt-2 border-t border-border/30 grid grid-cols-2 gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setChartModalSymbol(item)}
+                          className="h-7 text-xs font-semibold gap-1 hover:bg-cyan-950/20 hover:text-cyan-300 hover:border-cyan-500/40"
+                        >
+                          <LineChart className="w-3 h-3" /> Chart
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onNavigateToResearch && onNavigateToResearch(item.symbol.replace('^', ''))}
+                          className="h-7 text-xs font-semibold gap-1 hover:bg-primary/20 hover:text-primary"
+                        >
+                          <Sparkles className="w-3 h-3 text-amber-300" /> Research
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ),
+    },
   };
 
   return (
@@ -296,347 +883,205 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
         </div>
       </div>
 
-      {/* ================= 1. MACRO TREND FINDER & LIFECYCLE SCANNER ================= */}
-      <TrendFinderCard
-        onNavigateToResearch={onNavigateToResearch}
-        onNavigateToGraphs={onNavigateToGraphs}
-        onNavigateToTrades={onNavigateToTrades}
-      />
-
-      {/* ================= 1.5. VOLATILITY TERM STRUCTURE, DISPERSION & SIGNALS ================= */}
-      <VolatilityMacroCard
-        onNavigateToResearch={onNavigateToResearch}
-        onNavigateToTrades={onNavigateToTrades}
-      />
-
-      {/* ================= 2. ECONOMIC CYCLE STAGE & MACRO REGIME STATION ================= */}
-      <EconomicCycleCard
-        onNavigateToResearch={onNavigateToResearch}
-        onNavigateToGraphs={onNavigateToGraphs}
-      />
-
-      {/* ================= 3. SOVEREIGN YIELDS & BOND MARKET CHART STATION ================= */}
-      <YieldsBondsChartCard onNavigateToGraphs={onNavigateToGraphs} />
-
-      {/* ================= 4. SECTORS & INDUSTRY PERFORMANCE & ROTATION ANALYZER ================= */}
-      <SectorsAndIndustriesCard
-        onNavigateToResearch={onNavigateToResearch}
-        onNavigateToGraphs={onNavigateToGraphs}
-      />
-
-      {/* ================= YIELD CURVE & MACRO RADAR ================= */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* US Treasury Yield Curve Visualizer (2 Cols) */}
-        <Card className="lg:col-span-2 bg-card/70 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden">
-          <CardHeader className="p-5 pb-3 border-b border-border/40 bg-accent/10 flex flex-row items-center justify-between">
+      {/* ================= SECTIONS REORDER & COLLAPSE CONTROL TOOLBAR ================= */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 sm:p-4 rounded-2xl bg-card/60 backdrop-blur-xl border border-border/70 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-300 shrink-0">
+            <Layers className="w-4 h-4" />
+          </div>
+          <div>
             <div className="flex items-center gap-2">
-              <Landmark className="w-4 h-4 text-cyan-400" />
-              <CardTitle className="text-sm font-bold text-foreground">
-                US Sovereign Yield Curve Structure (FRED Data)
-              </CardTitle>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge
-                variant="outline"
-                className={cn(
-                  "text-[10px] font-mono font-bold px-2 py-0.5 border",
-                  isCurveInverted
-                    ? "bg-rose-500/10 text-rose-400 border-rose-500/30"
-                    : "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
-                )}
-              >
-                2Y/10Y Spread: {spread2y10y >= 0 ? '+' : ''}{(spread2y10y * 100).toFixed(0)} bps ({isCurveInverted ? 'Inverted' : 'Normal Curve'})
+              <span className="text-xs sm:text-sm font-black text-foreground">
+                Macro Dashboard Sections
+              </span>
+              <Badge variant="outline" className="text-[10px] font-mono font-bold text-cyan-300 border-cyan-500/30">
+                {expandedSections.size} of {sectionOrder.length} Open
               </Badge>
             </div>
-          </CardHeader>
+            <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
+              <GripVertical className="w-3 h-3 text-cyan-400 shrink-0" />
+              <span>Drag & drop sections or use arrows to organize • All sections collapsed by default</span>
+            </p>
+          </div>
+        </div>
 
-          <CardContent className="p-5">
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-2">
-              {yieldCurve.map((pt) => {
-                const heightPct = Math.min(100, Math.max(20, (pt.yield / 6) * 100));
-                const isTenYear = pt.term === '10Y';
-                return (
-                  <div
-                    key={pt.term}
-                    className={cn(
-                      "p-3 rounded-xl border transition-all flex flex-col items-center justify-between gap-2 relative overflow-hidden group",
-                      isTenYear
-                        ? "bg-cyan-950/20 border-cyan-500/40 ring-1 ring-cyan-500/30"
-                        : "bg-card/40 border-border/40 hover:border-border/70"
-                    )}
-                  >
-                    <span className="text-[11px] font-mono font-bold text-muted-foreground group-hover:text-foreground">
-                      {pt.term}
-                    </span>
-
-                    {/* Mini Visual Yield Column */}
-                    <div className="w-full h-16 bg-slate-950/60 rounded-lg p-1 flex items-end justify-center">
-                      <div
-                        style={{ height: `${heightPct}%` }}
-                        className={cn(
-                          "w-full rounded transition-all duration-500",
-                          isTenYear
-                            ? "bg-gradient-to-t from-cyan-600 to-cyan-400 shadow-cyan-500/50 shadow-sm"
-                            : "bg-gradient-to-t from-primary/60 to-primary"
-                        )}
-                      />
-                    </div>
-
-                    <div className="text-center font-mono">
-                      <span className="text-sm font-black text-foreground block">
-                        {pt.yield.toFixed(2)}%
-                      </span>
-                      <span className="text-[9px] text-muted-foreground truncate max-w-[70px]">
-                        {pt.label}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="mt-4 pt-3 border-t border-border/40 flex items-center justify-between text-[11px] text-muted-foreground">
-              <span className="flex items-center gap-1.5">
-                <Info className="w-3.5 h-3.5 text-cyan-400" />
-                Data sourced directly from Federal Reserve Constant Maturity Yield series.
-              </span>
-              <span className="font-mono text-cyan-300">
-                10Y Yield: {yieldCurve.find(p => p.term === '10Y')?.yield.toFixed(2) || '4.38'}%
-              </span>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Macro Cross-Asset Correlation Card (1 Col) */}
-        <Card className="bg-card/70 backdrop-blur-xl border border-border/70 shadow-lg rounded-2xl overflow-hidden flex flex-col justify-between">
-          <CardHeader className="p-5 pb-3 border-b border-border/40 bg-accent/10 flex flex-row items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Scale className="w-4 h-4 text-purple-400" />
-              <CardTitle className="text-sm font-bold text-foreground">
-                Macro Policy & Credit Spreads
-              </CardTitle>
-            </div>
-            <Badge variant="outline" className="text-[10px] text-purple-300 border-purple-500/30">
-              FRED Telemetry
-            </Badge>
-          </CardHeader>
-
-          <CardContent className="p-5 space-y-3 flex-1 flex flex-col justify-between text-xs">
-            <div className="space-y-2.5">
-              <div className="p-2.5 rounded-xl bg-slate-900/60 border border-border/40 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm">🏛️</span>
-                  <span className="font-semibold text-foreground">Fed Funds Rate</span>
-                </div>
-                <span className="font-mono text-[11px] text-cyan-400 font-bold">
-                  {categorized?.economic?.find(i => i.symbol === 'FEDFUNDS')?.price.toFixed(2) || '4.83'}%
-                </span>
-              </div>
-
-              <div className="p-2.5 rounded-xl bg-slate-900/60 border border-border/40 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm">⚡</span>
-                  <span className="font-semibold text-foreground">High Yield Spread</span>
-                </div>
-                <span className="font-mono text-[11px] text-emerald-400 font-bold">
-                  +{categorized?.economic?.find(i => i.symbol === 'BAMLH0A0HYM2')?.price.toFixed(2) || '3.12'}% (Benign)
-                </span>
-              </div>
-
-              <div className="p-2.5 rounded-xl bg-slate-900/60 border border-border/40 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm">👥</span>
-                  <span className="font-semibold text-foreground">US Unemployment</span>
-                </div>
-                <span className="font-mono text-[11px] text-amber-400 font-bold">
-                  {categorized?.economic?.find(i => i.symbol === 'UNRATE')?.price.toFixed(1) || '4.3'}%
-                </span>
-              </div>
-            </div>
-
+        <div className="flex items-center gap-2 self-end sm:self-center flex-wrap">
+          {isOrderModified && (
             <Button
               variant="outline"
               size="sm"
-              onClick={() => onNavigateToGraphs && onNavigateToGraphs('^VIX')}
-              className="w-full text-xs font-bold gap-1.5 border-purple-500/30 hover:bg-purple-950/20 text-purple-300 mt-2"
+              onClick={handleResetOrder}
+              className="h-8 text-xs font-semibold gap-1.5 border-border/70 hover:bg-accent/40 text-muted-foreground hover:text-foreground"
+              title="Reset sections to default order"
             >
-              <LineChart className="w-3.5 h-3.5" />
-              <span>Open VIX in Graphs Terminal</span>
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset Order</span>
             </Button>
-          </CardContent>
-        </Card>
+          )}
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={toggleAll}
+            className="h-8 text-xs font-bold gap-1.5 border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/15 shadow-sm"
+          >
+            {areAllExpanded ? (
+              <>
+                <Minimize2 className="w-3.5 h-3.5" />
+                <span>Collapse All</span>
+              </>
+            ) : (
+              <>
+                <Maximize2 className="w-3.5 h-3.5" />
+                <span>Expand All</span>
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
-      {/* ================= CATEGORY TABS & SEARCH BAR ================= */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pt-2">
-        {/* Category Tab Pills */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-          {CATEGORY_TABS.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            const count = tab.id === 'all' ? categorized?.all?.length : categorized?.[tab.id]?.length;
+      {/* ================= DRAGGABLE & COLLAPSIBLE SECTIONS LIST ================= */}
+      <div className="space-y-3.5">
+        {sectionOrder.map((sectionId, index) => {
+          const config = sectionConfigs[sectionId];
+          if (!config) return null;
 
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+          const isExpanded = expandedSections.has(sectionId);
+          const isDragged = draggedSectionId === sectionId;
+          const isDragOver = dragOverSectionId === sectionId;
+          const SectionIcon = config.icon;
+
+          return (
+            <div
+              key={sectionId}
+              draggable
+              onDragStart={(e) => handleDragStart(e, sectionId)}
+              onDragOver={(e) => handleDragOver(e, sectionId)}
+              onDragEnd={handleDragEnd}
+              onDrop={(e) => handleDrop(e, sectionId)}
+              className={cn(
+                "transition-all duration-200 rounded-3xl",
+                isDragged && "opacity-40 scale-[0.99] ring-2 ring-dashed ring-cyan-400",
+                isDragOver && "border-t-4 border-t-cyan-400 ring-2 ring-cyan-400/80 shadow-cyan-500/20 shadow-xl"
+              )}
+            >
+              {/* Sleek Accordion Section Bar */}
+              <div
+                onClick={() => toggleSection(sectionId)}
                 className={cn(
-                  "px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 border",
-                  isActive
-                    ? "bg-primary text-primary-foreground border-primary shadow-md"
-                    : "bg-card/40 border-border/40 text-muted-foreground hover:text-foreground hover:bg-accent/30"
+                  "w-full p-3.5 sm:p-4 rounded-2xl border transition-all cursor-pointer select-none flex flex-col md:flex-row md:items-center justify-between gap-3 group shadow-sm",
+                  isExpanded
+                    ? "bg-card/90 border-cyan-500/40 shadow-md mb-3"
+                    : "bg-card/60 hover:bg-card/85 border-border/70 hover:border-cyan-500/40"
                 )}
               >
-                <Icon className="w-3.5 h-3.5" />
-                <span>{tab.label}</span>
-                {count !== undefined && (
-                  <span className={cn(
-                    "text-[10px] font-mono px-1.5 py-0.2 rounded-full",
-                    isActive ? "bg-black/20 text-white" : "bg-slate-900 text-muted-foreground"
-                  )}>
-                    {count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Search Input */}
-        <div className="w-full md:w-64 shrink-0">
-          <Input
-            placeholder="Search macro or FRED ticker..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-9 text-xs bg-slate-900/80 border-slate-700/50 rounded-xl"
-          />
-        </div>
-      </div>
-
-      {/* ================= MACRO ASSET CARDS GRID (LOWER BOARD) ================= */}
-      {isLoading ? (
-        <div className="py-24 text-center text-xs text-muted-foreground flex flex-col items-center justify-center gap-3">
-          <RefreshCw className="w-6 h-6 animate-spin text-primary" />
-          <span>Synchronizing Federal Reserve and global macro data feeds...</span>
-        </div>
-      ) : activeItems.length === 0 ? (
-        <div className="p-12 text-center text-xs text-muted-foreground border border-dashed border-border/40 rounded-2xl">
-          No macro assets found matching "{searchQuery}".
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {activeItems.map((item) => {
-            const isPositive = item.change >= 0;
-            const isFred = item.source === 'FRED';
-            const rangeSpan = (item.fiftyTwoWeekHigh - item.fiftyTwoWeekLow) || 1;
-            const currentPositionPct = Math.min(100, Math.max(0, ((item.price - item.fiftyTwoWeekLow) / rangeSpan) * 100));
-
-            return (
-              <Card
-                key={item.symbol}
-                className="bg-card/60 backdrop-blur-xl border border-border/60 hover:border-primary/40 transition-all rounded-2xl shadow-md overflow-hidden group flex flex-col justify-between"
-              >
-                <CardHeader className="p-4 pb-2 border-b border-border/30 bg-accent/5 flex flex-row items-center justify-between">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className={cn(
-                      "w-8 h-8 rounded-xl border flex items-center justify-center font-mono font-bold text-xs shrink-0",
-                      isFred
-                        ? "bg-purple-950/40 border-purple-500/30 text-purple-300"
-                        : "bg-slate-900/80 border-white/5 text-cyan-400"
-                    )}>
-                      {item.symbol.slice(0, 3)}
+                {/* Left: Drag Handle, Rank, Icon, Title */}
+                <div className="flex items-center gap-3 min-w-0">
+                  {/* Drag Grip & Move Controls */}
+                  <div
+                    className="flex items-center gap-1.5 shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div
+                      className="text-muted-foreground/40 hover:text-cyan-400 cursor-grab active:cursor-grabbing p-1 transition-colors"
+                      title="Drag to reorder section"
+                    >
+                      <GripVertical className="w-4 h-4" />
                     </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-mono font-black text-xs text-foreground group-hover:text-primary transition-colors">
-                          {item.symbol}
-                        </span>
-                        <Badge variant="outline" className={cn(
-                          "text-[8.5px] px-1.5 py-0 font-semibold border",
-                          isFred ? "border-purple-500/40 text-purple-300 bg-purple-500/10" : "border-white/10 text-muted-foreground"
-                        )}>
-                          {isFred ? 'FRED' : item.assetType}
-                        </Badge>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground truncate max-w-[170px]" title={item.name}>
-                        {item.name}
-                      </p>
+
+                    {/* Micro Move Up / Down Buttons */}
+                    <div className="flex flex-col gap-0.5">
+                      <button
+                        type="button"
+                        disabled={index === 0}
+                        onClick={(e) => handleMoveSection(sectionId, 'UP', e)}
+                        className="w-4 h-3 flex items-center justify-center text-muted-foreground/40 hover:text-cyan-400 disabled:opacity-20 disabled:hover:text-muted-foreground/40 transition-colors"
+                        title="Move Section Up"
+                      >
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={index === sectionOrder.length - 1}
+                        onClick={(e) => handleMoveSection(sectionId, 'DOWN', e)}
+                        className="w-4 h-3 flex items-center justify-center text-muted-foreground/40 hover:text-cyan-400 disabled:opacity-20 disabled:hover:text-muted-foreground/40 transition-colors"
+                        title="Move Section Down"
+                      >
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      </button>
                     </div>
+
+                    {/* Rank Number */}
+                    <span className="w-6 h-6 rounded-lg bg-slate-900/90 border border-border/60 text-[10px] font-mono font-bold text-muted-foreground flex items-center justify-center shrink-0">
+                      #{index + 1}
+                    </span>
                   </div>
 
-                  {/* 1-Click Chart Modal Trigger */}
+                  {/* Category Icon */}
+                  <div className={cn(
+                    "w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 shadow-inner",
+                    config.iconColorClasses
+                  )}>
+                    <SectionIcon className="w-4 h-4" />
+                  </div>
+
+                  {/* Title & Subtitle */}
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-xs sm:text-sm font-black text-foreground tracking-tight group-hover:text-cyan-300 transition-colors">
+                        {config.title}
+                      </h3>
+                      <Badge variant="outline" className="text-[9px] font-mono border-white/10 text-muted-foreground">
+                        {config.badge}
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
+                      {config.subtitle}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Right: Telemetry Preview & Expand Toggle */}
+                <div className="flex items-center gap-3 shrink-0 self-end md:self-center pl-10 md:pl-0">
+                  {/* Telemetry Preview Pill (shown when collapsed) */}
+                  {!isExpanded && config.preview && (
+                    <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-950/60 border border-border/50 text-[11px] font-mono text-cyan-300 shadow-inner">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                      <span>{config.preview}</span>
+                    </div>
+                  )}
+
+                  {/* Expand/Collapse Button */}
                   <Button
                     variant="ghost"
-                    size="icon"
-                    onClick={() => setChartModalSymbol(item)}
-                    className="h-7 w-7 rounded-lg text-muted-foreground hover:text-cyan-300 hover:bg-cyan-950/30 transition-colors"
-                    title={`Expand TradingView Chart for ${item.symbol}`}
+                    size="sm"
+                    className={cn(
+                      "h-8 px-3 rounded-xl text-xs font-bold gap-1.5 transition-all border pointer-events-none",
+                      isExpanded
+                        ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/40 group-hover:bg-cyan-500/25"
+                        : "bg-slate-900/60 text-muted-foreground border-border/60 group-hover:text-foreground group-hover:bg-accent/40"
+                    )}
                   >
-                    <Maximize2 className="w-3.5 h-3.5" />
+                    <span>{isExpanded ? 'Collapse' : 'Expand'}</span>
+                    {isExpanded ? (
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    )}
                   </Button>
-                </CardHeader>
+                </div>
+              </div>
 
-                <CardContent className="p-4 space-y-3">
-                  {/* Price and Day Change */}
-                  <div className="flex items-baseline justify-between font-mono">
-                    <span className="text-xl font-black text-foreground tracking-tight">
-                      {formatPrice(item)}
-                    </span>
-                    <div className={cn(
-                      "text-xs font-bold flex items-center gap-0.5 px-2 py-0.5 rounded-lg border",
-                      isPositive
-                        ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
-                        : "bg-rose-500/10 text-rose-400 border-rose-500/30"
-                    )}>
-                      {isPositive ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                      <span>{item.changePercent >= 0 ? '+' : ''}{item.changePercent.toFixed(2)}%</span>
-                    </div>
-                  </div>
-
-                  {/* Range or Source Details */}
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[9.5px] font-mono text-muted-foreground">
-                      <span>{isFred ? 'Series Source: FRED' : `52W L: ${item.fiftyTwoWeekLow.toFixed(2)}`}</span>
-                      <span>{isFred ? `Obs: ${item.lastUpdated?.slice(0, 10)}` : `52W H: ${item.fiftyTwoWeekHigh.toFixed(2)}`}</span>
-                    </div>
-                    <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden relative">
-                      <div
-                        style={{ width: `${currentPositionPct}%` }}
-                        className={cn(
-                          "h-full rounded-full transition-all duration-500",
-                          isPositive ? "bg-emerald-500" : "bg-rose-500"
-                        )}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Quick Action Footer */}
-                  <div className="pt-2 border-t border-border/30 grid grid-cols-2 gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setChartModalSymbol(item)}
-                      className="h-7 text-xs font-semibold gap-1 hover:bg-cyan-950/20 hover:text-cyan-300 hover:border-cyan-500/40"
-                    >
-                      <LineChart className="w-3 h-3" /> Chart
-                    </Button>
-
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => onNavigateToResearch && onNavigateToResearch(item.symbol.replace('^', ''))}
-                      className="h-7 text-xs font-semibold gap-1 hover:bg-primary/20 hover:text-primary"
-                    >
-                      <Sparkles className="w-3 h-3 text-amber-300" /> Research
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      )}
+              {/* Section Full Content (Rendered when expanded) */}
+              {isExpanded && (
+                <div className="mb-6 animate-in fade-in slide-in-from-top-2 duration-200">
+                  {config.renderContent()}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
 
       {/* ================= FULL TRADINGVIEW CHART MODAL FOR MACRO ASSETS ================= */}
       {chartModalSymbol && (
@@ -671,7 +1116,7 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
                     }}
                     className="h-8 text-xs font-bold gap-1 bg-primary hover:bg-primary/90 text-primary-foreground"
                   >
-                    <ExternalLink className="w-3.5 h-3.5" /> Open in Graphs Terminal
+                    <span>Open in Graphs Terminal</span>
                   </Button>
                 </div>
               </div>

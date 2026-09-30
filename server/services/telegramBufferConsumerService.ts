@@ -191,14 +191,75 @@ export interface ParsedExecutionTrade {
   targetExit?: number;
   conviction: string;
   notes?: string;
+  strategy?: string;
+  strikePrice?: number;
+  optionType?: 'CALL' | 'PUT';
+  expiration?: string;
 }
 
 const ORDER_KEYWORDS = new Set([
   'SL', 'TP', 'PT', 'BTO', 'BTC', 'STC', 'STO', 'MKT', 'QTY', 'DAY', 'DAILY',
   'WEEK', 'WEEKLY', 'SWING', 'INTRADAY', 'BUY', 'SELL', 'LONG', 'SHORT',
   'ENTRY', 'EXIT', 'TARGET', 'LIMIT', 'STOP', 'SHARES', 'CONTRACTS', 'CALL', 'PUT',
-  'CALLS', 'PUTS', 'ORDER', 'ORDERS', 'AT', 'PRICE', 'SIZE', 'FOR', 'AND', 'THE'
+  'CALLS', 'PUTS', 'ORDER', 'ORDERS', 'AT', 'PRICE', 'SIZE', 'FOR', 'AND', 'THE',
+  'COVERED', 'SECURED', 'CSP', 'SPREAD', 'SPREADS', 'CREDIT', 'DEBIT', 'COLLAR',
+  'CONDOR', 'IRON', 'WRITE', 'WRITES', 'BUYWRITE', 'NAKED', 'EXP', 'EXPIRY', 'EXPIRING',
+  'STRIKE', 'STRIKES', 'CTS', 'SHS', 'ON', 'IN', 'WITH'
 ]);
+
+/**
+ * Extracts strategy name from a trade record's notes, action, or symbol
+ */
+export function extractStrategyFromTrade(t: { notes?: string | null; action?: string; symbol?: string }): string | undefined {
+  if (t.notes) {
+    const match = t.notes.match(/\[Strategy:\s*([^\]]+)\]/i);
+    if (match) return match[1].trim();
+  }
+  if (t.action === 'COVERED_CALL') return 'Covered Call';
+  if (t.symbol && /covered call/i.test(t.symbol)) return 'Covered Call';
+  if (t.symbol && /short put/i.test(t.symbol)) return 'Short Put';
+  if (t.symbol && /cash-secured put/i.test(t.symbol)) return 'Cash-Secured Put';
+  return undefined;
+}
+
+/**
+ * Format confirmation message for a queued trade reflecting its strategy (Covered Call, Short Put, etc.)
+ */
+export function formatTelegramExecutionSummary(t: PlannedTradeItem, strategy?: string): string {
+  const strat = strategy || extractStrategyFromTrade(t);
+  const targetLabel = t.targetPrice ? ` @ $${t.targetPrice}` : '';
+
+  if (strat === 'Covered Call' || t.action === 'COVERED_CALL') {
+    const sharesQty = Math.round(t.quantity * 100);
+    const contractsQty = t.quantity;
+    return `• *Covered Call: ${sharesQty} Shares + ${contractsQty}x Short Call $${t.symbol}* (${t.orderType}) — *${t.timeframe} Queue* [Rank #${t.rank}]${targetLabel}`;
+  }
+
+  if (strat === 'Short Put' || strat === 'Cash-Secured Put') {
+    const contractsLabel = t.quantity === 1 ? '1 Contract' : `${t.quantity} Contracts`;
+    const priceLabel = t.targetPrice ? ` @ $${t.targetPrice} Premium` : '';
+    return `• *${strat}: ${contractsLabel} $${t.symbol}* (${t.orderType}) — *${t.timeframe} Queue* [Rank #${t.rank}]${priceLabel}`;
+  }
+
+  if (strat === 'Long Call' || strat === 'Long Put' || strat === 'Short Call') {
+    const contractsLabel = t.quantity === 1 ? '1 Contract' : `${t.quantity} Contracts`;
+    return `• *${strat}: ${contractsLabel} $${t.symbol}* (${t.orderType}) — *${t.timeframe} Queue* [Rank #${t.rank}]${targetLabel}`;
+  }
+
+  if (strat && strat !== 'Stock') {
+    const contractsLabel = t.quantity === 1 ? '1 Contract' : `${t.quantity} Contracts`;
+    return `• *${strat}: ${contractsLabel} $${t.symbol}* (${t.orderType}) — *${t.timeframe} Queue* [Rank #${t.rank}]${targetLabel}`;
+  }
+
+  if (t.assetType === 'OPTION') {
+    const contractsLabel = t.quantity === 1 ? '1 Contract' : `${t.quantity} Contracts`;
+    return `• *${t.action} ${contractsLabel} $${t.symbol}* (${t.orderType}) — *${t.timeframe} Queue* [Rank #${t.rank}]${targetLabel}`;
+  }
+
+  // Outright stock/equity
+  const sharesLabel = t.quantity === 1 ? '1 Share' : `${t.quantity} Shares`;
+  return `• *${t.action} ${sharesLabel} $${t.symbol}* (${t.orderType}) — *${t.timeframe} Queue* [Rank #${t.rank}]${targetLabel}`;
+}
 
 function parseSingleTradeExecutionLine(line: string, defaultTimeframe = 'DAY'): ParsedExecutionTrade[] {
   // Strip execution hashtags & topic directives & emojis
@@ -209,81 +270,210 @@ function parseSingleTradeExecutionLine(line: string, defaultTimeframe = 'DAY'): 
 
   if (!cleanLine) return [];
 
-  // 1. Check for Options syntax: e.g. "BTO 2 AAPL 250C 10/18 @ 4.50" or "SELL 1 TSLA 240P @ 3.20"
+  // 1. Detect Option Strategy
+  let strategy: string | undefined = undefined;
+  let assetType = 'STOCK';
+  let action = 'BUY';
+  let defaultQuantity = 100;
+  let detectedOptionType: 'CALL' | 'PUT' | undefined = undefined;
+
+  if (/\b(?:covered\s+calls?|buy[\s-]writes?|buywrite)\b/i.test(cleanLine)) {
+    strategy = 'Covered Call';
+    action = 'COVERED_CALL';
+    assetType = 'OPTION';
+    defaultQuantity = 1;
+    detectedOptionType = 'CALL';
+  } else if (/\b(?:cash[\s-]secured\s+puts?|csp)\b/i.test(cleanLine)) {
+    strategy = 'Cash-Secured Put';
+    action = 'STO';
+    assetType = 'OPTION';
+    defaultQuantity = 1;
+    detectedOptionType = 'PUT';
+  } else if (/\b(?:short\s+puts?|sell\s+puts?|sto\s+puts?)\b/i.test(cleanLine)) {
+    strategy = 'Short Put';
+    action = 'STO';
+    assetType = 'OPTION';
+    defaultQuantity = 1;
+    detectedOptionType = 'PUT';
+  } else if (/\b(?:short\s+calls?|naked\s+calls?|sell\s+calls?|sto\s+calls?)\b/i.test(cleanLine)) {
+    strategy = 'Short Call';
+    action = 'STO';
+    assetType = 'OPTION';
+    defaultQuantity = 1;
+    detectedOptionType = 'CALL';
+  } else if (/\b(?:long\s+calls?|buy\s+calls?|bto\s+calls?)\b/i.test(cleanLine)) {
+    strategy = 'Long Call';
+    action = 'BTO';
+    assetType = 'OPTION';
+    defaultQuantity = 1;
+    detectedOptionType = 'CALL';
+  } else if (/\b(?:long\s+puts?|buy\s+puts?|bto\s+puts?)\b/i.test(cleanLine)) {
+    strategy = 'Long Put';
+    action = 'BTO';
+    assetType = 'OPTION';
+    defaultQuantity = 1;
+    detectedOptionType = 'PUT';
+  } else if (/\b(?:bull\s+put\s+spread|put\s+credit\s+spread)\b/i.test(cleanLine)) {
+    strategy = 'Bull Put Spread';
+    action = 'STO';
+    assetType = 'OPTION';
+    defaultQuantity = 1;
+    detectedOptionType = 'PUT';
+  } else if (/\b(?:bear\s+call\s+spread|call\s+credit\s+spread)\b/i.test(cleanLine)) {
+    strategy = 'Bear Call Spread';
+    action = 'STO';
+    assetType = 'OPTION';
+    defaultQuantity = 1;
+    detectedOptionType = 'CALL';
+  } else if (/\b(?:bull\s+call\s+spread|call\s+debit\s+spread)\b/i.test(cleanLine)) {
+    strategy = 'Bull Call Spread';
+    action = 'BTO';
+    assetType = 'OPTION';
+    defaultQuantity = 1;
+    detectedOptionType = 'CALL';
+  } else if (/\b(?:bear\s+put\s+spread|put\s+debit\s+spread)\b/i.test(cleanLine)) {
+    strategy = 'Bear Put Spread';
+    action = 'BTO';
+    assetType = 'OPTION';
+    defaultQuantity = 1;
+    detectedOptionType = 'PUT';
+  } else if (/\bcredit\s+spread\b/i.test(cleanLine)) {
+    strategy = 'Credit Spread';
+    action = 'STO';
+    assetType = 'OPTION';
+    defaultQuantity = 1;
+  } else if (/\bdebit\s+spread\b/i.test(cleanLine)) {
+    strategy = 'Debit Spread';
+    action = 'BTO';
+    assetType = 'OPTION';
+    defaultQuantity = 1;
+  } else if (/\bvertical\s+spread\b/i.test(cleanLine)) {
+    strategy = 'Vertical Spread';
+    action = 'STO';
+    assetType = 'OPTION';
+    defaultQuantity = 1;
+  } else if (/\biron\s+condor\b/i.test(cleanLine)) {
+    strategy = 'Iron Condor';
+    action = 'STO';
+    assetType = 'OPTION';
+    defaultQuantity = 1;
+  } else if (/\b(?:protective\s+collar|collar)\b/i.test(cleanLine)) {
+    strategy = 'Protective Collar';
+    action = 'COLLAR';
+    assetType = 'OPTION';
+    defaultQuantity = 1;
+  }
+
+  // 2. Check for standard Options syntax: e.g. "BTO 2 AAPL 250C 10/18 @ 4.50" or "SELL 1 TSLA 240P @ 3.20"
   const optionRegex = /\b([A-Za-z]{1,5})\s+(\d+(?:\.\d+)?)\s*([CPcp])(?:all|ut)?(?:\s+(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?))?\b/i;
   const optionMatch = cleanLine.match(optionRegex);
 
-  let assetType = 'STOCK';
-  let symbol = '';
   let underlyingSymbol: string | undefined = undefined;
 
-  // Check explicit action
-  let action = 'BUY';
-  if (/\b(?:SELL|SHORT|STC|STO)\b/i.test(cleanLine)) {
-    action = 'SELL';
-    if (/\b(?:STO)\b/i.test(cleanLine)) action = 'STO';
-    else if (/\b(?:STC)\b/i.test(cleanLine)) action = 'STC';
-  } else if (/\b(?:BUY|LONG|BTO|BTC)\b/i.test(cleanLine)) {
-    action = 'BUY';
-    if (/\b(?:BTO)\b/i.test(cleanLine)) action = 'BTO';
-    else if (/\b(?:BTC)\b/i.test(cleanLine)) action = 'BTC';
+  // Determine action if not already set by strategy
+  if (!strategy) {
+    if (/\b(?:SELL|SHORT|STC|STO)\b/i.test(cleanLine)) {
+      action = 'SELL';
+      if (/\b(?:STO)\b/i.test(cleanLine)) action = 'STO';
+      else if (/\b(?:STC)\b/i.test(cleanLine)) action = 'STC';
+    } else if (/\b(?:BUY|LONG|BTO|BTC)\b/i.test(cleanLine)) {
+      action = 'BUY';
+      if (/\b(?:BTO)\b/i.test(cleanLine)) action = 'BTO';
+      else if (/\b(?:BTC)\b/i.test(cleanLine)) action = 'BTC';
+    }
   }
 
-  if (optionMatch) {
+  if (optionMatch && !ORDER_KEYWORDS.has(optionMatch[1].toUpperCase())) {
     assetType = 'OPTION';
+    defaultQuantity = 1;
     underlyingSymbol = optionMatch[1].toUpperCase();
-    const strike = optionMatch[2];
-    const optType = optionMatch[3].toUpperCase() === 'C' ? 'C' : 'P';
-    const expiry = optionMatch[4] ? ` ${optionMatch[4]}` : '';
-    symbol = `${underlyingSymbol} ${strike}${optType}${expiry}`;
-    if (action === 'BUY') action = 'BTO';
-    if (action === 'SELL') action = 'STC';
-  } else {
-    // Stock / ETF ticker extraction:
+    const optTypeLetter = optionMatch[3].toUpperCase() === 'C' ? 'C' : 'P';
+    detectedOptionType = optTypeLetter === 'C' ? 'CALL' : 'PUT';
+    if (!strategy) {
+      if (action === 'BUY' || action === 'BTO') {
+        action = 'BTO';
+        strategy = optTypeLetter === 'C' ? 'Long Call' : 'Long Put';
+      } else {
+        action = action === 'STO' ? 'STO' : 'STC';
+        strategy = optTypeLetter === 'C' ? 'Short Call' : 'Short Put';
+      }
+    }
+  }
+
+  // Ticker symbol extraction if not yet discovered:
+  if (!underlyingSymbol) {
     // (a) Match explicit $TICKER
     const dollarMatch = cleanLine.match(/\$([A-Za-z]{1,5})\b/);
     if (dollarMatch && !ORDER_KEYWORDS.has(dollarMatch[1].toUpperCase())) {
-      symbol = dollarMatch[1].toUpperCase();
+      underlyingSymbol = dollarMatch[1].toUpperCase();
     }
+  }
 
-    // (b) Match keyword-adjacent symbol: e.g. "BUY 100 AAPL" or "BUY AAPL" or "SELL TSLA"
-    if (!symbol) {
-      const verbAfterMatch = cleanLine.match(/\b(?:BUY|SELL|LONG|SHORT|BTO|BTC|STC|STO)\s+(?:(\d+(?:\.\d+)?)\s+)?([A-Za-z]{1,5})\b/i);
-      if (verbAfterMatch && !ORDER_KEYWORDS.has(verbAfterMatch[2].toUpperCase())) {
-        symbol = verbAfterMatch[2].toUpperCase();
-      }
+  if (!underlyingSymbol) {
+    // (b) Match preposition: "on AAPL" or "for TSLA"
+    const onMatch = cleanLine.match(/\b(?:on|for)\s+\$?([A-Za-z]{1,5})\b/i);
+    if (onMatch && !ORDER_KEYWORDS.has(onMatch[1].toUpperCase())) {
+      underlyingSymbol = onMatch[1].toUpperCase();
     }
+  }
 
-    // (c) Match symbol before verb: e.g. "AAPL BUY 100"
-    if (!symbol) {
-      const verbBeforeMatch = cleanLine.match(/\b([A-Za-z]{1,5})\s+(?:BUY|SELL|LONG|SHORT)\b/i);
-      if (verbBeforeMatch && !ORDER_KEYWORDS.has(verbBeforeMatch[1].toUpperCase())) {
-        symbol = verbBeforeMatch[1].toUpperCase();
-      }
+  if (!underlyingSymbol && strategy) {
+    // (c) Match adjacent after strategy: e.g. "short put AAPL 150", "covered call TSLA"
+    const stratAdjacentMatch = cleanLine.match(
+      /(?:covered\s+calls?|buy[\s-]writes?|buywrite|cash[\s-]secured\s+puts?|short\s+puts?|sell\s+puts?|sto\s+puts?|short\s+calls?|naked\s+calls?|sell\s+calls?|sto\s+calls?|long\s+calls?|buy\s+calls?|bto\s+calls?|long\s+puts?|buy\s+puts?|bto\s+puts?|csp|bull\s+put\s+spread|bear\s+call\s+spread|bull\s+call\s+spread|bear\s+put\s+spread|credit\s+spread|debit\s+spread|vertical\s+spread|iron\s+condor|protective\s+collar|collar)\s+(?:on\s+)?(?:\d+\s+(?:contracts?|shs?|x)\s+)?\$?([A-Za-z]{1,5})\b/i
+    );
+    if (stratAdjacentMatch && !ORDER_KEYWORDS.has(stratAdjacentMatch[1].toUpperCase())) {
+      underlyingSymbol = stratAdjacentMatch[1].toUpperCase();
     }
+  }
 
-    // (d) Fallback to extractSymbolsFromText
-    if (!symbol) {
-      const detected = extractSymbolsFromText(cleanLine);
-      const valid = detected.filter((s) => !ORDER_KEYWORDS.has(s.toUpperCase()));
-      if (valid.length > 0) {
-        symbol = valid[0];
-      }
+  if (!underlyingSymbol && strategy) {
+    // (d) Match symbol before strategy: e.g. "AAPL short put 150" or "AAPL covered call"
+    const symbolBeforeStratMatch = cleanLine.match(
+      /\$?([A-Za-z]{1,5})\s+(?:covered\s+call|buy[\s-]write|cash[\s-]secured|short\s+put|sell\s+put|sto\s+put|short\s+call|long\s+call|buy\s+call|long\s+put|buy\s+put|csp|spread|collar|iron\s+condor)\b/i
+    );
+    if (symbolBeforeStratMatch && !ORDER_KEYWORDS.has(symbolBeforeStratMatch[1].toUpperCase())) {
+      underlyingSymbol = symbolBeforeStratMatch[1].toUpperCase();
     }
+  }
 
-    // (e) Fallback for lowercase standalone or prefixed ticker: e.g. "sofi 16" or "pltr @ 35"
-    if (!symbol) {
-      const words = cleanLine.split(/[\s,@]+/).map((w) => w.replace(/[^A-Za-z]/g, '').toUpperCase()).filter(Boolean);
-      for (const w of words) {
-        if (w.length >= 2 && w.length <= 5 && !ORDER_KEYWORDS.has(w)) {
-          symbol = w;
-          break;
-        }
+  if (!underlyingSymbol) {
+    // (e) Match keyword-adjacent symbol: e.g. "BUY 100 AAPL" or "BUY AAPL" or "SELL TSLA"
+    const verbAfterMatch = cleanLine.match(/\b(?:BUY|SELL|LONG|SHORT|BTO|BTC|STC|STO)\s+(?:(\d+(?:\.\d+)?)\s+)?\$?([A-Za-z]{1,5})\b/i);
+    if (verbAfterMatch && !ORDER_KEYWORDS.has(verbAfterMatch[2].toUpperCase())) {
+      underlyingSymbol = verbAfterMatch[2].toUpperCase();
+    }
+  }
+
+  if (!underlyingSymbol) {
+    // (f) Match symbol before verb: e.g. "AAPL BUY 100"
+    const verbBeforeMatch = cleanLine.match(/\b([A-Za-z]{1,5})\s+(?:BUY|SELL|LONG|SHORT)\b/i);
+    if (verbBeforeMatch && !ORDER_KEYWORDS.has(verbBeforeMatch[1].toUpperCase())) {
+      underlyingSymbol = verbBeforeMatch[1].toUpperCase();
+    }
+  }
+
+  if (!underlyingSymbol) {
+    // (g) Fallback to extractSymbolsFromText
+    const detected = extractSymbolsFromText(cleanLine);
+    const valid = detected.filter((s) => !ORDER_KEYWORDS.has(s.toUpperCase()));
+    if (valid.length > 0) {
+      underlyingSymbol = valid[0];
+    }
+  }
+
+  if (!underlyingSymbol) {
+    // (h) Fallback for lowercase standalone or prefixed ticker: e.g. "sofi 16" or "pltr @ 35"
+    const words = cleanLine.split(/[\s,@]+/).map((w) => w.replace(/[^A-Za-z]/g, '').toUpperCase()).filter(Boolean);
+    for (const w of words) {
+      if (w.length >= 2 && w.length <= 5 && !ORDER_KEYWORDS.has(w)) {
+        underlyingSymbol = w;
+        break;
       }
     }
   }
 
-  if (!symbol) return [];
+  if (!underlyingSymbol) return [];
 
   // Determine timeframe: WEEK vs DAY
   let timeframe = defaultTimeframe;
@@ -302,25 +492,103 @@ function parseSingleTradeExecutionLine(line: string, defaultTimeframe = 'DAY'): 
   }
 
   // Determine quantity
-  let quantity = assetType === 'OPTION' ? 1 : 100;
-  const qtyMatch =
-    cleanLine.match(/(\d+(?:\.\d+)?)\s*(?:shares?|shs?|contracts?|units?|x)\b/i) ||
-    cleanLine.match(/(?:qty|quantity|size)[:\s]+(\d+(?:\.\d+)?)/i) ||
-    cleanLine.match(/(?:BUY|SELL|LONG|SHORT|BTO|BTC|STC|STO)\s+(\d+(?:\.\d+)?)\s+[A-Za-z]{1,5}\b/i) ||
-    cleanLine.match(new RegExp(`(?:${symbol})\\s+(\\d+(?:\\.\\d+)?)\\s*(?:@|at|limit)\\b`, 'i'));
+  let quantity = defaultQuantity;
+  if (strategy || assetType === 'OPTION') {
+    const optQtyMatch =
+      cleanLine.match(/(\d+(?:\.\d+)?)\s*(?:contracts?|cts?|x)\b/i) ||
+      cleanLine.match(/(?:qty|quantity|size)[:\s]+(\d+(?:\.\d+)?)/i) ||
+      cleanLine.match(/(\d+)\s*(?:short\s+puts?|covered\s+calls?|long\s+calls?|long\s+puts?|puts?|calls?|spreads?)\b/i) ||
+      cleanLine.match(/\b(?:BUY|SELL|BTO|BTC|STC|STO)\s+(\d+(?:\.\d+)?)\s+/i);
+    if (optQtyMatch && Number(optQtyMatch[1]) > 0) {
+      quantity = Number(optQtyMatch[1]);
+    }
+  } else {
+    const stockQtyMatch =
+      cleanLine.match(/(\d+(?:\.\d+)?)\s*(?:shares?|shs?|units?|x)\b/i) ||
+      cleanLine.match(/(?:qty|quantity|size)[:\s]+(\d+(?:\.\d+)?)/i) ||
+      cleanLine.match(/(?:BUY|SELL|LONG|SHORT|BTO|BTC|STC|STO)\s+(\d+(?:\.\d+)?)\s+[A-Za-z]{1,5}\b/i) ||
+      cleanLine.match(new RegExp(`(?:${underlyingSymbol})\\s+(\\d+(?:\\.\\d+)?)\\s*(?:@|at|limit)\\b`, 'i'));
+    if (stockQtyMatch && Number(stockQtyMatch[1]) > 0) {
+      quantity = Number(stockQtyMatch[1]);
+    }
+  }
 
-  if (qtyMatch && Number(qtyMatch[1]) > 0) {
-    quantity = Number(qtyMatch[1]);
+  // Determine expiration & strikes
+  let expiration: string | undefined = undefined;
+  const expMatch =
+    cleanLine.match(/\b(?:exp|expiry|expiring|dte)[:\s]+(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\d{1,3}d)\b/i) ||
+    cleanLine.match(/\b(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\b/);
+  if (expMatch) {
+    expiration = expMatch[1];
+  }
+
+  let strikePrice: number | undefined = undefined;
+  let spreadStrikes: string | undefined = undefined;
+
+  // Spread strikes pattern: e.g. 150/145 or 500/495
+  const spreadMatch = cleanLine.match(/\b(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)\b/);
+  if (spreadMatch) {
+    spreadStrikes = `${spreadMatch[1]}/${spreadMatch[2]}`;
+  }
+
+  // Explicit strike: "strike 150" or "strike: $150"
+  const explicitStrikeMatch = cleanLine.match(/\b(?:strike)[:\s]*\$?\s*(\d+(?:\.\d+)?)/i);
+  if (explicitStrikeMatch) {
+    strikePrice = Number(explicitStrikeMatch[1]);
+  }
+
+  // Strike with C/P suffix: e.g. "150P" or "250C"
+  if (!strikePrice) {
+    const cpStrikeMatch = cleanLine.match(/\b(\d+(?:\.\d+)?)\s*([CPcp])\b/);
+    if (cpStrikeMatch) {
+      strikePrice = Number(cpStrikeMatch[1]);
+      if (!detectedOptionType) {
+        detectedOptionType = cpStrikeMatch[2].toUpperCase() === 'C' ? 'CALL' : 'PUT';
+      }
+    }
+  }
+
+  // Option strike from optionMatch
+  if (!strikePrice && optionMatch) {
+    strikePrice = Number(optionMatch[2]);
+  }
+
+  // If strategy is present, strike is often adjacent to ticker: e.g. "short put AAPL 150" or "covered call AAPL 250"
+  if (!strikePrice && strategy && underlyingSymbol) {
+    const adjacentNumberMatch = cleanLine.match(new RegExp(`(?:${underlyingSymbol})\\s+\\$?\\s*(\\d+(?:\\.\\d+)?)\\b`, 'i'));
+    if (
+      adjacentNumberMatch &&
+      !cleanLine.match(new RegExp(`(?:${underlyingSymbol})\\s+${adjacentNumberMatch[1]}\\s*(?:shares?|shs?|units?|contracts?|cts?)`, 'i'))
+    ) {
+      strikePrice = Number(adjacentNumberMatch[1]);
+    }
+  }
+
+  // Also check "short put 150 AAPL" or "covered call 250 AAPL"
+  if (!strikePrice && strategy) {
+    const numBeforeTickerMatch = cleanLine.match(
+      /(?:short\s+put|covered\s+call|cash[\s-]secured\s+put|csp|long\s+call|long\s+put)\s+\$?(\d+(?:\.\d+)?)\s+[A-Za-z]{1,5}\b/i
+    );
+    if (numBeforeTickerMatch) {
+      strikePrice = Number(numBeforeTickerMatch[1]);
+    }
   }
 
   // Determine entry / limit price
   let targetPrice: number | undefined = undefined;
-  const priceMatch =
-    cleanLine.match(/(?:@|at|limit|entry|price)[:\s]*\$?\s*(\d+(?:\.\d+)?)/i) ||
-    cleanLine.match(/\$\s*(\d+(?:\.\d+)?)/);
+  const atPriceMatch = cleanLine.match(/(?:@|at|limit|entry|price|premium)[:\s]*\$?\s*(\d+(?:\.\d+)?)/i);
+  if (atPriceMatch && Number(atPriceMatch[1]) > 0) {
+    targetPrice = Number(atPriceMatch[1]);
+  } else if (!strikePrice) {
+    const dollarPriceMatch = cleanLine.match(/\$\s*(\d+(?:\.\d+)?)/);
+    if (dollarPriceMatch && Number(dollarPriceMatch[1]) > 0) {
+      targetPrice = Number(dollarPriceMatch[1]);
+    }
+  }
 
-  if (priceMatch && Number(priceMatch[1]) > 0) {
-    targetPrice = Number(priceMatch[1]);
+  // If strategy is present and strikePrice was not found from other patterns, the specified price is the strike (e.g. "short put on SOFI @ 10")
+  if (!strikePrice && strategy && targetPrice) {
+    strikePrice = targetPrice;
   }
 
   // Determine stop loss
@@ -345,10 +613,53 @@ function parseSingleTradeExecutionLine(line: string, defaultTimeframe = 'DAY'): 
     conviction = 'MEDIUM';
   }
 
+  // Formulate display symbol and notes
+  let symbol = '';
+  if (strategy === 'Covered Call') {
+    if (strikePrice) {
+      symbol = `${underlyingSymbol} ${strikePrice}C (Covered Call)`;
+    } else {
+      symbol = `${underlyingSymbol} Covered Call`;
+    }
+  } else if (strategy === 'Short Put' || strategy === 'Cash-Secured Put') {
+    if (strikePrice) {
+      symbol = `${underlyingSymbol} ${strikePrice}P${expiration ? ` ${expiration}` : ''}`;
+    } else {
+      symbol = `${underlyingSymbol} Put`;
+    }
+  } else if (strategy === 'Long Call' || strategy === 'Short Call') {
+    if (strikePrice) {
+      symbol = `${underlyingSymbol} ${strikePrice}C${expiration ? ` ${expiration}` : ''}`;
+    } else {
+      symbol = `${underlyingSymbol} Call`;
+    }
+  } else if (strategy === 'Long Put') {
+    if (strikePrice) {
+      symbol = `${underlyingSymbol} ${strikePrice}P${expiration ? ` ${expiration}` : ''}`;
+    } else {
+      symbol = `${underlyingSymbol} Put`;
+    }
+  } else if (spreadStrikes) {
+    symbol = `${underlyingSymbol} ${spreadStrikes} Spread`;
+  } else if (strategy) {
+    symbol = `${underlyingSymbol} ${strategy}`;
+  } else if (optionMatch) {
+    const optStrike = optionMatch[2];
+    const optTypeLetter = optionMatch[3].toUpperCase() === 'C' ? 'C' : 'P';
+    const optExp = optionMatch[4] ? ` ${optionMatch[4]}` : '';
+    symbol = `${underlyingSymbol} ${optStrike}${optTypeLetter}${optExp}`;
+  } else {
+    symbol = underlyingSymbol;
+  }
+
+  const notes = strategy
+    ? `[Strategy: ${strategy}]${strikePrice ? ` Strike: $${strikePrice}.` : ''} 📱 Telegram Execution Queue: "${cleanLine}"`
+    : cleanLine;
+
   return [
     {
       symbol,
-      underlyingSymbol: underlyingSymbol || symbol,
+      underlyingSymbol,
       action,
       assetType,
       timeframe,
@@ -358,7 +669,11 @@ function parseSingleTradeExecutionLine(line: string, defaultTimeframe = 'DAY'): 
       stopLoss,
       targetExit,
       conviction,
-      notes: cleanLine,
+      notes,
+      strategy,
+      strikePrice,
+      optionType: detectedOptionType,
+      expiration,
     },
   ];
 }
@@ -580,8 +895,9 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
 
       // If message is from Execution topic, automatically queue trades in the Daily & Weekly Trade Execution Queue
       const autoCreatedPlannedTrades: PlannedTradeItem[] = [];
+      let parsedTrades: ParsedExecutionTrade[] = [];
       if (isExecutionTopic) {
-        const parsedTrades = parseTradeExecutionCandidates(contentText);
+        parsedTrades = parseTradeExecutionCandidates(contentText);
         for (const pt of parsedTrades) {
           try {
             const created = await createPlannedTrade({
@@ -599,7 +915,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
               notes: pt.notes || `📱 Telegram Execution Queue: "${contentText.trim()}"`,
             }, prisma);
             autoCreatedPlannedTrades.push(created);
-            logToFile(`[TelegramBuffer] Created PlannedTrade #${created.rank}: ${created.action} ${created.quantity} ${created.symbol} in ${created.timeframe} execution queue`);
+            logToFile(`[TelegramBuffer] Created PlannedTrade #${created.rank}: ${pt.strategy ? `${pt.strategy} (${created.symbol})` : `${created.action} ${created.quantity} ${created.symbol}`} in ${created.timeframe} execution queue`);
           } catch (tradeErr: any) {
             logToFile(`[TelegramBuffer] Error creating PlannedTrade for ${pt.symbol}: ${tradeErr.message}`);
           }
@@ -609,7 +925,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         if (autoCreatedPlannedTrades.length > 0 && process.env.TELEGRAM_BOT_TOKEN) {
           try {
             const summaryLines = autoCreatedPlannedTrades.map(
-              (t) => `• *${t.action} ${t.quantity} $${t.symbol}* (${t.orderType}) — *${t.timeframe} Queue* [Rank #${t.rank}]${t.targetPrice ? ` @ $${t.targetPrice}` : ''}`
+              (t, idx) => formatTelegramExecutionSummary(t, parsedTrades[idx]?.strategy)
             ).join('\n');
             const replyText = `🎯 *Added to Tactical Execution Queue*\n\n${summaryLines}\n\n_Manage in Portfolio & Position Management Hub > Execution Queue._`;
             
@@ -731,7 +1047,13 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       } else if (isExecutionTopic) {
         if (autoCreatedPlannedTrades.length > 0) {
           const tradeSummaries = autoCreatedPlannedTrades
-            .map((t) => `${t.action} ${t.quantity} ${t.symbol}${t.targetPrice ? ` @ $${t.targetPrice}` : ''}`)
+            .map((t, idx) => {
+              const strat = parsedTrades[idx]?.strategy;
+              if (strat === 'Covered Call') return `Covered Call: ${Math.round(t.quantity * 100)}shs+${t.quantity}call ${t.symbol}`;
+              if (strat) return `${strat}: ${t.quantity}cts ${t.symbol}`;
+              if (t.assetType === 'OPTION') return `${t.action} ${t.quantity}cts ${t.symbol}`;
+              return `${t.action} ${t.quantity} ${t.symbol}${t.targetPrice ? ` @ $${t.targetPrice}` : ''}`;
+            })
             .join(', ');
           title = `🎯 ${tradeSummaries}`;
         } else {
@@ -770,10 +1092,14 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
                     ? (autoCreatedPlannedTrades.length > 0
                         ? `🎯 **Saved to Daily & Weekly Trade Execution Queue**\n\n` +
                           autoCreatedPlannedTrades
-                            .map((t) => `• **${t.action} ${t.quantity} $${t.symbol}** (${t.orderType}) — **${t.timeframe} Queue** (Rank #${t.rank}) [Status: ${t.status || 'PENDING'}]\n` +
-                                        (t.targetPrice ? `  - Target Entry: **$${t.targetPrice}**\n` : '') +
-                                        (t.stopLoss ? `  - Stop Loss: **$${t.stopLoss}**\n` : '') +
-                                        (t.targetExit ? `  - Target Exit: **$${t.targetExit}**\n` : ''))
+                            .map((t, idx) => {
+                              const strat = parsedTrades[idx]?.strategy;
+                              const summary = formatTelegramExecutionSummary(t, strat).replace(/^• \*/, '• **').replace(/\* \(/, '** (');
+                              return `${summary} [Status: ${t.status || 'PENDING'}]\n` +
+                                (t.targetPrice ? `  - Target Entry: **$${t.targetPrice}**\n` : '') +
+                                (t.stopLoss ? `  - Stop Loss: **$${t.stopLoss}**\n` : '') +
+                                (t.targetExit ? `  - Target Exit: **$${t.targetExit}**\n` : '');
+                            })
                             .join('\n') +
                           `\n*View and manage in Management > Execution Queue.*`
                         : `🎯 **Telegram Execution Topic**\n\nSaved in **Execution** folder. (No valid ticker symbol recognized to queue order).`)

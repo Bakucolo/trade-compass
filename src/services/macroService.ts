@@ -135,3 +135,105 @@ export function useYieldsAndBondsChart(timeframe: '1M' | '3M' | '6M' | '1Y' | '5
     refetchInterval: 60 * 1000,
   });
 }
+
+export interface FedFundsContractPoint {
+  symbol: string;
+  cleanSymbol: string;
+  tradingViewSymbol: string;
+  monthCode: string;
+  monthName: string;
+  monthNumber: number;
+  year: number;
+  expiryLabel: string;
+  fullMonthYear: string;
+  daysInMonth: number;
+  price: number;
+  prevClose: number;
+  priceChange: number;
+  impliedRate: number;
+  impliedRateChangeBps: number;
+  marginalBps: number;
+  marginalCuts: number;
+  cumulativeBpsFromSpot: number;
+  cumulativeCutsFromSpot: number;
+  cumulativeBpsFromFront: number;
+  cumulativeCutsFromFront: number;
+  hasFomc: boolean;
+  fomcMeeting?: {
+    date: string;
+    label: string;
+    dayOfMonth: number;
+    year: number;
+    month: number;
+  };
+  fomcImpliedStepBps?: number;
+  fomcProbabilities?: {
+    cut50: number;
+    cut25: number;
+    pause: number;
+    hike25: number;
+  };
+}
+
+export interface FedFundsCurveSummary {
+  currentEffr: number;
+  frontMonthRate: number;
+  frontMonthLabel: string;
+  troughRate: number;
+  troughExpiry: string;
+  peakRate: number;
+  peakExpiry: string;
+  curveSpread18M: number;
+  totalCutsCurrentYearBps: number;
+  totalCutsCurrentYearCount: number;
+  totalCutsNextYearBps: number;
+  totalCutsNextYearCount: number;
+  nextFomc?: {
+    date: string;
+    label: string;
+    daysUntil: number;
+    impliedMoveBps: number;
+    probabilities: {
+      cut50: number;
+      cut25: number;
+      pause: number;
+      hike25: number;
+    };
+  };
+  policyStance: 'AGGRESSIVE_EASING' | 'MEASURED_EASING' | 'NEUTRAL_HOLD' | 'TIGHTENING_HIKES' | 'STEEPENING_AFTER_CUTS';
+  policyHeadline: string;
+  policyNarrative: string;
+}
+
+export interface FedFundsCurveResponse {
+  timestamp: string;
+  contracts: FedFundsContractPoint[];
+  summary: FedFundsCurveSummary;
+  continuousZq: {
+    symbol: string;
+    price: number;
+    change: number;
+    changePercent: number;
+    impliedRate: number;
+  };
+}
+
+export async function fetchFedFundsCurve(forceRefresh = false): Promise<FedFundsCurveResponse> {
+  const query = forceRefresh ? '?refresh=true' : '';
+  const res = await fetch(`${API_BASE}/fed-funds-curve${query}`);
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || 'Failed to fetch Fed Funds curve');
+  }
+  return res.json();
+}
+
+export function useFedFundsCurve() {
+  return useQuery<FedFundsCurveResponse>({
+    queryKey: ['fedFundsCurve'],
+    queryFn: () => fetchFedFundsCurve(false),
+    staleTime: 30 * 1000,
+    refetchInterval: 60 * 1000,
+  });
+}
+

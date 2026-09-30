@@ -36,6 +36,25 @@ export const isTastySandbox = (): boolean => {
 };
 
 /**
+ * Inspects scopes embedded in the TASTY_REFRESH_TOKEN JWT
+ */
+export const getTastyTokenScopes = (): { rawScope: string; canTrade: boolean; canRead: boolean } => {
+    const refreshToken = process.env.TASTY_REFRESH_TOKEN;
+    if (refreshToken && refreshToken.includes('.')) {
+        try {
+            const parts = refreshToken.split('.');
+            const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf-8'));
+            const rawScope = payload.scope || 'read';
+            const scopes = rawScope.toLowerCase().split(/\s+/);
+            const canTrade = scopes.includes('trade') || rawScope.toLowerCase().includes('trade');
+            const canRead = scopes.includes('read') || rawScope.toLowerCase().includes('read');
+            return { rawScope, canTrade, canRead };
+        } catch {}
+    }
+    return { rawScope: 'unknown', canTrade: false, canRead: false };
+};
+
+/**
  * Returns sanitized config summary for UI and telemetry
  */
 export const getTastyConfigSummary = () => {
@@ -44,13 +63,17 @@ export const getTastyConfigSummary = () => {
     const accNumber = process.env.TASTY_ACCOUNT_NUMBER || 'Not configured';
     const hasRefreshToken = !!process.env.TASTY_REFRESH_TOKEN;
     const hasSecret = !!process.env.TASTY_CLIENT_SECRET;
+    const { rawScope, canTrade, canRead } = getTastyTokenScopes();
 
     return {
         baseUrl,
         isSandbox,
         accountNumber: accNumber,
         authenticated: hasRefreshToken && hasSecret,
-        environment: isSandbox ? 'Certification Sandbox / Safety Mode' : 'Production (Live Trades)'
+        environment: isSandbox ? 'Certification Sandbox / Safety Mode' : 'Production (Live Trades)',
+        scopes: rawScope,
+        canTrade,
+        canRead
     };
 };
 
@@ -397,6 +420,13 @@ export const submitTastyOrder = async (accountNumber: string, orderPayload: any)
         };
     }
 
+    const { canTrade, rawScope } = getTastyTokenScopes();
+    if (!canTrade) {
+        const scopeMsg = `Tastytrade OAuth token has insufficient permissions (current scope is '${rawScope}' - read-only). To execute live trades, go to my.tastytrade.com -> Manage -> My Profile -> API -> OAuth Applications, ensure the 'trade' scope is enabled, create a new Personal Grant, and update TASTY_REFRESH_TOKEN in .env.local.`;
+        console.error(`[Tastytrade Order Execution Error] ${scopeMsg}`);
+        throw new Error(scopeMsg);
+    }
+
     const token = await getTastyAccessToken();
     const baseUrl = getTastyBaseUrl();
 
@@ -415,7 +445,10 @@ export const submitTastyOrder = async (accountNumber: string, orderPayload: any)
 
     const data: any = await response.json().catch(() => ({}));
     if (!response.ok) {
-        const errMsg = data?.error?.message || `Order placement failed with status ${response.status}`;
+        let errMsg = data?.error?.message || `Order placement failed with status ${response.status}`;
+        if (errMsg.toLowerCase().includes('insufficient scopes') || errMsg.toLowerCase().includes('scope')) {
+            errMsg = `Tastytrade OAuth token has insufficient permissions (current scope is '${rawScope || 'read'}'). To execute live trades, go to my.tastytrade.com -> Manage -> My Profile -> API -> OAuth Applications, create a grant with 'trade' scope enabled, and update TASTY_REFRESH_TOKEN in .env.local.`;
+        }
         console.error(`[Tastytrade Order Execution Error] ${errMsg}`);
         throw new Error(errMsg);
     }

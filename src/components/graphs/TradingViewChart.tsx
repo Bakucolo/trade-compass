@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, memo } from 'react';
+import React, { useEffect, useRef, useMemo, memo } from 'react';
 
 interface TradingViewChartProps {
   symbol: string;
@@ -8,6 +8,8 @@ interface TradingViewChartProps {
   timeframe?: string;
   height?: number | string;
   className?: string;
+  showRsi?: boolean;
+  studies?: string[];
 }
 
 // Convert internal ticker conventions to TradingView format
@@ -18,6 +20,15 @@ export function formatTradingViewSymbol(symbol: string): string {
   // If already prefixed with exchange (e.g. NASDAQ:AAPL, NYSE:CCJ, AMEX:SPY, BINANCE:BTCUSDT)
   if (clean.includes(':')) {
     return clean;
+  }
+
+  // 30-Day Fed Funds Futures (ZQ)
+  if (clean === 'ZQ' || clean === 'ZQ!' || clean === 'ZQ1!' || clean === 'ZQ=F') {
+    return 'CBOT:ZQ1!';
+  }
+  if (clean.startsWith('ZQ') && (clean.endsWith('.CBT') || clean.length === 5)) {
+    const rawCode = clean.replace('.CBT', '');
+    return `CBOT:${rawCode}`;
   }
 
   // UK London Stock Exchange (.L)
@@ -114,12 +125,26 @@ function TradingViewChartComponent({
   timeframe,
   height,
   className = '',
+  showRsi = false,
+  studies,
 }: TradingViewChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartDivIdRef = useRef(`tv_chart_${Math.random().toString(36).substring(2, 9)}`);
 
   const tvSymbol = formatTradingViewSymbol(symbol);
   const chartInterval = interval || timeframe || 'D';
+
+  const activeStudies = useMemo(() => {
+    if (studies && Array.isArray(studies)) return studies;
+    const base = [
+      'MASimple@tv-basicstudies',
+      'Volume@tv-basicstudies'
+    ];
+    if (showRsi) {
+      base.push('RSI@tv-basicstudies');
+    }
+    return base;
+  }, [studies, showRsi]);
 
   useEffect(() => {
     const currentContainer = containerRef.current;
@@ -160,11 +185,7 @@ function TradingViewChartComponent({
             hide_side_toolbar: false,
             withdateranges: true,
             save_image: true,
-            studies: [
-              'MASimple@tv-basicstudies',
-              'RSI@tv-basicstudies',
-              'Volume@tv-basicstudies'
-            ],
+            studies: activeStudies,
             show_popup_button: true,
             popup_width: '1000',
             popup_height: '650',
@@ -213,7 +234,7 @@ function TradingViewChartComponent({
         currentContainer.innerHTML = '';
       }
     };
-  }, [tvSymbol, theme, chartInterval, autosize]);
+  }, [tvSymbol, theme, chartInterval, autosize, activeStudies]);
 
   return (
     <div

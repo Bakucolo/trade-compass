@@ -30,7 +30,10 @@ import {
   LineChart,
   ExternalLink,
   Search,
-  FolderPlus
+  FolderPlus,
+  Target,
+  TrendingUp,
+  Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -292,6 +295,29 @@ export function computePositionThreat(pos: UnifiedPosition): RankedThreatPositio
   };
 }
 
+/**
+ * Formats standard or compact OCC expiry dates (e.g. "20260918" or "2025-01-17")
+ * into human-readable format like "Sep 18, 2026".
+ */
+export function formatExpiryDate(expiryStr?: string | null): string {
+  if (!expiryStr) return '';
+  const clean = String(expiryStr).trim();
+  if (/^\d{8}$/.test(clean)) {
+    const y = clean.substring(0, 4);
+    const m = parseInt(clean.substring(4, 6), 10) - 1;
+    const d = parseInt(clean.substring(6, 8), 10);
+    const date = new Date(Number(y), m, d);
+    if (!isNaN(date.getTime())) {
+      return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+  }
+  const date = new Date(clean);
+  if (!isNaN(date.getTime())) {
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  return clean;
+}
+
 export function CriticalDefenseModal({
   isOpen,
   onClose,
@@ -304,11 +330,28 @@ export function CriticalDefenseModal({
   const [assetFilter, setAssetFilter] = useState<'ALL' | 'OPTIONS' | 'EQUITIES'>('OPTIONS');
   const [severityFilter, setSeverityFilter] = useState<'ALL' | 'EXTREME' | 'HIGH' | 'ITM_SHORTS'>('ALL');
   const [brokerFilter, setBrokerFilter] = useState<string>('ALL');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Position Direction (Long vs Short) and Option Type (Puts vs Calls) filters
+  const [sideFilter, setSideFilter] = useState<'ALL' | 'LONG' | 'SHORT'>('ALL');
+  const [optionTypeFilter, setOptionTypeFilter] = useState<'ALL' | 'PUTS' | 'CALLS'>('ALL');
+
+  const handleSetOptionTypeFilter = (type: 'ALL' | 'PUTS' | 'CALLS') => {
+    setOptionTypeFilter(prev => {
+      const next = prev === type ? 'ALL' : type;
+      if (next !== 'ALL' && assetFilter === 'EQUITIES') {
+        setAssetFilter('OPTIONS');
+      }
+      return next;
+    });
+  };
   
-  // Reset asset filter to 'OPTIONS' by default every time the modal is opened
+  // Reset filters when the modal is opened
   useEffect(() => {
     if (isOpen) {
       setAssetFilter('OPTIONS');
+      setSideFilter('ALL');
+      setOptionTypeFilter('ALL');
     }
   }, [isOpen]);
   
@@ -368,6 +411,10 @@ export function CriticalDefenseModal({
   const highOrExtremeCount = useMemo(() => rankedPositions.filter(p => p.threatLevel === 'EXTREME' || p.threatLevel === 'HIGH').length, [rankedPositions]);
   const itmShortOptionsCount = useMemo(() => rankedPositions.filter(p => p.position.assetType === 'Option' && p.position.quantity < 0 && p.isITM).length, [rankedPositions]);
   const nearExpiryCount = useMemo(() => rankedPositions.filter(p => p.daysToExpiry !== null && p.daysToExpiry <= 14).length, [rankedPositions]);
+  const longCount = useMemo(() => rankedPositions.filter(p => p.position.quantity > 0).length, [rankedPositions]);
+  const shortCount = useMemo(() => rankedPositions.filter(p => p.position.quantity < 0).length, [rankedPositions]);
+  const putsCount = useMemo(() => rankedPositions.filter(p => p.position.assetType === 'Option' && !isOptionCall(p.position)).length, [rankedPositions]);
+  const callsCount = useMemo(() => rankedPositions.filter(p => p.position.assetType === 'Option' && isOptionCall(p.position)).length, [rankedPositions]);
 
   // Toggle sort key or direction
   const handleSortChange = (key: 'THREAT' | 'DTE' | 'BROKER' | 'LOSS_DOLLARS' | 'LOSS_PCT') => {
@@ -399,10 +446,31 @@ export function CriticalDefenseModal({
       // 3. Broker filter
       if (brokerFilter !== 'ALL' && p.position.source !== brokerFilter) return false;
 
+      // 4. Quick Ticker Search
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toUpperCase();
+        const sym = (p.position.symbol || '').toUpperCase();
+        const und = (p.position.underlyingSymbol || '').toUpperCase();
+        const t212 = (p.position.ticker || '').toUpperCase();
+        if (!sym.includes(q) && !und.includes(q) && !t212.includes(q)) return false;
+      }
+
+      // 5. Position Side filter (Long vs Short)
+      if (sideFilter === 'LONG' && p.position.quantity <= 0) return false;
+      if (sideFilter === 'SHORT' && p.position.quantity >= 0) return false;
+
+      // 6. Option Type filter (Puts vs Calls)
+      if (optionTypeFilter === 'PUTS') {
+        if (p.position.assetType !== 'Option' || isOptionCall(p.position)) return false;
+      }
+      if (optionTypeFilter === 'CALLS') {
+        if (p.position.assetType !== 'Option' || !isOptionCall(p.position)) return false;
+      }
+
       return true;
     });
 
-    // 4. Sorting logic
+    // 5. Sorting logic
     result.sort((a, b) => {
       if (sortBy === 'BROKER') {
         const brokerComp = (a.position.source || '').localeCompare(b.position.source || '');
@@ -435,7 +503,7 @@ export function CriticalDefenseModal({
     });
 
     return result;
-  }, [rankedPositions, assetFilter, severityFilter, brokerFilter, sortBy, sortDirection]);
+  }, [rankedPositions, assetFilter, severityFilter, brokerFilter, searchQuery, sortBy, sortDirection, sideFilter, optionTypeFilter]);
 
   // Summary Metrics for the Defense Center
   const totalCapitalAtLoss = useMemo(() => {
@@ -504,21 +572,37 @@ export function CriticalDefenseModal({
 
           {/* KPI Summary Tiles */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-3 border-t border-border/40">
-            <div className="bg-card/60 border border-border/50 rounded-xl p-2.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Extreme Threats</span>
-              <p className="text-base font-bold font-mono text-rose-400 mt-0.5">{extremeThreatsCount} Positions</p>
+            <div className="bg-rose-950/20 border border-rose-500/30 rounded-xl p-3 flex flex-col justify-between shadow-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-rose-300/80">Extreme Threats</span>
+                <ShieldAlert className="w-4 h-4 text-rose-400" />
+              </div>
+              <p className="text-xl font-black font-mono text-rose-400 mt-1">{extremeThreatsCount} Positions</p>
+              <span className="text-[10px] text-muted-foreground mt-0.5">Immediate intervention</span>
             </div>
-            <div className="bg-card/60 border border-border/50 rounded-xl p-2.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">ITM Short Options</span>
-              <p className="text-base font-bold font-mono text-amber-400 mt-0.5">{itmShortOptionsCount} Contracts</p>
+            <div className="bg-amber-950/20 border border-amber-500/30 rounded-xl p-3 flex flex-col justify-between shadow-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-300/80">ITM Short Options</span>
+                <Target className="w-4 h-4 text-amber-400" />
+              </div>
+              <p className="text-xl font-black font-mono text-amber-400 mt-1">{itmShortOptionsCount} Contracts</p>
+              <span className="text-[10px] text-muted-foreground mt-0.5">Breached strike prices</span>
             </div>
-            <div className="bg-card/60 border border-border/50 rounded-xl p-2.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Expiring &le; 14 Days</span>
-              <p className="text-base font-bold font-mono text-purple-300 mt-0.5">{nearExpiryCount} Contracts</p>
+            <div className="bg-purple-950/20 border border-purple-500/30 rounded-xl p-3 flex flex-col justify-between shadow-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-purple-300/80">Expiring &le; 14 Days</span>
+                <Clock className="w-4 h-4 text-purple-400" />
+              </div>
+              <p className="text-xl font-black font-mono text-purple-300 mt-1">{nearExpiryCount} Contracts</p>
+              <span className="text-[10px] text-muted-foreground mt-0.5">Accelerated gamma zone</span>
             </div>
-            <div className="bg-card/60 border border-border/50 rounded-xl p-2.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Total Drawdown</span>
-              <p className="text-base font-bold font-mono text-rose-400 mt-0.5">-${Math.abs(totalCapitalAtLoss).toFixed(2)}</p>
+            <div className="bg-rose-950/20 border border-rose-500/30 rounded-xl p-3 flex flex-col justify-between shadow-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-rose-300/80">Total Drawdown</span>
+                <TrendingDown className="w-4 h-4 text-rose-400" />
+              </div>
+              <p className="text-xl font-black font-mono text-rose-400 mt-1">-${Math.abs(totalCapitalAtLoss).toFixed(2)}</p>
+              <span className="text-[10px] text-muted-foreground mt-0.5">Unrealized position loss</span>
             </div>
           </div>
 
@@ -555,15 +639,163 @@ export function CriticalDefenseModal({
               </div>
             </div>
 
-            {/* Row 2: Severity Filter & Sorting Selector */}
+            {/* Row 2: Position Direction (Long/Short) & Option Contract Type (Puts/Calls) */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
               
+              {/* Position Direction (Long vs Short) */}
               <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-xs text-muted-foreground font-semibold shrink-0 mr-1">Severity:</span>
+                <span className="text-xs text-muted-foreground font-semibold flex items-center gap-1 shrink-0 mr-1">
+                  <TrendingUp className="w-3.5 h-3.5 text-emerald-400" /> Side:
+                </span>
                 <div className="flex p-0.5 bg-slate-950/60 rounded-lg border border-border/50">
-                  <Button variant="ghost" size="sm" onClick={() => setSeverityFilter('ALL')} className={cn("h-7 px-2 text-xs font-semibold rounded-md", severityFilter === 'ALL' ? "bg-rose-500/20 text-rose-300" : "text-muted-foreground")}>All Tiers</Button>
-                  <Button variant="ghost" size="sm" onClick={() => setSeverityFilter('EXTREME')} className={cn("h-7 px-2 text-xs font-semibold rounded-md", severityFilter === 'EXTREME' ? "bg-rose-500/25 text-rose-300" : "text-muted-foreground")}>Extreme</Button>
-                  <Button variant="ghost" size="sm" onClick={() => setSeverityFilter('HIGH')} className={cn("h-7 px-2 text-xs font-semibold rounded-md", severityFilter === 'HIGH' ? "bg-amber-500/20 text-amber-300" : "text-muted-foreground")}>High+</Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSideFilter('ALL')}
+                    data-testid="filter-side-all"
+                    className={cn(
+                      "h-7 px-2.5 text-xs font-semibold rounded-md transition-colors",
+                      sideFilter === 'ALL'
+                        ? "bg-rose-500/20 text-rose-300 font-bold"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    All Sides
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSideFilter(prev => prev === 'LONG' ? 'ALL' : 'LONG')}
+                    data-testid="filter-long"
+                    className={cn(
+                      "h-7 px-2.5 text-xs font-semibold rounded-md transition-colors flex items-center gap-1",
+                      sideFilter === 'LONG'
+                        ? "bg-emerald-500/25 text-emerald-300 font-bold border border-emerald-500/40 shadow-xs"
+                        : "text-muted-foreground hover:text-emerald-300"
+                    )}
+                    title="Filter to Long positions (quantity > 0)"
+                  >
+                    <ArrowUp className="w-3 h-3 text-emerald-400" />
+                    <span>Long ({longCount})</span>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSideFilter(prev => prev === 'SHORT' ? 'ALL' : 'SHORT')}
+                    data-testid="filter-short"
+                    className={cn(
+                      "h-7 px-2.5 text-xs font-semibold rounded-md transition-colors flex items-center gap-1",
+                      sideFilter === 'SHORT'
+                        ? "bg-rose-500/25 text-rose-300 font-bold border border-rose-500/40 shadow-xs"
+                        : "text-muted-foreground hover:text-rose-300"
+                    )}
+                    title="Filter to Short positions (quantity < 0)"
+                  >
+                    <ArrowDown className="w-3 h-3 text-rose-400" />
+                    <span>Short ({shortCount})</span>
+                  </Button>
+                </div>
+              </div>
+
+              {/* Option Contract Type (Puts vs Calls) */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs text-muted-foreground font-semibold flex items-center gap-1 shrink-0 mr-1">
+                  <Zap className="w-3.5 h-3.5 text-amber-400" /> Contract:
+                </span>
+                <div className="flex p-0.5 bg-slate-950/60 rounded-lg border border-border/50">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setOptionTypeFilter('ALL')}
+                    data-testid="filter-type-all"
+                    className={cn(
+                      "h-7 px-2.5 text-xs font-semibold rounded-md transition-colors",
+                      optionTypeFilter === 'ALL'
+                        ? "bg-rose-500/20 text-rose-300 font-bold"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    All Types
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleSetOptionTypeFilter('PUTS')}
+                    data-testid="filter-puts"
+                    className={cn(
+                      "h-7 px-2.5 text-xs font-semibold rounded-md transition-colors flex items-center gap-1",
+                      optionTypeFilter === 'PUTS'
+                        ? "bg-amber-500/25 text-amber-300 font-bold border border-amber-500/40 shadow-xs"
+                        : "text-muted-foreground hover:text-amber-300"
+                    )}
+                    title="Filter to Put contracts"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+                    <span>Puts ({putsCount})</span>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleSetOptionTypeFilter('CALLS')}
+                    data-testid="filter-calls"
+                    className={cn(
+                      "h-7 px-2.5 text-xs font-semibold rounded-md transition-colors flex items-center gap-1",
+                      optionTypeFilter === 'CALLS'
+                        ? "bg-indigo-500/25 text-indigo-300 font-bold border border-indigo-500/40 shadow-xs"
+                        : "text-muted-foreground hover:text-indigo-300"
+                    )}
+                    title="Filter to Call contracts"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 inline-block" />
+                    <span>Calls ({callsCount})</span>
+                  </Button>
+                </div>
+
+                {/* Reset button if either side or contract filter is active */}
+                {(sideFilter !== 'ALL' || optionTypeFilter !== 'ALL') && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => { setSideFilter('ALL'); setOptionTypeFilter('ALL'); }}
+                    data-testid="filter-clear-side-type"
+                    className="h-7 px-2 text-[11px] text-muted-foreground hover:text-rose-300 flex items-center gap-1 cursor-pointer"
+                    title="Clear side and contract filters"
+                  >
+                    <span className="text-slate-400">Clear</span>
+                    <span className="text-rose-400 font-bold font-mono">
+                      {sideFilter !== 'ALL' ? (sideFilter === 'LONG' ? 'Long' : 'Short') : ''}
+                      {sideFilter !== 'ALL' && optionTypeFilter !== 'ALL' ? ' ' : ''}
+                      {optionTypeFilter !== 'ALL' ? (optionTypeFilter === 'PUTS' ? 'Puts' : 'Calls') : ''}
+                    </span>
+                    <span>✕</span>
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {/* Row 3: Severity Filter, Quick Ticker Search & Sorting Selector */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+              
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs text-muted-foreground font-semibold shrink-0 mr-1">Severity:</span>
+                  <div className="flex p-0.5 bg-slate-950/60 rounded-lg border border-border/50">
+                    <Button variant="ghost" size="sm" onClick={() => setSeverityFilter('ALL')} className={cn("h-7 px-2 text-xs font-semibold rounded-md", severityFilter === 'ALL' ? "bg-rose-500/20 text-rose-300" : "text-muted-foreground")}>All Tiers</Button>
+                    <Button variant="ghost" size="sm" onClick={() => setSeverityFilter('EXTREME')} className={cn("h-7 px-2 text-xs font-semibold rounded-md", severityFilter === 'EXTREME' ? "bg-rose-500/25 text-rose-300" : "text-muted-foreground")}>Extreme</Button>
+                    <Button variant="ghost" size="sm" onClick={() => setSeverityFilter('HIGH')} className={cn("h-7 px-2 text-xs font-semibold rounded-md", severityFilter === 'HIGH' ? "bg-amber-500/20 text-amber-300" : "text-muted-foreground")}>High+</Button>
+                  </div>
+                </div>
+
+                {/* Quick Search Ticker Input */}
+                <div className="relative w-36 sm:w-44">
+                  <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="text"
+                    placeholder="Filter ticker..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full h-7 pl-7 pr-2 bg-slate-950/70 border border-border/60 rounded-lg text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/60 transition-colors"
+                  />
                 </div>
               </div>
 
@@ -627,11 +859,22 @@ export function CriticalDefenseModal({
                 }
               }
               const isShort = pos.quantity < 0;
-              const isOption = pos.assetType === 'Option';
+              const isOption = pos.assetType === 'Option' || pos.assetType === 'OPTION';
+              const isCall = isOptionCall(pos);
+              const optTypeLabel = isCall ? 'CALL' : 'PUT';
+
+              const hasValidUnderlying = typeof pos.underlyingPrice === 'number' && pos.underlyingPrice > 0;
+              const hasValidStrike = typeof pos.strike === 'number' && pos.strike > 0;
+              const dollarDiff = (hasValidUnderlying && hasValidStrike) ? Math.abs(pos.underlyingPrice! - pos.strike!) : null;
+              const formattedExpiry = formatExpiryDate(pos.expiry);
+
+              const strategyLabel = isOption
+                ? (isShort ? (isCall ? 'Short Call' : 'Short Put') : (isCall ? 'Long Call' : 'Long Put'))
+                : (isShort ? 'Short Stock' : 'Long Shares');
 
               const rankBadgeClass =
                 threat.threatLevel === 'EXTREME'
-                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 shadow-[0_0_10px_rgba(244,63,94,0.2)]'
+                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 shadow-[0_0_12px_rgba(244,63,94,0.3)]'
                   : threat.threatLevel === 'HIGH'
                   ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                   : 'bg-muted/40 text-muted-foreground border-border/50';
@@ -640,60 +883,56 @@ export function CriticalDefenseModal({
                 <Card
                   key={pos.id || index}
                   className={cn(
-                    "border transition-all duration-200 shadow-md relative overflow-hidden group",
+                    "border transition-all duration-200 shadow-xl relative overflow-hidden group rounded-2xl",
                     threat.threatLevel === 'EXTREME'
-                      ? "bg-rose-950/15 border-rose-500/40 hover:border-rose-500/60"
+                      ? "bg-gradient-to-b from-rose-950/25 via-slate-900/90 to-slate-950/95 border-rose-500/50 hover:border-rose-500/80 shadow-[0_4px_28px_rgba(244,63,94,0.14)] ring-1 ring-rose-500/20"
                       : threat.threatLevel === 'HIGH'
-                      ? "bg-amber-950/10 border-amber-500/30 hover:border-amber-500/50"
-                      : "bg-card/50 border-border/60 hover:border-border"
+                      ? "bg-gradient-to-b from-amber-950/20 via-slate-900/90 to-slate-950/95 border-amber-500/40 hover:border-amber-500/70 shadow-[0_4px_24px_rgba(245,158,11,0.1)] ring-1 ring-amber-500/20"
+                      : "bg-gradient-to-b from-slate-900/70 via-slate-900/90 to-slate-950/95 border-border/70 hover:border-border shadow-md"
                   )}
                 >
-                  {/* Left Color Indicator Bar */}
+                  {/* Left Accent Threat Bar */}
                   <div
                     className={cn(
-                      "absolute top-0 left-0 bottom-0 w-1.5",
+                      "absolute top-0 left-0 bottom-0 w-2",
                       threat.threatLevel === 'EXTREME'
-                        ? "bg-rose-500"
+                        ? "bg-gradient-to-b from-rose-500 to-red-600 shadow-[0_0_12px_rgba(244,63,94,0.8)]"
                         : threat.threatLevel === 'HIGH'
-                        ? "bg-amber-500"
+                        ? "bg-gradient-to-b from-amber-500 to-orange-500 shadow-[0_0_10px_rgba(245,158,11,0.6)]"
                         : "bg-purple-500"
                     )}
                   />
 
-                  <CardContent className="p-5 pl-5 space-y-3">
+                  <CardContent className="p-5 sm:p-6 pl-6 sm:pl-7 space-y-4">
                     
-                    {/* Top Row: Rank, Symbol, Threat Badge, Actions */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    {/* Top Row: Rank, Strategy, Broker, Action Buttons */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-border/40">
                       
                       <div className="flex items-center gap-2.5 flex-wrap">
-                        {/* Rank Badge */}
-                        <Badge className={cn("text-xs font-mono font-black px-2 py-0.5 border", rankBadgeClass)}>
+                        {/* Threat Level Badge */}
+                        <Badge className={cn("text-xs font-mono font-black px-2.5 py-0.5 border shadow-sm", rankBadgeClass)}>
                           #{index + 1} {threat.threatLevel} THREAT (Score: {threat.threatScore})
                         </Badge>
 
-                        {/* Symbol Badge - Clickable to Research Station */}
-                        <button
-                          type="button"
-                          onClick={(e) => handleGoToResearch(e, cleanBase)}
-                          className="inline-flex items-center gap-1.5 bg-primary/20 hover:bg-primary/35 active:scale-95 text-primary hover:text-white border border-primary/40 hover:border-primary/70 font-mono font-black text-sm px-2.5 py-0.5 rounded-full transition-all cursor-pointer shadow-sm group/sym"
-                          title={`Click to open ${cleanBase} in deep-dive Research Station`}
-                        >
-                          <span>${cleanBase}</span>
-                          <ExternalLink className="w-3 h-3 opacity-60 group-hover/sym:opacity-100 transition-opacity" />
-                        </button>
-
-                        <Badge variant="outline" className="text-xs uppercase font-semibold">
-                          {pos.assetType} • {pos.source}
+                        {/* Strategy Pill */}
+                        <Badge variant="outline" className={cn(
+                          "text-xs font-bold font-mono px-2 py-0.5 border",
+                          isShort ? "bg-rose-500/10 text-rose-300 border-rose-500/30" : "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
+                        )}>
+                          {strategyLabel}
                         </Badge>
 
-                        {isOption && pos.strike && (
-                          <Badge variant="secondary" className="text-xs font-mono font-bold">
-                            ${pos.strike} {pos.optionType || 'Option'}
-                          </Badge>
-                        )}
+                        {/* Broker Pill */}
+                        <Badge variant="outline" className="text-xs font-semibold px-2 py-0.5 bg-slate-950/60 border-border/60 text-slate-300">
+                          <span className={cn(
+                            "w-1.5 h-1.5 rounded-full mr-1.5 inline-block",
+                            pos.source === 'Tastytrade' ? "bg-rose-400" : pos.source === 'IBKR' ? "bg-amber-400" : "bg-sky-400"
+                          )} />
+                          {pos.source}
+                        </Badge>
                       </div>
 
-                      {/* Right Action: Graph, Watchlist, Arm Alerts & Open AI Defense Advisor Modal */}
+                      {/* Right Action Buttons */}
                       <div className="flex items-center gap-2 self-end sm:self-center shrink-0 flex-wrap">
                         {/* Graph / Chart Button */}
                         <Button
@@ -743,7 +982,7 @@ export function CriticalDefenseModal({
                             onClose();
                             onOpenAdvisorForPosition(pos);
                           }}
-                          className="h-8 text-xs px-3 font-bold gap-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-md"
+                          className="h-8 text-xs px-3 font-bold gap-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-md active:scale-95"
                         >
                           <Sparkles className="w-3.5 h-3.5 text-amber-300" />
                           <span>AI Defense Plan</span>
@@ -752,107 +991,400 @@ export function CriticalDefenseModal({
                       </div>
                     </div>
 
-                    {/* Threat Reason Callout Banner */}
-                    <div className={cn(
-                      "p-2.5 rounded-xl border text-xs font-semibold flex items-center gap-2",
-                      threat.threatLevel === 'EXTREME'
-                        ? "bg-rose-950/25 border-rose-500/35 text-rose-200"
-                        : "bg-amber-950/20 border-amber-500/30 text-amber-200"
-                    )}>
-                      <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
-                      <span>{threat.threatReason}</span>
+                    {/* ======================================================== */}
+                    {/* HIGHLIGHTED TACTICAL HUD: TICKER, MONEYNESS, DTE, P&L   */}
+                    {/* ======================================================== */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                      
+                      {/* TILE 1: TICKER & CONTRACT SPECIFICATION (HIGHLIGHTED) */}
+                      <div className="bg-slate-900/80 hover:bg-slate-900 border border-slate-700/70 hover:border-primary/60 rounded-2xl p-4 flex flex-col justify-between transition-all shadow-md group/tile">
+                        <div>
+                          <div className="flex items-center justify-between gap-1.5 mb-2">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                              Target Ticker
+                            </span>
+                            <Badge variant="outline" className={cn(
+                              "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border",
+                              isShort ? "bg-rose-500/15 text-rose-300 border-rose-500/30" : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                            )}>
+                              {isOption ? (isShort ? 'Short Opt' : 'Long Opt') : (isShort ? 'Short Stk' : 'Long Stk')}
+                            </Badge>
+                          </div>
+
+                          {/* Standout Clickable Ticker Button */}
+                          <button
+                            type="button"
+                            onClick={(e) => handleGoToResearch(e, cleanBase)}
+                            className="inline-flex items-center justify-between w-full bg-slate-950/80 hover:bg-primary/20 active:scale-95 text-foreground hover:text-white border border-primary/50 hover:border-primary/80 px-3.5 py-2 rounded-xl transition-all cursor-pointer shadow-md group/sym ring-1 ring-primary/20"
+                            title={`Click to open ${cleanBase} in deep-dive Research Station`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-black text-2xl tracking-tight text-white group-hover/sym:text-primary transition-colors">
+                                ${cleanBase}
+                              </span>
+                              {isOption && pos.strike && (
+                                <span className={cn(
+                                  "text-xs font-mono font-black px-2 py-0.5 rounded-md border",
+                                  isCall
+                                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                                    : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                                )}>
+                                  ${pos.strike} {optTypeLabel}
+                                </span>
+                              )}
+                            </div>
+                            <ExternalLink className="w-4 h-4 text-primary/70 group-hover/sym:text-primary transition-opacity shrink-0" />
+                          </button>
+                        </div>
+
+                        {/* Sizing & Strike/Spot Details */}
+                        <div className="mt-3 pt-2.5 border-t border-border/40 space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground font-medium">Position Size:</span>
+                            <span className={cn("font-mono font-bold", isShort ? "text-rose-400" : "text-emerald-400")}>
+                              {pos.quantity > 0 ? `+${pos.quantity}` : pos.quantity} {isOption ? (Math.abs(pos.quantity) === 1 ? 'Contract' : 'Contracts') : 'Shares'}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground font-medium">{isOption ? 'Spot vs Strike:' : 'Market Price:'}</span>
+                            <span className="font-mono font-bold text-foreground">
+                              {isOption ? (
+                                pos.strike && pos.underlyingPrice && pos.underlyingPrice > 0 ? (
+                                  <span>${pos.underlyingPrice.toFixed(2)} <span className="text-muted-foreground">➔</span> ${pos.strike}</span>
+                                ) : pos.strike ? (
+                                  <span>Strike: ${pos.strike}</span>
+                                ) : (
+                                  <span>${pos.currentPrice.toFixed(2)}</span>
+                                )
+                              ) : (
+                                <span>${pos.currentPrice.toFixed(2)}</span>
+                              )}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* TILE 2: MONEYNESS & DISTANCE (HERO HIGHLIGHT) */}
+                      <div className={cn(
+                        "rounded-2xl p-4 flex flex-col justify-between border transition-all shadow-md relative overflow-hidden",
+                        !isOption
+                          ? "bg-slate-900/80 border-slate-700/70"
+                          : threat.isITM
+                          ? "bg-gradient-to-br from-rose-950/50 via-rose-900/30 to-slate-950 border-rose-500/60 shadow-[0_0_24px_rgba(244,63,94,0.22)] ring-1 ring-rose-500/30"
+                          : threat.distancePct <= 3.5
+                          ? "bg-gradient-to-br from-amber-950/45 via-amber-900/25 to-slate-950 border-amber-500/60 shadow-[0_0_20px_rgba(245,158,11,0.2)] ring-1 ring-amber-500/30"
+                          : threat.distancePct <= 8.0
+                          ? "bg-gradient-to-br from-amber-950/30 via-slate-900/40 to-slate-950 border-amber-500/40"
+                          : "bg-gradient-to-br from-emerald-950/30 via-slate-900/40 to-slate-950 border-emerald-500/40"
+                      )}>
+                        <div>
+                          <div className="flex items-center justify-between gap-1.5 mb-1.5">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                              <Target className="w-3.5 h-3.5 text-rose-400" /> Moneyness & Distance
+                            </span>
+                            {isOption && (
+                              <Badge className={cn(
+                                "text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border shadow-sm",
+                                threat.isITM
+                                  ? "bg-rose-500/30 text-rose-200 border-rose-500/50 animate-pulse"
+                                  : threat.distancePct <= 3.5
+                                  ? "bg-amber-500/30 text-amber-200 border-amber-500/50"
+                                  : threat.distancePct <= 8.0
+                                  ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                                  : "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                              )}>
+                                {threat.isITM ? '🚨 ITM BREACH' : threat.distancePct <= 3.5 ? '⚠️ TESTED' : threat.distancePct <= 8.0 ? '⚡ APPROACHING' : '🛡️ SAFE OTM'}
+                              </Badge>
+                            )}
+                          </div>
+
+                          {/* Primary Distance Metric */}
+                          <div className="mt-1">
+                            {isOption ? (
+                              threat.distancePct !== Infinity ? (
+                                <div>
+                                  <div className="flex items-baseline gap-1.5">
+                                    <span className={cn(
+                                      "font-mono font-black text-2xl sm:text-3xl tracking-tight",
+                                      threat.isITM
+                                        ? "text-rose-200"
+                                        : threat.distancePct <= 3.5
+                                        ? "text-amber-300"
+                                        : threat.distancePct <= 8.0
+                                        ? "text-amber-200"
+                                        : "text-emerald-300"
+                                    )}>
+                                      {threat.isITM ? `-${threat.distancePct.toFixed(1)}%` : `${threat.distancePct.toFixed(1)}%`}
+                                    </span>
+                                    <span className={cn(
+                                      "text-xs font-bold uppercase tracking-wider",
+                                      threat.isITM ? "text-rose-300" : "text-slate-300"
+                                    )}>
+                                      {threat.isITM ? 'In The Money' : 'Buffer'}
+                                    </span>
+                                  </div>
+
+                                  <p className="text-[11px] font-medium text-slate-300 mt-1">
+                                    {dollarDiff !== null ? (
+                                      threat.isITM
+                                        ? `Breached by $${dollarDiff.toFixed(2)} beyond strike`
+                                        : `$${dollarDiff.toFixed(2)} buffer remaining before strike`
+                                    ) : (
+                                      threat.isITM ? 'Strike price has been breached' : 'Distance from active strike'
+                                    )}
+                                  </p>
+                                </div>
+                              ) : plPercent >= 70 ? (
+                                <div>
+                                  <span className="font-mono font-black text-2xl text-emerald-300">OTM</span>
+                                  <p className="text-[11px] font-medium text-emerald-400/90 mt-1">High Decay Profit (&ge;70%)</p>
+                                </div>
+                              ) : (
+                                <div>
+                                  <span className="font-mono font-black text-2xl text-slate-300">OTM</span>
+                                  <p className="text-[11px] font-medium text-muted-foreground mt-1">Strike buffer intact</p>
+                                </div>
+                              )
+                            ) : (
+                              <div>
+                                <div className="flex items-baseline gap-1.5">
+                                  <span className={cn(
+                                    "font-mono font-black text-2xl sm:text-3xl tracking-tight",
+                                    pl < 0 ? "text-rose-300" : "text-emerald-300"
+                                  )}>
+                                    ${pos.currentPrice.toFixed(2)}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] font-medium text-muted-foreground mt-1">
+                                  Avg Cost: ${pos.averageCost?.toFixed(2) || '0.00'}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Visual Progress / Buffer Meter for Options */}
+                        {isOption && threat.distancePct !== Infinity && (
+                          <div className="mt-3 pt-2 border-t border-border/40">
+                            <div className="w-full bg-slate-950/80 rounded-full h-2 overflow-hidden border border-border/50 relative">
+                              <div
+                                className={cn(
+                                  "h-full rounded-full transition-all duration-300",
+                                  threat.isITM
+                                    ? "w-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]"
+                                    : threat.distancePct <= 3.5
+                                    ? "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)]"
+                                    : threat.distancePct <= 8.0
+                                    ? "bg-amber-400"
+                                    : "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
+                                )}
+                                style={{
+                                  width: threat.isITM ? '100%' : `${Math.min(100, Math.max(10, threat.distancePct * 5))}%`
+                                }}
+                              />
+                            </div>
+                            <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-1 font-mono">
+                              <span>{threat.isITM ? 'Breach Depth' : '0% (At Strike)'}</span>
+                              <span>{threat.isITM ? 'Assignment Danger' : 'Buffer Safety'}</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* TILE 3: EXPIRATION & DTE (HERO HIGHLIGHT) */}
+                      <div className={cn(
+                        "rounded-2xl p-4 flex flex-col justify-between border transition-all shadow-md relative overflow-hidden",
+                        !isOption
+                          ? "bg-slate-900/80 border-slate-700/70"
+                          : threat.daysToExpiry === 0
+                          ? "bg-gradient-to-br from-rose-950/60 via-rose-900/40 to-slate-950 border-rose-500/70 shadow-[0_0_24px_rgba(244,63,94,0.3)] animate-pulse ring-1 ring-rose-500/40"
+                          : threat.daysToExpiry !== null && threat.daysToExpiry <= 3
+                          ? "bg-gradient-to-br from-rose-950/40 via-slate-900/40 to-slate-950 border-rose-500/50 shadow-[0_0_18px_rgba(244,63,94,0.18)]"
+                          : threat.daysToExpiry !== null && threat.daysToExpiry <= 7
+                          ? "bg-gradient-to-br from-amber-950/40 via-slate-900/40 to-slate-950 border-amber-500/50 shadow-[0_0_18px_rgba(245,158,11,0.18)]"
+                          : threat.daysToExpiry !== null && threat.daysToExpiry <= 14
+                          ? "bg-gradient-to-br from-amber-950/25 via-slate-900/40 to-slate-950 border-amber-500/35"
+                          : "bg-gradient-to-br from-purple-950/30 via-slate-900/40 to-slate-950 border-purple-500/35"
+                      )}>
+                        <div>
+                          <div className="flex items-center justify-between gap-1.5 mb-1.5">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                              <Clock className="w-3.5 h-3.5 text-purple-400" /> Expiration & DTE
+                            </span>
+                            {isOption && threat.daysToExpiry !== null && (
+                              <Badge className={cn(
+                                "text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border shadow-sm",
+                                threat.daysToExpiry === 0
+                                  ? "bg-rose-600 text-white border-rose-400"
+                                  : threat.daysToExpiry <= 3
+                                  ? "bg-rose-500/30 text-rose-200 border-rose-500/50"
+                                  : threat.daysToExpiry <= 7
+                                  ? "bg-amber-500/30 text-amber-200 border-amber-500/50"
+                                  : threat.daysToExpiry <= 14
+                                  ? "bg-amber-500/20 text-amber-300 border-amber-500/35"
+                                  : "bg-purple-500/20 text-purple-300 border-purple-500/35"
+                              )}>
+                                {threat.daysToExpiry === 0
+                                  ? '🔥 0 DTE'
+                                  : threat.daysToExpiry <= 3
+                                  ? '⚡ CRITICAL GAMMA'
+                                  : threat.daysToExpiry <= 7
+                                  ? '⏳ HIGH GAMMA'
+                                  : threat.daysToExpiry <= 14
+                                  ? '📅 2-WEEK WARNING'
+                                  : '📆 ACTIVE HORIZON'}
+                              </Badge>
+                            )}
+                          </div>
+
+                          {/* Big DTE Number */}
+                          <div className="mt-1">
+                            {threat.daysToExpiry !== null ? (
+                              <div>
+                                <div className="flex items-baseline gap-1.5">
+                                  <span className={cn(
+                                    "font-mono font-black text-2xl sm:text-3xl tracking-tight",
+                                    threat.daysToExpiry === 0
+                                      ? "text-rose-100"
+                                      : threat.daysToExpiry <= 3
+                                      ? "text-rose-300"
+                                      : threat.daysToExpiry <= 7
+                                      ? "text-amber-300"
+                                      : threat.daysToExpiry <= 14
+                                      ? "text-amber-200"
+                                      : "text-purple-300"
+                                  )}>
+                                    {threat.daysToExpiry}
+                                  </span>
+                                  <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                                    {threat.daysToExpiry === 1 ? 'Day Left' : 'Days to Expiry'}
+                                  </span>
+                                </div>
+
+                                <p className="text-[11px] font-medium text-slate-300 mt-1">
+                                  {threat.daysToExpiry === 0
+                                    ? 'Expires today at market close'
+                                    : formattedExpiry
+                                    ? `Expiring on ${formattedExpiry}`
+                                    : `${threat.daysToExpiry} calendar days remaining`}
+                                </p>
+                              </div>
+                            ) : (
+                              <div>
+                                <span className="font-mono font-black text-xl text-slate-300">
+                                  {isOption ? 'EXPIRED' : 'PERPETUAL'}
+                                </span>
+                                <p className="text-[11px] font-medium text-muted-foreground mt-1">
+                                  {isOption ? 'Position settlement pending' : 'Equity shares (No expiration)'}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* DTE Time Horizon Meter */}
+                        {isOption && threat.daysToExpiry !== null && (
+                          <div className="mt-3 pt-2 border-t border-border/40">
+                            <div className="w-full bg-slate-950/80 rounded-full h-2 overflow-hidden border border-border/50 relative">
+                              <div
+                                className={cn(
+                                  "h-full rounded-full transition-all duration-300",
+                                  threat.daysToExpiry === 0
+                                    ? "w-full bg-rose-600 shadow-[0_0_8px_rgba(244,63,94,0.8)]"
+                                    : threat.daysToExpiry <= 3
+                                    ? "bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]"
+                                    : threat.daysToExpiry <= 7
+                                    ? "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)]"
+                                    : threat.daysToExpiry <= 14
+                                    ? "bg-amber-400"
+                                    : "bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.5)]"
+                                )}
+                                style={{
+                                  width: threat.daysToExpiry === 0
+                                    ? '100%'
+                                    : `${Math.min(100, Math.max(10, (1 - Math.min(threat.daysToExpiry, 45) / 45) * 100))}%`
+                                }}
+                              />
+                            </div>
+                            <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-1 font-mono">
+                              <span>Far Out (45d+)</span>
+                              <span>Expiration Close</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* TILE 4: OPEN P&L & CAPITAL IMPACT (PRESERVES EXACT TEST ASSERTIONS) */}
+                      <div className="bg-slate-900/80 hover:bg-slate-900 border border-slate-700/70 rounded-2xl p-4 flex flex-col justify-between transition-all shadow-md">
+                        <div>
+                          <div className="flex items-center justify-between gap-1.5 mb-1.5">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                              <TrendingDown className={cn("w-3.5 h-3.5", pl < 0 ? "text-rose-400" : "text-emerald-400")} /> Open P&L
+                            </span>
+                            <Badge className={cn(
+                              "text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border shadow-sm",
+                              pl >= 0
+                                ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                                : "bg-rose-500/20 text-rose-300 border-rose-500/40"
+                            )}>
+                              {pl >= 0 ? 'PROFIT' : 'DRAWDOWN'}
+                            </Badge>
+                          </div>
+
+                          {/* Dollar & Percent P&L */}
+                          <div className="mt-1">
+                            <div className="flex items-baseline gap-1.5 flex-wrap">
+                              <span className={cn(
+                                "font-mono font-black text-2xl sm:text-3xl tracking-tight",
+                                pl >= 0 ? "text-emerald-400" : "text-rose-400"
+                              )}>
+                                {pl >= 0 ? '+' : '-'}${Math.abs(pl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                              <span className={cn(
+                                "text-xs font-mono font-black px-1.5 py-0.5 rounded-md",
+                                pl >= 0 ? "bg-emerald-500/20 text-emerald-300" : "bg-rose-500/20 text-rose-300"
+                              )}>
+                                ({plPercent >= 0 ? '+' : ''}{plPercent.toFixed(1)}%)
+                              </span>
+                            </div>
+
+                            <p className="text-[11px] font-medium text-slate-300 mt-1">
+                              Cost: ${pos.averageCost?.toFixed(2) || '0.00'} • Price: ${pos.currentPrice?.toFixed(2) || '0.00'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Market Value Footer */}
+                        <div className="mt-3 pt-2.5 border-t border-border/40 flex items-center justify-between text-xs">
+                          <span className="text-muted-foreground font-medium">Market Value:</span>
+                          <span className="font-mono font-bold text-foreground">
+                            ${Math.abs(pos.marketValue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </div>
+
                     </div>
 
-                    {/* Detailed Position Metrics Grid */}
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-xs">
-                      
-                      {/* Position & Qty */}
-                      <div className="bg-card/70 border border-border/50 rounded-xl p-2.5">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Position Qty</span>
-                        <p className={cn("font-mono font-bold mt-0.5", isShort ? "text-rose-400" : "text-slate-200")}>
-                          {pos.quantity > 0 ? `+${pos.quantity}` : pos.quantity} {isOption ? 'x100' : 'Shares'}
-                        </p>
-                      </div>
-
-                      {/* Underlying vs Strike */}
-                      <div className="bg-card/70 border border-border/50 rounded-xl p-2.5">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                          {isOption ? 'Strike vs Und.' : 'Market Price'}
+                    {/* Threat Driver Reason Callout Banner */}
+                    <div className={cn(
+                      "p-3 rounded-xl border text-xs font-semibold flex items-center gap-2.5 shadow-sm transition-all",
+                      threat.threatLevel === 'EXTREME'
+                        ? "bg-rose-950/30 border-rose-500/40 text-rose-200"
+                        : threat.threatLevel === 'HIGH'
+                        ? "bg-amber-950/25 border-amber-500/35 text-amber-200"
+                        : "bg-slate-900/60 border-border/60 text-slate-300"
+                    )}>
+                      <ShieldAlert className={cn(
+                        "w-4 h-4 shrink-0",
+                        threat.threatLevel === 'EXTREME' ? "text-rose-400" : "text-amber-400"
+                      )} />
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-[10px] uppercase tracking-wider bg-black/40 px-2 py-0.5 rounded border border-white/10 text-slate-300">
+                          Threat Drivers:
                         </span>
-                        <p className="font-mono font-bold mt-0.5 text-foreground">
-                          {isOption && pos.strike && pos.underlyingPrice && pos.underlyingPrice > 0 ? (
-                            <span>${pos.strike} vs <span className="text-slate-300">${pos.underlyingPrice.toFixed(2)}</span></span>
-                          ) : isOption && pos.strike ? (
-                            <span>Strike: ${pos.strike}</span>
-                          ) : (
-                            <span>${pos.currentPrice.toFixed(2)}</span>
-                          )}
-                        </p>
+                        <span>{threat.threatReason}</span>
                       </div>
-
-                      {/* Distance / ITM Status */}
-                      <div className="bg-card/70 border border-border/50 rounded-xl p-2.5">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">Moneyness & Distance</span>
-                        <div className="mt-0.5">
-                          {isOption ? (
-                            threat.distancePct !== Infinity ? (
-                              <span className={cn(
-                                "font-mono font-black text-xs px-2 py-0.5 rounded-md inline-block",
-                                threat.isITM
-                                  ? "bg-rose-500/25 text-rose-200 border border-rose-500/40"
-                                  : threat.distancePct <= 3.0
-                                  ? "bg-amber-500/25 text-amber-200 border border-amber-500/40"
-                                  : threat.distancePct <= 8.0
-                                  ? "bg-amber-500/15 text-amber-300 border border-amber-500/30"
-                                  : "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
-                              )}>
-                                {threat.isITM ? `ITM (${threat.distancePct.toFixed(1)}% breach)` : `OTM (${threat.distancePct.toFixed(1)}% away)`}
-                              </span>
-                            ) : plPercent >= 70 ? (
-                              <span className="font-mono font-bold text-xs px-2 py-0.5 rounded-md inline-block bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                                OTM (High Decay Profit)
-                              </span>
-                            ) : (
-                              <span className="font-mono text-xs text-muted-foreground">OTM Buffer</span>
-                            )
-                          ) : (
-                            <span className="font-mono font-bold text-foreground">${pos.currentPrice.toFixed(2)}</span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* DTE & Expiration */}
-                      <div className="bg-card/70 border border-border/50 rounded-xl p-2.5">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">Expiration & DTE</span>
-                        <div className="mt-0.5">
-                          {threat.daysToExpiry !== null ? (
-                            <span className={cn(
-                              "font-mono font-bold text-xs px-2 py-0.5 rounded-md inline-block",
-                              threat.daysToExpiry === 0 ? "bg-rose-600 text-white font-black animate-pulse" :
-                              threat.daysToExpiry <= 3 ? "bg-rose-500/20 text-rose-300 border border-rose-500/40" :
-                              threat.daysToExpiry <= 14 ? "bg-amber-500/20 text-amber-300 border border-amber-500/40" :
-                              "bg-purple-500/15 text-purple-300 border border-purple-500/30"
-                            )}>
-                              {threat.daysToExpiry === 0 ? 'Expires Today' : `${threat.daysToExpiry}d left`}
-                            </span>
-                          ) : (
-                            <span className="font-mono text-muted-foreground text-xs">{isOption ? 'Expired' : 'Equity'}</span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Total Open P&L */}
-                      <div className="bg-card/70 border border-border/50 rounded-xl p-2.5 col-span-2 sm:col-span-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Open P&L</span>
-                        <p className={cn(
-                          "font-mono font-bold mt-0.5",
-                          pl >= 0 ? "text-emerald-400" : "text-rose-400"
-                        )}>
-                          {pl >= 0 ? '+' : '-'}${Math.abs(pl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          <span className="text-[10px] ml-1 font-semibold">({plPercent >= 0 ? '+' : ''}{plPercent.toFixed(1)}%)</span>
-                        </p>
-                      </div>
-
                     </div>
 
                   </CardContent>

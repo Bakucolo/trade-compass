@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { consumeTelegramBuffer, parseTradeExecutionCandidates } from '../../server/services/telegramBufferConsumerService';
+import { consumeTelegramBuffer, parseTradeExecutionCandidates, formatTelegramExecutionSummary } from '../../server/services/telegramBufferConsumerService';
 
 describe('Telegram Execution Topic Ingestion & Trade Queue Processing', () => {
   const originalFetch = global.fetch;
@@ -270,5 +270,241 @@ describe('Telegram Execution Topic Ingestion & Trade Queue Processing', () => {
     expect(mockPlannedTrades[0].quantity).toBe(200);
     expect(mockPlannedTrades[0].targetPrice).toBe(175);
     expect(mockCreatedThoughtLogs[0].folder).toBe('Execution');
+  });
+
+  it('correctly parses option strategies (short put, covered call, cash-secured put, spreads) and avoids defaulting to BUY 100 shares', () => {
+    // 1. Short Put: short put AAPL 150
+    const spTrade = parseTradeExecutionCandidates('short put AAPL 150');
+    expect(spTrade).toHaveLength(1);
+    expect(spTrade[0].symbol).toBe('AAPL 150P');
+    expect(spTrade[0].underlyingSymbol).toBe('AAPL');
+    expect(spTrade[0].strategy).toBe('Short Put');
+    expect(spTrade[0].action).toBe('STO');
+    expect(spTrade[0].assetType).toBe('OPTION');
+    expect(spTrade[0].quantity).toBe(1); // 1 contract, NOT 100 shares!
+    expect(spTrade[0].strikePrice).toBe(150);
+
+    // 2. Covered Call: covered call AAPL 250
+    const ccTrade = parseTradeExecutionCandidates('covered call AAPL 250');
+    expect(ccTrade).toHaveLength(1);
+    expect(ccTrade[0].symbol).toBe('AAPL 250C (Covered Call)');
+    expect(ccTrade[0].underlyingSymbol).toBe('AAPL');
+    expect(ccTrade[0].strategy).toBe('Covered Call');
+    expect(ccTrade[0].action).toBe('COVERED_CALL');
+    expect(ccTrade[0].assetType).toBe('OPTION');
+    expect(ccTrade[0].quantity).toBe(1);
+    expect(ccTrade[0].strikePrice).toBe(250);
+
+    // 3. Covered Call without strike: covered call on TSLA
+    const ccTradeNoStrike = parseTradeExecutionCandidates('covered call on TSLA');
+    expect(ccTradeNoStrike).toHaveLength(1);
+    expect(ccTradeNoStrike[0].symbol).toBe('TSLA Covered Call');
+    expect(ccTradeNoStrike[0].underlyingSymbol).toBe('TSLA');
+    expect(ccTradeNoStrike[0].strategy).toBe('Covered Call');
+    expect(ccTradeNoStrike[0].quantity).toBe(1);
+
+    // 4. Cash-Secured Put: cash secured put NVDA 120
+    const cspTrade = parseTradeExecutionCandidates('cash secured put NVDA 120');
+    expect(cspTrade).toHaveLength(1);
+    expect(cspTrade[0].symbol).toBe('NVDA 120P');
+    expect(cspTrade[0].underlyingSymbol).toBe('NVDA');
+    expect(cspTrade[0].strategy).toBe('Cash-Secured Put');
+    expect(cspTrade[0].action).toBe('STO');
+    expect(cspTrade[0].quantity).toBe(1);
+    expect(cspTrade[0].strikePrice).toBe(120);
+
+    // 5. Short Put with preposition: short put on SOFI @ 10
+    const spPreposition = parseTradeExecutionCandidates('short put on SOFI @ 10');
+    expect(spPreposition).toHaveLength(1);
+    expect(spPreposition[0].symbol).toBe('SOFI 10P');
+    expect(spPreposition[0].underlyingSymbol).toBe('SOFI');
+    expect(spPreposition[0].strategy).toBe('Short Put');
+    expect(spPreposition[0].quantity).toBe(1);
+
+    // 6. Bull Put Spread: bull put spread AAPL 150/145
+    const spreadTrade = parseTradeExecutionCandidates('bull put spread AAPL 150/145');
+    expect(spreadTrade).toHaveLength(1);
+    expect(spreadTrade[0].symbol).toBe('AAPL 150/145 Spread');
+    expect(spreadTrade[0].underlyingSymbol).toBe('AAPL');
+    expect(spreadTrade[0].strategy).toBe('Bull Put Spread');
+    expect(spreadTrade[0].action).toBe('STO');
+    expect(spreadTrade[0].quantity).toBe(1);
+
+    // 7. Multi-contract: 3 short puts AMD 140
+    const multiContract = parseTradeExecutionCandidates('3 short puts AMD 140');
+    expect(multiContract).toHaveLength(1);
+    expect(multiContract[0].symbol).toBe('AMD 140P');
+    expect(multiContract[0].underlyingSymbol).toBe('AMD');
+    expect(multiContract[0].strategy).toBe('Short Put');
+    expect(multiContract[0].quantity).toBe(3);
+  });
+
+  it('formats Telegram execution confirmation responses with strategy names instead of generic BUY 100', () => {
+    // 1. Short Put confirmation formatting
+    const spSummary = formatTelegramExecutionSummary({
+      id: 'pt-1',
+      symbol: 'AAPL 150P',
+      underlyingSymbol: 'AAPL',
+      action: 'STO',
+      assetType: 'OPTION',
+      timeframe: 'DAY',
+      orderType: 'LIMIT',
+      quantity: 1,
+      targetPrice: 2.50,
+      conviction: 'HIGH',
+      rank: 1,
+      status: 'PENDING',
+      notes: '[Strategy: Short Put] Strike: $150',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }, 'Short Put');
+
+    expect(spSummary).toContain('Short Put: 1 Contract $AAPL 150P');
+    expect(spSummary).toContain('@ $2.5 Premium');
+    expect(spSummary).not.toContain('BUY 100');
+    expect(spSummary).not.toContain('SELL 100');
+
+    // 2. Covered Call confirmation formatting
+    const ccSummary = formatTelegramExecutionSummary({
+      id: 'pt-2',
+      symbol: 'AAPL 250C (Covered Call)',
+      underlyingSymbol: 'AAPL',
+      action: 'COVERED_CALL',
+      assetType: 'OPTION',
+      timeframe: 'DAY',
+      orderType: 'LIMIT',
+      quantity: 1,
+      conviction: 'HIGH',
+      rank: 2,
+      status: 'PENDING',
+      notes: '[Strategy: Covered Call] Strike: $250',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }, 'Covered Call');
+
+    expect(ccSummary).toContain('Covered Call: 100 Shares + 1x Short Call $AAPL 250C (Covered Call)');
+    expect(ccSummary).not.toContain('BUY 100 $AAPL');
+
+    // 3. Cash-Secured Put confirmation formatting
+    const cspSummary = formatTelegramExecutionSummary({
+      id: 'pt-3',
+      symbol: 'NVDA 120P',
+      underlyingSymbol: 'NVDA',
+      action: 'STO',
+      assetType: 'OPTION',
+      timeframe: 'DAY',
+      orderType: 'LIMIT',
+      quantity: 2,
+      conviction: 'HIGH',
+      rank: 3,
+      status: 'PENDING',
+      notes: '[Strategy: Cash-Secured Put]',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }, 'Cash-Secured Put');
+
+    expect(cspSummary).toContain('Cash-Secured Put: 2 Contracts $NVDA 120P');
+    expect(cspSummary).not.toContain('BUY 100');
+
+    // 4. Outright Stock confirmation formatting
+    const stockSummary = formatTelegramExecutionSummary({
+      id: 'pt-4',
+      symbol: 'MSFT',
+      underlyingSymbol: 'MSFT',
+      action: 'BUY',
+      assetType: 'STOCK',
+      timeframe: 'DAY',
+      orderType: 'LIMIT',
+      quantity: 100,
+      targetPrice: 420,
+      conviction: 'HIGH',
+      rank: 4,
+      status: 'PENDING',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    expect(stockSummary).toContain('BUY 100 Shares $MSFT');
+  });
+
+  it('dispatches confirmation message with strategy when receiving short put or covered call via execution topic', async () => {
+    process.env.TELEGRAM_BOT_TOKEN = 'mock_bot_token_123';
+    const mockMessages = [
+      {
+        id: 'msg_exec_strategy',
+        messageId: 701,
+        messageThreadId: 5,
+        isTopicMessage: true,
+        topicName: 'Execution',
+        type: 'text',
+        text: 'short put AAPL 150',
+        date: Math.floor(Date.now() / 1000),
+        timestamp: new Date().toISOString(),
+        sender: { id: 9999, username: 'trader_exec' },
+        chat: { id: -1003872409872, type: 'supergroup' },
+      },
+    ];
+
+    let dispatchedTelegramBody: any = null;
+    global.fetch = vi.fn().mockImplementation(async (url: string, init?: any) => {
+      if (url.includes('/consume')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            count: 1,
+            messages: mockMessages,
+          }),
+        };
+      }
+      if (url.includes('api.telegram.org')) {
+        if (init?.body) {
+          dispatchedTelegramBody = JSON.parse(init.body);
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, result: { message_id: 888 } }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+
+    const mockPlannedTrades: any[] = [];
+    const mockCreatedThoughtLogs: any[] = [];
+
+    const mockPrisma: any = {
+      plannedTrade: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        findMany: vi.fn().mockResolvedValue([]),
+        create: vi.fn().mockImplementation(async ({ data }: any) => {
+          const record = { id: 'pt-strat-1', rank: 1, ...data };
+          mockPlannedTrades.push(record);
+          return record;
+        }),
+      },
+      thoughtLog: {
+        create: vi.fn().mockImplementation(async ({ data }: any) => {
+          mockCreatedThoughtLogs.push(data);
+          return { id: 'tl-strat-1', ...data };
+        }),
+      },
+    };
+
+    const result = await consumeTelegramBuffer(mockPrisma);
+
+    expect(result.success).toBe(true);
+    expect(mockPlannedTrades.length).toBe(1);
+    expect(mockPlannedTrades[0].symbol).toBe('AAPL 150P');
+    expect(mockPlannedTrades[0].action).toBe('STO');
+    expect(mockPlannedTrades[0].quantity).toBe(1);
+    expect(mockPlannedTrades[0].notes).toContain('Short Put');
+
+    // Verify Telegram dispatched reply contains strategy name and NOT "BUY 100"
+    expect(dispatchedTelegramBody).not.toBeNull();
+    expect(dispatchedTelegramBody.text).toContain('Short Put: 1 Contract $AAPL 150P');
+    expect(dispatchedTelegramBody.text).not.toContain('BUY 100');
+    expect(dispatchedTelegramBody.text).not.toContain('SELL 100');
   });
 });

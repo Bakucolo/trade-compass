@@ -279,6 +279,9 @@ export const fetchTastyEnvironment = async (): Promise<{
     accountNumber: string;
     authenticated: boolean;
     environment: string;
+    scopes?: string;
+    canTrade?: boolean;
+    canRead?: boolean;
 }> => {
     const response = await fetch(`${API_BASE}/environment`);
     if (!response.ok) throw new Error('Failed to fetch Tastytrade environment');

@@ -328,17 +328,27 @@ export function PlannedTradeModal({ isOpen, onClose, tradeToEdit }: PlannedTrade
               <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Order Action
               </Label>
-              <div className="grid grid-cols-4 gap-1 p-1 bg-muted/40 rounded-xl border border-border/50">
+              <div className="grid grid-cols-6 gap-1 p-1 bg-muted/40 rounded-xl border border-border/50">
                 {[
                   { id: 'BUY', label: 'BUY', color: 'bg-emerald-600 text-white' },
                   { id: 'SELL', label: 'SELL', color: 'bg-rose-600 text-white' },
                   { id: 'SHORT', label: 'SHORT', color: 'bg-amber-600 text-white' },
                   { id: 'BTO', label: 'BTO', color: 'bg-purple-600 text-white' },
+                  { id: 'STO', label: 'STO', color: 'bg-indigo-600 text-white' },
+                  { id: 'COVERED_CALL', label: 'CC', color: 'bg-cyan-600 text-white' },
                 ].map((act) => (
                   <button
                     key={act.id}
                     type="button"
-                    onClick={() => setAction(act.id)}
+                    onClick={() => {
+                      setAction(act.id);
+                      if (act.id === 'BTO' || act.id === 'STO' || act.id === 'COVERED_CALL') {
+                        setAssetType('OPTION');
+                        if (act.id === 'COVERED_CALL' || act.id === 'STO' || act.id === 'BTO') {
+                          setQuantity('1');
+                        }
+                      }
+                    }}
                     className={cn(
                       'py-1.5 rounded-lg text-xs font-bold transition-all text-center',
                       action === act.id

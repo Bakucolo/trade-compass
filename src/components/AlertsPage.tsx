@@ -28,6 +28,8 @@ import {
   ShieldAlert,
   X,
   FolderPlus,
+  Check,
+  LineChart,
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -70,14 +72,24 @@ type StatusFilter = 'ALL' | 'ACTIVE' | 'TRIGGERED' | 'MUTED' | 'SHORT_DEFENSE';
 
 interface AlertsPageProps {
   onNavigateToResearch?: (symbol: string) => void;
+  onNavigateToGraphs?: (symbol: string) => void;
 }
 
-export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
+export function AlertsPage({ onNavigateToResearch, onNavigateToGraphs }: AlertsPageProps) {
   const { toast } = useToast();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const debouncedSearchQuery = useDebounce(searchQuery, 250);
   const [sortOption, setSortOption] = useState<SortOption>('triggered_desc');
+
+  // Quick filter toggle when clicking overview cards
+  const handleCardFilterClick = (target: StatusFilter) => {
+    if (target === 'ALL') {
+      setStatusFilter('ALL');
+    } else {
+      setStatusFilter((prev) => (prev === target ? 'ALL' : target));
+    }
+  };
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -356,6 +368,23 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
     }
   };
 
+  const handleOpenGraphs = (symbol: string) => {
+    if (!symbol) return;
+    const clean = symbol.trim().toUpperCase();
+    const targetUrl = `/?tab=graphs&symbol=${encodeURIComponent(clean)}`;
+    try {
+      window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    } catch (err) {
+      console.error('Failed to open graph in new window:', err);
+    }
+    // Also dispatch event and notify in case listener is in current window
+    if (onNavigateToGraphs) {
+      onNavigateToGraphs(clean);
+    } else {
+      window.dispatchEvent(new CustomEvent('select-graphs-ticker', { detail: clean }));
+    }
+  };
+
   const handleSyncShortOptions = async () => {
     try {
       const res = await syncShortAlertsMutation.mutateAsync();
@@ -540,42 +569,229 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
         </div>
       </div>
 
-      {/* Overview Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="bg-card/60 border-border/60 p-4">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Total Alerts</p>
-          <p className="text-2xl font-bold font-mono text-foreground mt-1">{alerts.length}</p>
-        </Card>
-
-        <Card className="bg-card/60 border-primary/20 p-4">
-          <div className="flex justify-between items-start">
-            <p className="text-xs font-semibold text-primary uppercase tracking-wider">Active Targets</p>
-            <span className="w-2 h-2 rounded-full bg-primary animate-ping" />
+      {/* Overview Cards (Clickable Filter Boxes) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+        {/* Total Alerts Card */}
+        <div
+          role="button"
+          tabIndex={0}
+          aria-pressed={statusFilter === 'ALL'}
+          data-testid="overview-card-all"
+          onClick={() => handleCardFilterClick('ALL')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleCardFilterClick('ALL');
+            }
+          }}
+          className={cn(
+            "group relative p-4 rounded-xl border transition-all duration-200 cursor-pointer select-none",
+            "hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0",
+            statusFilter === 'ALL'
+              ? "bg-cyan-950/30 border-cyan-500/60 ring-2 ring-cyan-500/70 shadow-lg shadow-cyan-950/30"
+              : "bg-card/60 border-border/60 hover:border-cyan-500/40 hover:bg-card/80"
+          )}
+          title="Click to view all alerts"
+        >
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider group-hover:text-cyan-300 transition-colors">
+              Total Alerts
+            </p>
+            <Bell className={cn("w-4 h-4 transition-colors", statusFilter === 'ALL' ? "text-cyan-400" : "text-muted-foreground group-hover:text-cyan-400")} />
           </div>
-          <p className="text-2xl font-bold font-mono text-primary mt-1">{activeCount}</p>
-        </Card>
+          <div className="flex items-baseline justify-between mt-2">
+            <p className="text-2xl font-bold font-mono text-foreground">{alerts.length}</p>
+            {statusFilter === 'ALL' ? (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-cyan-400 bg-cyan-500/15 px-1.5 py-0.5 rounded border border-cyan-500/30">
+                <Check className="w-2.5 h-2.5" /> All
+              </span>
+            ) : (
+              <span className="text-[10px] text-muted-foreground/60 opacity-0 group-hover:opacity-100 transition-opacity">
+                Show all
+              </span>
+            )}
+          </div>
+        </div>
 
-        <Card className={cn(
-          "p-4 border",
-          unmutedTriggeredCount > 0
-            ? "bg-rose-950/20 border-rose-500/30"
-            : "bg-card/60 border-border/60"
-        )}>
-          <div className="flex justify-between items-start">
-            <p className={cn("text-xs font-semibold uppercase tracking-wider", unmutedTriggeredCount > 0 ? "text-rose-400" : "text-muted-foreground")}>
+        {/* Active Targets Card */}
+        <div
+          role="button"
+          tabIndex={0}
+          aria-pressed={statusFilter === 'ACTIVE'}
+          data-testid="overview-card-active"
+          onClick={() => handleCardFilterClick('ACTIVE')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleCardFilterClick('ACTIVE');
+            }
+          }}
+          className={cn(
+            "group relative p-4 rounded-xl border transition-all duration-200 cursor-pointer select-none",
+            "hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0",
+            statusFilter === 'ACTIVE'
+              ? "bg-emerald-950/30 border-emerald-500/60 ring-2 ring-emerald-500/70 shadow-lg shadow-emerald-950/30"
+              : "bg-card/60 border-border/60 hover:border-emerald-500/40 hover:bg-card/80"
+          )}
+          title={statusFilter === 'ACTIVE' ? "Click to clear filter" : "Click to filter Active targets"}
+        >
+          <div className="flex items-center justify-between">
+            <p className={cn("text-xs font-semibold uppercase tracking-wider transition-colors", statusFilter === 'ACTIVE' ? "text-emerald-400" : "text-emerald-500/90 group-hover:text-emerald-400")}>
+              Active Targets
+            </p>
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+            </span>
+          </div>
+          <div className="flex items-baseline justify-between mt-2">
+            <p className="text-2xl font-bold font-mono text-emerald-400">{activeCount}</p>
+            {statusFilter === 'ACTIVE' ? (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                <Check className="w-2.5 h-2.5" /> Filtered
+              </span>
+            ) : (
+              <span className="text-[10px] text-muted-foreground/60 opacity-0 group-hover:opacity-100 group-hover:text-emerald-400 transition-all">
+                Filter
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Unmuted Fired Card */}
+        <div
+          role="button"
+          tabIndex={0}
+          aria-pressed={statusFilter === 'TRIGGERED'}
+          data-testid="overview-card-triggered"
+          onClick={() => handleCardFilterClick('TRIGGERED')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleCardFilterClick('TRIGGERED');
+            }
+          }}
+          className={cn(
+            "group relative p-4 rounded-xl border transition-all duration-200 cursor-pointer select-none",
+            "hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0",
+            statusFilter === 'TRIGGERED'
+              ? "bg-rose-950/40 border-rose-500/70 ring-2 ring-rose-500/80 shadow-lg shadow-rose-950/40"
+              : unmutedTriggeredCount > 0
+              ? "bg-rose-950/20 border-rose-500/30 hover:border-rose-500/50 hover:bg-rose-950/30"
+              : "bg-card/60 border-border/60 hover:border-rose-500/40 hover:bg-card/80"
+          )}
+          title={statusFilter === 'TRIGGERED' ? "Click to clear filter" : "Click to filter Fired/Triggered alerts"}
+        >
+          <div className="flex items-center justify-between">
+            <p className={cn("text-xs font-semibold uppercase tracking-wider transition-colors", unmutedTriggeredCount > 0 || statusFilter === 'TRIGGERED' ? "text-rose-400" : "text-muted-foreground group-hover:text-rose-400")}>
               Unmuted Fired
             </p>
-            {unmutedTriggeredCount > 0 && <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />}
+            {unmutedTriggeredCount > 0 && (
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500" />
+              </span>
+            )}
           </div>
-          <p className={cn("text-2xl font-bold font-mono mt-1", unmutedTriggeredCount > 0 ? "text-rose-300" : "text-foreground")}>
-            {unmutedTriggeredCount}
-          </p>
-        </Card>
+          <div className="flex items-baseline justify-between mt-2">
+            <p className={cn("text-2xl font-bold font-mono", unmutedTriggeredCount > 0 || statusFilter === 'TRIGGERED' ? "text-rose-300" : "text-foreground")}>
+              {unmutedTriggeredCount}
+            </p>
+            {statusFilter === 'TRIGGERED' ? (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-300 bg-rose-500/15 px-1.5 py-0.5 rounded border border-rose-500/30">
+                <Check className="w-2.5 h-2.5" /> Filtered
+              </span>
+            ) : (
+              <span className="text-[10px] text-muted-foreground/60 opacity-0 group-hover:opacity-100 group-hover:text-rose-400 transition-all">
+                Filter
+              </span>
+            )}
+          </div>
+        </div>
 
-        <Card className="bg-card/60 border-border/60 p-4">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Muted / Acknowledged</p>
-          <p className="text-2xl font-bold font-mono text-muted-foreground mt-1">{mutedCount}</p>
-        </Card>
+        {/* Muted / Acknowledged Card */}
+        <div
+          role="button"
+          tabIndex={0}
+          aria-pressed={statusFilter === 'MUTED'}
+          data-testid="overview-card-muted"
+          onClick={() => handleCardFilterClick('MUTED')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleCardFilterClick('MUTED');
+            }
+          }}
+          className={cn(
+            "group relative p-4 rounded-xl border transition-all duration-200 cursor-pointer select-none",
+            "hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0",
+            statusFilter === 'MUTED'
+              ? "bg-slate-900 border-slate-400/70 ring-2 ring-slate-400/80 shadow-lg shadow-slate-950/40"
+              : "bg-card/60 border-border/60 hover:border-slate-500/50 hover:bg-card/80"
+          )}
+          title={statusFilter === 'MUTED' ? "Click to clear filter" : "Click to filter Muted & Acknowledged alerts"}
+        >
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider group-hover:text-slate-300 transition-colors">
+              Muted / Acknowledged
+            </p>
+            <BellOff className={cn("w-3.5 h-3.5 transition-colors", statusFilter === 'MUTED' ? "text-slate-300" : "text-muted-foreground group-hover:text-slate-300")} />
+          </div>
+          <div className="flex items-baseline justify-between mt-2">
+            <p className="text-2xl font-bold font-mono text-muted-foreground group-hover:text-slate-200 transition-colors">{mutedCount}</p>
+            {statusFilter === 'MUTED' ? (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-300 bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700">
+                <Check className="w-2.5 h-2.5" /> Filtered
+              </span>
+            ) : (
+              <span className="text-[10px] text-muted-foreground/60 opacity-0 group-hover:opacity-100 group-hover:text-slate-300 transition-all">
+                Filter
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Short Defense Card */}
+        <div
+          role="button"
+          tabIndex={0}
+          aria-pressed={statusFilter === 'SHORT_DEFENSE'}
+          data-testid="overview-card-short_defense"
+          onClick={() => handleCardFilterClick('SHORT_DEFENSE')}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleCardFilterClick('SHORT_DEFENSE');
+            }
+          }}
+          className={cn(
+            "group relative p-4 rounded-xl border transition-all duration-200 cursor-pointer select-none col-span-2 sm:col-span-1",
+            "hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0",
+            statusFilter === 'SHORT_DEFENSE'
+              ? "bg-purple-950/30 border-purple-500/60 ring-2 ring-purple-500/70 shadow-lg shadow-purple-950/30"
+              : "bg-card/60 border-border/60 hover:border-purple-500/40 hover:bg-card/80"
+          )}
+          title={statusFilter === 'SHORT_DEFENSE' ? "Click to clear filter" : "Click to filter Short Option Defense alerts"}
+        >
+          <div className="flex items-center justify-between">
+            <p className={cn("text-xs font-semibold uppercase tracking-wider transition-colors", statusFilter === 'SHORT_DEFENSE' ? "text-purple-300" : "text-purple-400/90 group-hover:text-purple-300")}>
+              Short Defense
+            </p>
+            <Shield className={cn("w-3.5 h-3.5 transition-colors", statusFilter === 'SHORT_DEFENSE' ? "text-purple-300" : "text-purple-400")} />
+          </div>
+          <div className="flex items-baseline justify-between mt-2">
+            <p className="text-2xl font-bold font-mono text-purple-300">{shortDefenseCount}</p>
+            {statusFilter === 'SHORT_DEFENSE' ? (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-purple-300 bg-purple-500/15 px-1.5 py-0.5 rounded border border-purple-500/30">
+                <Check className="w-2.5 h-2.5" /> Filtered
+              </span>
+            ) : (
+              <span className="text-[10px] text-muted-foreground/60 opacity-0 group-hover:opacity-100 group-hover:text-purple-300 transition-all">
+                Filter
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Filter Tabs & Search / Sort Controls */}
@@ -834,27 +1050,35 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
                       />
                     </div>
 
-                    <div
+                    <button
+                      type="button"
+                      onClick={() => handleOpenGraphs(item.symbol)}
                       className={cn(
-                        "w-11 h-11 rounded-xl border flex items-center justify-center font-mono font-black text-sm shrink-0",
+                        "w-11 h-11 rounded-xl border flex items-center justify-center font-mono font-black text-sm shrink-0 cursor-pointer hover:scale-105 active:scale-95 transition-all shadow-sm",
                         isTriggered && !isMuted
-                          ? "bg-rose-500/20 border-rose-500/40 text-rose-300"
+                          ? "bg-rose-500/20 border-rose-500/40 text-rose-300 hover:border-rose-400"
                           : isMuted
-                          ? "bg-slate-800 border-slate-700 text-slate-400"
-                          : "bg-primary/10 border-primary/20 text-primary"
+                          ? "bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500"
+                          : "bg-primary/10 border-primary/20 text-primary hover:border-cyan-500/50 hover:text-cyan-400"
                       )}
+                      title={`Open ${item.symbol} chart in Graph section (new window)`}
+                      aria-label={`Open ${item.symbol} chart`}
                     >
                       {isMuted ? <BellOff className="w-5 h-5" /> : item.symbol.slice(0, 3)}
-                    </div>
+                    </button>
 
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <button
-                          onClick={() => handleOpenResearch(item.symbol)}
-                          className="font-mono font-bold text-base text-foreground hover:text-primary transition-colors flex items-center gap-1 group/btn"
+                          type="button"
+                          onClick={() => handleOpenGraphs(item.symbol)}
+                          className="font-mono font-bold text-base text-foreground hover:text-cyan-400 transition-colors flex items-center gap-1.5 group/btn cursor-pointer"
+                          title={`Open ${item.symbol} chart in Graph section (new window)`}
+                          data-testid={`alert-ticker-${item.symbol.toLowerCase()}`}
                         >
-                          {item.symbol}
-                          <ExternalLink className="w-3 h-3 opacity-0 group-hover/btn:opacity-100 text-primary transition-opacity" />
+                          <span className="group-hover/btn:underline decoration-cyan-400/50 underline-offset-4">{item.symbol}</span>
+                          <LineChart className="w-3.5 h-3.5 text-cyan-400 opacity-60 group-hover/btn:opacity-100 transition-opacity" />
+                          <ExternalLink className="w-3 h-3 text-muted-foreground group-hover/btn:text-cyan-400 opacity-50 group-hover/btn:opacity-100 group-hover/btn:translate-x-0.5 group-hover/btn:-translate-y-0.5 transition-all" />
                         </button>
 
                         <Badge
@@ -1039,6 +1263,19 @@ export function AlertsPage({ onNavigateToResearch }: AlertsPageProps) {
                         })}
                       </DropdownMenuContent>
                     </DropdownMenu>
+
+                    {/* Research Button */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleOpenResearch(item.symbol)}
+                      className="h-8 text-xs gap-1 text-muted-foreground hover:text-primary hover:bg-primary/10"
+                      title={`Analyze ${item.symbol} in Research`}
+                      aria-label={`Analyze ${item.symbol} in Research`}
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 text-primary" />
+                      <span className="hidden xl:inline">Research</span>
+                    </Button>
 
                     {/* Mute / Unmute Button */}
                     {!isMuted ? (

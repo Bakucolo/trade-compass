@@ -72,6 +72,10 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
   const [sourceMode, setSourceMode] = useState<SidePanelSource>('WATCHLIST');
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  // Full Page Chart Mode
+  const [isFullPage, setIsFullPage] = useState(false);
+  // RSI Indicator Toggle (defaults to false: not shown by default)
+  const [showRsi, setShowRsi] = useState(false);
 
   // Watchlists Query
   const { data: watchlists = [], isLoading: isWatchlistsLoading } = useWatchlists();
@@ -156,6 +160,17 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
     },
     [onSelectSymbol]
   );
+
+  // Escape key handler to exit full page chart mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullPage) {
+        setIsFullPage(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullPage]);
 
   // Real-time Technical Analysis Query for selectedSymbol
   const { data: techAnalysis } = useTechnicalAnalysis(selectedSymbol);
@@ -340,6 +355,18 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
+
+  // Listen for Escape key to exit Full Page mode
+  useEffect(() => {
+    if (!isFullPage) return;
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsFullPage(false);
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [isFullPage]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -638,16 +665,28 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
             <span className="hidden sm:inline">Notes</span>
           </Button>
 
+          {/* Full Page Mode Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsFullPage(true)}
+            className="h-9 px-3.5 gap-1.5 text-xs font-bold border-cyan-500/40 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 hover:text-cyan-200 shadow-sm"
+            title="Open chart in Full Page Mode to more easily analyse it"
+          >
+            <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
+            <span>Full Page</span>
+          </Button>
+
           {/* Toggle Side Panel */}
           <Button
             variant="outline"
             size="sm"
             onClick={() => setIsPanelCollapsed(!isPanelCollapsed)}
             className="h-9 px-3 gap-1.5 text-xs font-semibold border-border/70 hover:bg-accent/40"
-            title={isPanelCollapsed ? 'Show Watchlist Side Panel' : 'Maximize Chart Area'}
+            title={isPanelCollapsed ? 'Show Watchlist Side Panel' : 'Hide Watchlist Side Panel'}
           >
-            {isPanelCollapsed ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
-            <span className="hidden sm:inline">{isPanelCollapsed ? 'Show Watchlist' : 'Full Chart'}</span>
+            <Layers className="w-3.5 h-3.5 text-muted-foreground" />
+            <span className="hidden sm:inline">{isPanelCollapsed ? 'Show Watchlist' : 'Hide Watchlist'}</span>
           </Button>
         </div>
       </div>
@@ -1040,8 +1079,8 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
           </div>
 
           {/* ================= IN-GRAPH KEY LEVELS & STAGE HUD ================= */}
-          {techAnalysis && (
-            <div className="glass-card rounded-2xl p-2.5 px-4 border border-cyan-500/30 bg-slate-950/85 backdrop-blur-xl flex flex-wrap items-center justify-between gap-2 shadow-lg">
+          <div className="glass-card rounded-2xl p-2.5 px-4 border border-cyan-500/30 bg-slate-950/85 backdrop-blur-xl flex flex-wrap items-center justify-between gap-2 shadow-lg">
+            {techAnalysis ? (
               <div className="flex items-center gap-2 flex-wrap text-xs">
                 {/* Stage Badge */}
                 <div className="flex items-center gap-1.5">
@@ -1103,24 +1142,62 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
                   </button>
                 )}
               </div>
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
+                <span className="font-bold text-foreground">${selectedSymbol}</span>
+                <span>• Live Interactive Chart</span>
+              </div>
+            )}
 
-              {/* Action Button to Open Modal */}
+            {/* Right: RSI Toggle, Full Page, Technical Breakdown */}
+            <div className="flex items-center gap-2 ml-auto flex-wrap">
+              {/* RSI Toggle Button (Not shown by default) */}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowRsi(!showRsi)}
+                className={cn(
+                  "h-7 px-2.5 text-xs font-bold gap-1 rounded-xl transition-all border",
+                  showRsi
+                    ? "bg-purple-500/20 text-purple-300 border-purple-500/50 shadow-sm"
+                    : "bg-slate-900/60 text-muted-foreground border-border/60 hover:text-foreground"
+                )}
+                title={showRsi ? "Hide RSI Indicator" : "Show RSI Indicator (hidden by default)"}
+              >
+                <Activity className="w-3.5 h-3.5 text-purple-400" />
+                <span>RSI: {showRsi ? 'ON' : 'OFF'}</span>
+              </Button>
+
+              {/* Full Page Button on Chart Toolbar */}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setIsFullPage(true)}
+                className="h-7 px-2.5 text-xs font-bold gap-1 rounded-xl border-cyan-500/40 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 hover:text-cyan-200 shadow-sm"
+                title="Open chart in Full Page Mode to more easily analyse it"
+              >
+                <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Full Page</span>
+              </Button>
+
+              {/* Technical Breakdown Modal Button */}
               <Button
                 size="sm"
                 onClick={() => setIsTechModalOpen(true)}
-                className="h-7 px-3 text-xs font-bold bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white shadow-sm gap-1.5 cursor-pointer ml-auto"
+                className="h-7 px-3 text-xs font-bold bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white shadow-sm gap-1.5 cursor-pointer"
               >
-                <Activity className="w-3.5 h-3.5 text-cyan-200 animate-pulse" />
+                <Sparkles className="w-3.5 h-3.5 text-cyan-200" />
                 <span>Technical Breakdown</span>
               </Button>
             </div>
-          )}
+          </div>
 
           <TradingViewChart
-            key={selectedSymbol}
+            key={`${selectedSymbol}_${showRsi}`}
             symbol={selectedSymbol}
             theme="dark"
             interval="D"
+            showRsi={showRsi}
             className="flex-1 h-full min-h-[680px]"
           />
         </div>
@@ -1188,6 +1265,125 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
             }
           }}
         />
+      )}
+
+      {/* ================= FULL PAGE CHART WORKSTATION OVERLAY ================= */}
+      {isFullPage && (
+        <div
+          data-testid="full-page-chart-overlay"
+          className="fixed inset-0 z-50 bg-slate-950 flex flex-col w-screen h-screen overflow-hidden animate-fade-in"
+        >
+          {/* Full Page Top Control Bar */}
+          <div className="h-14 px-4 border-b border-border/60 bg-slate-950/95 backdrop-blur-2xl flex items-center justify-between gap-3 shrink-0">
+            {/* Left: Active Ticker Info & Controls */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span className="font-mono font-black text-xl text-white tracking-tight">
+                  ${selectedSymbol}
+                </span>
+                {activeItemDetails && activeItemDetails.price > 0 && (
+                  <div className="flex items-center gap-1.5 font-mono text-sm">
+                    <span className="font-bold text-slate-200">
+                      ${activeItemDetails.price.toFixed(2)}
+                    </span>
+                    <span className={cn(
+                      "text-xs font-semibold px-1.5 py-0.5 rounded",
+                      activeItemDetails.changePercent >= 0 ? "bg-emerald-500/20 text-emerald-400" : "bg-rose-500/20 text-rose-400"
+                    )}>
+                      {activeItemDetails.changePercent >= 0 ? '+' : ''}{activeItemDetails.changePercent.toFixed(2)}%
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Quick Ticker Switcher */}
+              <div className="relative w-36 sm:w-48">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Switch ticker..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && searchQuery.trim()) {
+                      e.preventDefault();
+                      handleSelectSymbol(searchQuery.trim());
+                      setSearchQuery('');
+                    }
+                  }}
+                  className="h-8 pl-8 pr-2 text-xs bg-slate-900 border-border/70 rounded-xl font-mono text-foreground"
+                />
+              </div>
+
+              {/* RSI Toggle in Full Page */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowRsi(!showRsi)}
+                className={cn(
+                  "h-8 px-2.5 text-xs font-bold gap-1 rounded-xl transition-all border",
+                  showRsi
+                    ? "bg-purple-500/20 text-purple-300 border-purple-500/50 shadow-sm"
+                    : "bg-slate-900/60 text-muted-foreground border-border/60 hover:text-foreground"
+                )}
+                title={showRsi ? "Hide RSI Indicator" : "Show RSI Indicator (hidden by default)"}
+              >
+                <Activity className="w-3.5 h-3.5 text-purple-400" />
+                <span>RSI: {showRsi ? 'ON' : 'OFF'}</span>
+              </Button>
+
+              {/* Technical Breakdown Button */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsTechModalOpen(true)}
+                className="h-8 px-2.5 text-xs font-semibold border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/10 gap-1.5 hidden md:flex rounded-xl"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Technical Levels</span>
+              </Button>
+            </div>
+
+            {/* Right: Research & Exit Full Page */}
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onNavigateToResearch && onNavigateToResearch(selectedSymbol)}
+                className="h-8 px-3 text-xs font-bold bg-primary/15 hover:bg-primary/25 border-primary/40 text-primary hover:text-white gap-1.5 hidden sm:flex rounded-xl"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Research</span>
+              </Button>
+
+              {/* Exit Full Page Button */}
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => setIsFullPage(false)}
+                className="h-8 px-3 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white border border-border/60 gap-1.5 rounded-xl shadow-md cursor-pointer"
+                title="Exit Full Page Mode (or press Escape)"
+              >
+                <Minimize2 className="w-3.5 h-3.5 text-rose-400" />
+                <span>Exit Full Page</span>
+                <kbd className="hidden sm:inline text-[10px] bg-slate-900 px-1 py-0.5 rounded border border-white/10 text-muted-foreground ml-1 font-mono">
+                  ESC
+                </kbd>
+              </Button>
+            </div>
+          </div>
+
+          {/* Full Page Chart Canvas */}
+          <div className="flex-1 w-full h-[calc(100vh-3.5rem)] relative bg-slate-950">
+            <TradingViewChart
+              key={`fullpage_${selectedSymbol}_${showRsi}`}
+              symbol={selectedSymbol}
+              theme="dark"
+              interval="D"
+              showRsi={showRsi}
+              className="w-full h-full border-0 rounded-none min-h-0"
+            />
+          </div>
+        </div>
       )}
     </div>
   );

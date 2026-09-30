@@ -1,10 +1,157 @@
 [
   {
-    "draftId": "draft_1790147032415_p8aiy",
+    "draftId": "draft_1790236377953_simlb",
     "broker": "tastytrade",
     "accountNumber": "5WT67220",
-    "createdAt": "2026-09-23T07:03:52.415Z",
-    "expiresAt": "2026-09-23T07:18:52.415Z",
+    "createdAt": "2026-09-24T07:52:57.953Z",
+    "expiresAt": "2026-09-24T08:07:57.953Z",
+    "status": "EXPIRED",
+    "symbol": "FSLY",
+    "action": "SELL_TO_OPEN",
+    "instrumentType": "Equity Option",
+    "quantity": 1,
+    "orderType": "Limit",
+    "price": 0.95,
+    "timeInForce": "Day",
+    "optionDetails": {
+      "expirationDate": "2026-10-16",
+      "strikePrice": 25,
+      "optionType": "Put"
+    },
+    "notes": "Crafted in Options Trade Station: SELL $25 PUT. Net Credit: $0.95.",
+    "dryRunResult": {
+      "estimatedMarginRequirement": 95,
+      "buyingPowerEffect": 95,
+      "estimatedCommission": 1,
+      "estimatedFees": 0.14,
+      "warnings": [
+        "Pre-flight calculated using TASTYTRADE safety model."
+      ]
+    },
+    "buyingPowerComparison": {
+      "symbol": "FSLY",
+      "action": "SELL_TO_OPEN",
+      "quantity": 1,
+      "price": 0.95,
+      "orderType": "Limit",
+      "instrumentType": "Equity Option",
+      "optionDetails": {
+        "expirationDate": "2026-10-16",
+        "strikePrice": 25,
+        "optionType": "Put"
+      },
+      "underlyingPrice": 25,
+      "notionalValue": 95,
+      "tastytrade": {
+        "broker": "tastytrade",
+        "accountNumber": "5WT67220",
+        "environment": "Live Production",
+        "currency": "USD",
+        "availableBuyingPower": 14991.939,
+        "totalAvailableBuyingPower": 14991.939,
+        "buyingPowerRequirement": 2405,
+        "initialMarginRequirement": 2500,
+        "maintenanceMarginRequirement": 2500,
+        "buyingPowerEffect": 2405,
+        "marginMethod": "Apex 100% Cash-Secured Policy (100% Margin Rate)",
+        "notionalValue": 95,
+        "estimatedCommission": 1,
+        "estimatedRegulatoryFees": 0.14,
+        "totalFees": 1.14,
+        "totalCashOutlay": 2406.14,
+        "postTradeBuyingPower": 12585.8,
+        "postTradeAvailableBuyingPower": 12585.8,
+        "postTradeBufferPercent": 84,
+        "remainingBufferPercentage": 84,
+        "isFeasible": true,
+        "warnings": [
+          "Apex Clearing applies 100% cash margin policy on FSLY (high-risk/hard-to-borrow)."
+        ],
+        "features": [
+          "$1.00/contract open ($10 cap per leg)",
+          "$0.00 to close options",
+          "100% cash-secured margin required for symbol"
+        ]
+      },
+      "ibkr": {
+        "broker": "ibkr",
+        "accountNumber": "U15491236",
+        "environment": "Live Margin",
+        "currency": "USD",
+        "baseCurrency": "GBP",
+        "fxRateToBase": 0.7490075649764063,
+        "availableBuyingPower": 21670.18,
+        "availableBuyingPowerBase": 16231.12606862991,
+        "totalAvailableBuyingPower": 21670.18,
+        "buyingPowerRequirement": 2500,
+        "buyingPowerRequirementBase": 1873,
+        "initialMarginRequirement": 2500,
+        "initialMarginRequirementBase": 1873,
+        "maintenanceMarginRequirement": 1095,
+        "maintenanceMarginRequirementBase": 820,
+        "portfolioMarginRequirement": 750,
+        "portfolioMarginRequirementBase": 562,
+        "marginMethod": "Reg-T 100% Cash Restricted Margin",
+        "notionalValue": 95,
+        "estimatedCommission": 0.65,
+        "estimatedRegulatoryFees": 0.03,
+        "totalFees": 0.68,
+        "totalCashOutlay": 2500.68,
+        "postTradeBuyingPower": 19169.5,
+        "postTradeBuyingPowerBase": 14357.62,
+        "postTradeAvailableBuyingPower": 19169.5,
+        "postTradeBufferPercent": 88.5,
+        "remainingBufferPercentage": 88.5,
+        "isFeasible": true,
+        "warnings": [],
+        "features": [
+          "Live Margin Account (U15491236)",
+          "Base Currency: GBP (FX Rate: 1 GBP ≈ $1.34 USD)",
+          "Pre-trade initial margin impact: £1,873 ($2500.00 USD)",
+          "$0.65/contract flat tier",
+          "Institutional Smart Routing (SMART)"
+        ]
+      },
+      "tastyMetrics": {
+        "pop": 62,
+        "ext": 95,
+        "p50": 73,
+        "cvar": -393.97,
+        "delta": 46.82,
+        "theta": 2.496,
+        "maxProfit": 95,
+        "maxLoss": 2405,
+        "bpEff": 2405,
+        "bpEffDirection": "db"
+      },
+      "capitalEfficiencyWinner": "tastytrade",
+      "feeWinner": "ibkr",
+      "recommendedBroker": "ibkr",
+      "recommendationRationale": "Interactive Brokers recommended for small options order (1 contract): $0.65/contract fee is cheaper than Tastytrade ($1.00/contract), saving $0.46.",
+      "verdict": {
+        "recommendedBroker": "ibkr",
+        "capitalEfficiencyWinner": "tastytrade",
+        "feeWinner": "ibkr",
+        "buyingPowerDifference": -95,
+        "feeDifference": 0.46,
+        "summary": "Interactive Brokers recommended for small options order (1 contract): $0.65/contract fee is cheaper than Tastytrade ($1.00/contract), saving $0.46.",
+        "rationale": [
+          "Tastytrade BP Effect: $2405.00 (Initial margin $2500.00 less premium credit).",
+          "IBKR Initial Margin: $2500.00 (Maint: $1095.00, Portfolio Margin: $750.00).",
+          "Commission & fees: Tastytrade $1.14 vs IBKR $0.68.",
+          "Post-trade buffer: Tastytrade 84% vs IBKR 88.5%."
+        ]
+      },
+      "analyzedAt": "2026-09-24T07:52:58.602Z",
+      "calculatedAt": "2026-09-24T07:52:58.602Z"
+    }
+  },
+  {
+    "draftId": "draft_1790735845961_ls0wh",
+    "broker": "tastytrade",
+    "accountNumber": "5WT67220",
+    "createdAt": "2026-09-30T02:37:25.961Z",
+    "expiresAt": "2026-09-30T02:52:25.961Z",
     "status": "PENDING_APPROVAL",
     "symbol": "AAPL",
     "action": "BUY",
@@ -36,8 +183,8 @@
         "accountNumber": "5WT67220",
         "environment": "Live Production",
         "currency": "USD",
-        "availableBuyingPower": 33643.218,
-        "totalAvailableBuyingPower": 33643.218,
+        "availableBuyingPower": 26719.716,
+        "totalAvailableBuyingPower": 26719.716,
         "buyingPowerRequirement": 2200,
         "initialMarginRequirement": 2200,
         "maintenanceMarginRequirement": 1100,
@@ -48,10 +195,10 @@
         "estimatedRegulatoryFees": 0.14,
         "totalFees": 0.14,
         "totalCashOutlay": 2200.14,
-        "postTradeBuyingPower": 31443.08,
-        "postTradeAvailableBuyingPower": 31443.08,
-        "postTradeBufferPercent": 93.5,
-        "remainingBufferPercentage": 93.5,
+        "postTradeBuyingPower": 24519.58,
+        "postTradeAvailableBuyingPower": 24519.58,
+        "postTradeBufferPercent": 91.8,
+        "remainingBufferPercentage": 91.8,
         "isFeasible": true,
         "warnings": [],
         "features": [
@@ -99,13 +246,13 @@
           "Institutional Smart Routing (SMART)"
         ]
       },
-      "capitalEfficiencyWinner": "tastytrade",
+      "capitalEfficiencyWinner": "ibkr",
       "feeWinner": "tastytrade",
       "recommendedBroker": "tastytrade",
       "recommendationRationale": "Tastytrade recommended for equities: Zero commission saves $0.89 compared to IBKR ($1.03).",
       "verdict": {
         "recommendedBroker": "tastytrade",
-        "capitalEfficiencyWinner": "tastytrade",
+        "capitalEfficiencyWinner": "ibkr",
         "feeWinner": "tastytrade",
         "buyingPowerDifference": 0,
         "feeDifference": -0.89,
@@ -114,19 +261,19 @@
           "Tastytrade BP Effect: $2200.00 (Initial margin $2200.00 less premium credit).",
           "IBKR Initial Margin: $2200.00 (Maint: $1100.00, Portfolio Margin: $660.00).",
           "Commission & fees: Tastytrade $0.14 vs IBKR $1.03.",
-          "Post-trade buffer: Tastytrade 93.5% vs IBKR 92.6%."
+          "Post-trade buffer: Tastytrade 91.8% vs IBKR 92.6%."
         ]
       },
-      "analyzedAt": "2026-09-23T07:03:53.381Z",
-      "calculatedAt": "2026-09-23T07:03:53.381Z"
+      "analyzedAt": "2026-09-30T02:37:26.828Z",
+      "calculatedAt": "2026-09-30T02:37:26.828Z"
     }
   },
   {
-    "draftId": "draft_1790147033385_29az4",
+    "draftId": "draft_1790735846831_4ree7",
     "broker": "ibkr",
     "accountNumber": "U15491236",
-    "createdAt": "2026-09-23T07:03:53.385Z",
-    "expiresAt": "2026-09-23T07:18:53.385Z",
+    "createdAt": "2026-09-30T02:37:26.831Z",
+    "expiresAt": "2026-09-30T02:52:26.831Z",
     "status": "PENDING_APPROVAL",
     "symbol": "NVDA",
     "action": "BUY",
@@ -158,8 +305,8 @@
         "accountNumber": "5WT67220",
         "environment": "Live Production",
         "currency": "USD",
-        "availableBuyingPower": 33643.218,
-        "totalAvailableBuyingPower": 33643.218,
+        "availableBuyingPower": 26719.716,
+        "totalAvailableBuyingPower": 26719.716,
         "buyingPowerRequirement": 600,
         "initialMarginRequirement": 600,
         "maintenanceMarginRequirement": 300,
@@ -170,10 +317,10 @@
         "estimatedRegulatoryFees": 0.14,
         "totalFees": 0.14,
         "totalCashOutlay": 600.14,
-        "postTradeBuyingPower": 33043.08,
-        "postTradeAvailableBuyingPower": 33043.08,
-        "postTradeBufferPercent": 98.2,
-        "remainingBufferPercentage": 98.2,
+        "postTradeBuyingPower": 26119.58,
+        "postTradeAvailableBuyingPower": 26119.58,
+        "postTradeBufferPercent": 97.8,
+        "remainingBufferPercentage": 97.8,
         "isFeasible": true,
         "warnings": [],
         "features": [
@@ -221,13 +368,13 @@
           "Institutional Smart Routing (SMART)"
         ]
       },
-      "capitalEfficiencyWinner": "tastytrade",
+      "capitalEfficiencyWinner": "ibkr",
       "feeWinner": "tastytrade",
       "recommendedBroker": "tastytrade",
       "recommendationRationale": "Tastytrade recommended for equities: Zero commission saves $0.89 compared to IBKR ($1.03).",
       "verdict": {
         "recommendedBroker": "tastytrade",
-        "capitalEfficiencyWinner": "tastytrade",
+        "capitalEfficiencyWinner": "ibkr",
         "feeWinner": "tastytrade",
         "buyingPowerDifference": 0,
         "feeDifference": -0.89,
@@ -236,11 +383,11 @@
           "Tastytrade BP Effect: $600.00 (Initial margin $600.00 less premium credit).",
           "IBKR Initial Margin: $600.00 (Maint: $300.00, Portfolio Margin: $180.00).",
           "Commission & fees: Tastytrade $0.14 vs IBKR $1.03.",
-          "Post-trade buffer: Tastytrade 98.2% vs IBKR 98%."
+          "Post-trade buffer: Tastytrade 97.8% vs IBKR 98%."
         ]
       },
-      "analyzedAt": "2026-09-23T07:03:54.938Z",
-      "calculatedAt": "2026-09-23T07:03:54.938Z"
+      "analyzedAt": "2026-09-30T02:37:28.294Z",
+      "calculatedAt": "2026-09-30T02:37:28.294Z"
     }
   }
 ]

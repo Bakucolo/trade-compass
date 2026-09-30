@@ -42,7 +42,9 @@ import {
   Lock,
   Search,
   Plus,
-  Trash2
+  Trash2,
+  LayoutPanelTop,
+  LayoutPanelLeft
 } from 'lucide-react';
 import {
   useOptionsChain,
@@ -153,6 +155,34 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [activeTab, setActiveTab] = useState<'comparison' | 'metrics'>(defaultTab);
 
+  // Station layout mode ('split' = 3-column, 'tastytrade' = chain top / builder bottom)
+  const [layoutMode, setLayoutMode] = useState<'split' | 'tastytrade'>(() => {
+    try {
+      const saved = localStorage.getItem('options_station_layout');
+      if (saved === 'tastytrade' || saved === 'split') return saved;
+    } catch {}
+    return 'split';
+  });
+  // Full-size Option Chain mode (expands chain across 100% of workspace, hiding side panels)
+  const [isChainFullSize, setIsChainFullSize] = useState(false);
+
+  const toggleLayoutMode = () => {
+    setLayoutMode(prev => {
+      const next = prev === 'split' ? 'tastytrade' : 'split';
+      try {
+        localStorage.setItem('options_station_layout', next);
+      } catch {}
+      return next;
+    });
+    if (isChainFullSize) {
+      setIsChainFullSize(false);
+    }
+  };
+
+  const toggleChainFullSize = () => {
+    setIsChainFullSize(prev => !prev);
+  };
+
   // Underlying symbol & search
   const [symbol, setSymbol] = useState(defaultSymbol);
   const [searchInput, setSearchInput] = useState(defaultSymbol);
@@ -233,7 +263,7 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
     return strikes.slice(start, end);
   }, [chainData?.strikes, strikeRange, moneynessFilter]);
 
-  // 1 Standard Deviation Expected Move Calculations
+  // 1 & 2 Standard Deviation Expected Move Calculations
   const spotPrice = chainData?.underlyingPrice || 0;
   const chainDte = chainData?.selectedDte || 30;
   const atmIv = chainData?.analytics?.impliedVolatilityAtm || 30;
@@ -259,6 +289,23 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
       ? Math.max(0, Math.round((spotPrice - expectedMoveDollars) * 100) / 100)
       : 0;
   }, [spotPrice, expectedMoveDollars]);
+
+  // 2 Standard Deviation Calculations (±2σ, ~95.4% probability)
+  const expectedMoveDollars2Sd = useMemo(() => {
+    return expectedMoveDollars > 0 ? Math.round(expectedMoveDollars * 2 * 100) / 100 : 0;
+  }, [expectedMoveDollars]);
+
+  const upperBound2Sd = useMemo(() => {
+    return spotPrice > 0 && expectedMoveDollars2Sd > 0
+      ? Math.round((spotPrice + expectedMoveDollars2Sd) * 100) / 100
+      : 0;
+  }, [spotPrice, expectedMoveDollars2Sd]);
+
+  const lowerBound2Sd = useMemo(() => {
+    return spotPrice > 0 && expectedMoveDollars2Sd > 0
+      ? Math.max(0, Math.round((spotPrice - expectedMoveDollars2Sd) * 100) / 100)
+      : 0;
+  }, [spotPrice, expectedMoveDollars2Sd]);
 
   const isAscending = useMemo(() => {
     if (filteredStrikes.length < 2) return true;
@@ -286,12 +333,25 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
       toast.info(`Removed ${action} ${strike} ${type}`);
     } else {
       // Add new leg
-      const rawPrice = contract
-        ? action === 'BUY'
-          ? (contract.ask || contract.mid || 1.0)
-          : (contract.bid || contract.mid || 1.0)
-        : 1.0;
-      const cleanPrice = Math.max(0.01, Math.round(rawPrice * 100) / 100);
+      // Automatically default limit price to the Bid/Ask Midpoint
+      let calculatedMid = 1.0;
+      if (contract) {
+        if (
+          typeof contract.bid === 'number' &&
+          typeof contract.ask === 'number' &&
+          contract.ask > 0 &&
+          contract.bid >= 0
+        ) {
+          calculatedMid = (contract.bid + contract.ask) / 2;
+        } else if (typeof contract.mid === 'number' && contract.mid > 0) {
+          calculatedMid = contract.mid;
+        } else if (action === 'BUY') {
+          calculatedMid = contract.ask || contract.lastPrice || 1.0;
+        } else {
+          calculatedMid = contract.bid || contract.lastPrice || 1.0;
+        }
+      }
+      const cleanPrice = Math.max(0.01, Math.round(calculatedMid * 100) / 100);
 
       const newLeg: OptionDraftLeg = {
         id: `leg_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
@@ -312,8 +372,12 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
       const next = [...legs, newLeg];
       setLegs(next);
       updateNetPrice(next);
-      toast.success(`Added ${action} ${symbol} $${strike} ${type}`, {
-        description: `Exp: ${selectedExpiration} • Est: $${cleanPrice.toFixed(2)}`
+      toast.success(`Added ${action} ${symbol} $${strike} ${type} @ Mid $${cleanPrice.toFixed(2)}`, {
+        description: `Limit set to Mid: $${cleanPrice.toFixed(2)}${
+          contract?.bid !== undefined && contract?.ask !== undefined
+            ? ` (Bid: $${contract.bid.toFixed(2)} / Ask: $${contract.ask.toFixed(2)})`
+            : ''
+        }`
       });
     }
   };
@@ -1004,6 +1068,58 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                 <RefreshCw className={cn("w-3.5 h-3.5", isFetchingBalances && "animate-spin text-purple-400")} />
               </Button>
 
+              {/* Full Size Option Chain Button */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={toggleChainFullSize}
+                data-testid="full-size-chain-btn"
+                className={cn(
+                  "h-8 px-2.5 text-xs border border-slate-800 cursor-pointer flex items-center gap-1.5 transition-all select-none",
+                  isChainFullSize
+                    ? "bg-amber-500/20 text-amber-300 border-amber-500/60 shadow-xs ring-1 ring-amber-400/30 font-bold"
+                    : "bg-slate-900/60 text-slate-300 hover:text-white hover:border-amber-500/50"
+                )}
+                title={isChainFullSize ? "Exit Full Size Option Chain (Restore Panels)" : "Full Size Option Chain (Maximize Chain to see it better)"}
+              >
+                {isChainFullSize ? (
+                  <Minimize2 className="w-3.5 h-3.5 text-amber-300" />
+                ) : (
+                  <Maximize2 className="w-3.5 h-3.5 text-slate-400" />
+                )}
+                <span className="hidden sm:inline font-mono">
+                  {isChainFullSize ? 'Restore' : 'Full Chain'}
+                </span>
+              </Button>
+
+              {/* Tastytrade Layout Toggle Button */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={toggleLayoutMode}
+                data-testid="station-layout-toggle-btn"
+                className={cn(
+                  "h-8 px-2.5 text-xs text-slate-300 hover:text-white border border-slate-800 hover:border-purple-500/50 cursor-pointer flex items-center gap-1.5 transition-all select-none",
+                  layoutMode === 'tastytrade'
+                    ? "bg-purple-950/60 text-purple-200 border-purple-500/60 shadow-xs ring-1 ring-purple-400/30 font-bold"
+                    : "bg-slate-900/60"
+                )}
+                title={
+                  layoutMode === 'tastytrade'
+                    ? "Switch to Side-by-Side 3-Column Layout"
+                    : "Switch to Tastytrade Layout (Option Chain on top, Strategy Builder below)"
+                }
+              >
+                {layoutMode === 'tastytrade' ? (
+                  <LayoutPanelLeft className="w-3.5 h-3.5 text-purple-300" />
+                ) : (
+                  <LayoutPanelTop className="w-3.5 h-3.5 text-purple-400" />
+                )}
+                <span className="hidden md:inline font-mono">
+                  {layoutMode === 'tastytrade' ? '3-Col View' : 'Tastytrade View'}
+                </span>
+              </Button>
+
               <Button
                 variant="ghost"
                 size="sm"
@@ -1141,13 +1257,11 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
         </div>
 
         {/* =========================================================================
-            MAIN 3-PANEL WORKSPACE
+            MAIN WORKSPACE (Supports: Full-Size Chain, Tastytrade Top/Bottom, or Side-by-Side 3-Col)
            ========================================================================= */}
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
-          {/* =========================================================================
-              LEFT PANEL (Col 6): INTERACTIVE OPTION CHAIN MATRIX
-             ========================================================================= */}
-          <div className="lg:col-span-6 border-r border-border/70 flex flex-col h-full overflow-hidden bg-slate-950/60">
+        {(() => {
+          const optionChainNode = (
+            <div className="flex flex-col h-full overflow-hidden bg-slate-950/60 min-h-0">
             {/* Expiration cycles ribbon */}
             <div className="p-2.5 bg-slate-900/60 border-b border-border/60 flex items-center justify-between gap-2 shrink-0">
               <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-thin py-0.5">
@@ -1204,10 +1318,13 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                 {spotPrice > 0 && expectedMoveDollars > 0 && (
                   <div
                     className="hidden md:flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-[10.5px] font-mono text-amber-300 shadow-xs"
-                    title={`1 Standard Deviation Expected Move based on IV ${atmIv.toFixed(1)}% over ${chainDte} days`}
+                    title={`1 Standard Deviation (±$${expectedMoveDollars.toFixed(2)}, ~68.2%) & 2 Standard Deviation (±$${expectedMoveDollars2Sd.toFixed(2)}, ~95.4%) Expected Move based on IV ${atmIv.toFixed(1)}% over ${chainDte} days`}
                   >
                     <span className="text-amber-400/80 text-[10px]">IVx: {atmIv.toFixed(1)}%</span>
                     <span className="font-extrabold text-amber-300">(±${expectedMoveDollars.toFixed(2)})</span>
+                    <span className="text-cyan-300 text-[10px] font-semibold border-l border-amber-500/30 pl-1.5 hidden lg:inline" title="2 Standard Deviation Move">
+                      2σ: ±${expectedMoveDollars2Sd.toFixed(2)}
+                    </span>
                   </div>
                 )}
 
@@ -1229,6 +1346,75 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                     </button>
                   ))}
                 </div>
+
+                {/* Layout & Full Size Chain Quick Controls */}
+                <div className="flex items-center gap-1.5 pl-2 border-l border-slate-800 shrink-0">
+                  <button
+                    type="button"
+                    onClick={toggleLayoutMode}
+                    data-testid="chain-ribbon-layout-toggle-btn"
+                    className={cn(
+                      "px-2 py-0.5 rounded text-[10px] font-mono transition-colors cursor-pointer flex items-center gap-1 border select-none",
+                      layoutMode === 'tastytrade'
+                        ? "bg-purple-950/60 text-purple-200 border-purple-500/60 font-bold"
+                        : "bg-slate-900/60 text-slate-400 border-slate-800 hover:text-slate-200"
+                    )}
+                    title={
+                      layoutMode === 'tastytrade'
+                        ? "Switch to Side-by-Side 3-Col Layout"
+                        : "Switch to Tastytrade Layout (Option Chain on top, Strategy Builder below)"
+                    }
+                  >
+                    {layoutMode === 'tastytrade' ? (
+                      <LayoutPanelLeft className="w-3 h-3 text-purple-300" />
+                    ) : (
+                      <LayoutPanelTop className="w-3 h-3 text-purple-400" />
+                    )}
+                    <span className="hidden sm:inline">
+                      {layoutMode === 'tastytrade' ? '3-Col' : 'Tastytrade'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={toggleChainFullSize}
+                    data-testid="chain-ribbon-fullsize-btn"
+                    className={cn(
+                      "px-2 py-0.5 rounded text-[10px] font-mono transition-colors cursor-pointer flex items-center gap-1 border select-none",
+                      isChainFullSize
+                        ? "bg-amber-500/20 text-amber-300 border-amber-500/60 font-bold"
+                        : "bg-slate-900/60 text-slate-400 border-slate-800 hover:text-slate-200"
+                    )}
+                    title={
+                      isChainFullSize
+                        ? "Exit Full Size Option Chain (Restore Side Panels)"
+                        : "Full Size Option Chain to see it better"
+                    }
+                  >
+                    {isChainFullSize ? (
+                      <Minimize2 className="w-3 h-3 text-amber-300" />
+                    ) : (
+                      <Maximize2 className="w-3 h-3 text-slate-400" />
+                    )}
+                    <span className="hidden sm:inline">
+                      {isChainFullSize ? 'Restore' : 'Full Chain'}
+                    </span>
+                  </button>
+                </div>
+
+                {isChainFullSize && (
+                  <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-mono shrink-0">
+                    <span className="font-bold">FULL CHAIN ACTIVE</span>
+                    <button
+                      type="button"
+                      onClick={() => setIsChainFullSize(false)}
+                      data-testid="exit-full-chain-btn"
+                      className="underline text-[10px] text-amber-200 hover:text-white cursor-pointer ml-1"
+                    >
+                      (Restore Panels)
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1244,8 +1430,8 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
               <div className="col-span-2 text-center text-amber-300 font-bold flex items-center justify-center gap-1">
                 <span>STRIKE</span>
                 {expectedMoveDollars > 0 && (
-                  <span className="text-[9px] text-amber-400/80 font-normal hidden sm:inline" title="1 Standard Deviation Expected Move Bracket">
-                    (1σ)
+                  <span className="text-[9px] text-amber-400/80 font-normal hidden sm:inline" title="1σ (68.2%) & 2σ (95.4%) Standard Deviation Expected Move Brackets">
+                    (1σ / 2σ)
                   </span>
                 )}
               </div>
@@ -1277,16 +1463,20 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                   const prevStrike = idx > 0 ? filteredStrikes[idx - 1].strike : null;
                   const currStrike = filteredStrikes[idx].strike;
 
-                  const list: Array<{ id: 'LOWER' | 'SPOT' | 'UPPER'; val: number; label: string; delta: string }> = isAscending
+                  const list: Array<{ id: 'LOWER_2SD' | 'LOWER' | 'SPOT' | 'UPPER' | 'UPPER_2SD'; val: number; label: string; delta: string }> = isAscending
                     ? [
+                        { id: 'LOWER_2SD', val: lowerBound2Sd, label: '-2σ Expected Move', delta: `-$${expectedMoveDollars2Sd.toFixed(2)}` },
                         { id: 'LOWER', val: lowerBound, label: '-1σ Expected Move', delta: `-$${expectedMoveDollars.toFixed(2)}` },
                         { id: 'SPOT', val: spotPrice, label: 'Spot Price', delta: 'Current Last' },
                         { id: 'UPPER', val: upperBound, label: '+1σ Expected Move', delta: `+$${expectedMoveDollars.toFixed(2)}` },
+                        { id: 'UPPER_2SD', val: upperBound2Sd, label: '+2σ Expected Move', delta: `+$${expectedMoveDollars2Sd.toFixed(2)}` },
                       ]
                     : [
+                        { id: 'UPPER_2SD', val: upperBound2Sd, label: '+2σ Expected Move', delta: `+$${expectedMoveDollars2Sd.toFixed(2)}` },
                         { id: 'UPPER', val: upperBound, label: '+1σ Expected Move', delta: `+$${expectedMoveDollars.toFixed(2)}` },
                         { id: 'SPOT', val: spotPrice, label: 'Spot Price', delta: 'Current Last' },
                         { id: 'LOWER', val: lowerBound, label: '-1σ Expected Move', delta: `-$${expectedMoveDollars.toFixed(2)}` },
+                        { id: 'LOWER_2SD', val: lowerBound2Sd, label: '-2σ Expected Move', delta: `-$${expectedMoveDollars2Sd.toFixed(2)}` },
                       ];
 
                   const toRender: typeof list = [];
@@ -1294,12 +1484,14 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                   list.forEach(b => {
                     if (b.val <= 0 || renderedBoundaries.has(b.id)) return;
 
+                    const step = filteredStrikes.length > 1 ? Math.abs(filteredStrikes[1].strike - currStrike) : 5;
+                    const tolerance = (b.id === 'LOWER_2SD' || b.id === 'UPPER_2SD') ? step * 2.5 : step * 1.5;
+
                     if (prevStrike === null) {
-                      const step = filteredStrikes.length > 1 ? Math.abs(filteredStrikes[1].strike - currStrike) : 5;
-                      if (isAscending && currStrike >= b.val && currStrike - b.val <= step * 1.5) {
+                      if (isAscending && currStrike >= b.val && currStrike - b.val <= tolerance) {
                         renderedBoundaries.add(b.id);
                         toRender.push(b);
-                      } else if (!isAscending && currStrike <= b.val && b.val - currStrike <= step * 1.5) {
+                      } else if (!isAscending && currStrike <= b.val && b.val - currStrike <= tolerance) {
                         renderedBoundaries.add(b.id);
                         toRender.push(b);
                       }
@@ -1322,21 +1514,38 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                   const lastStrike = filteredStrikes[filteredStrikes.length - 1].strike;
                   const step = filteredStrikes.length > 1 ? Math.abs(filteredStrikes[filteredStrikes.length - 1].strike - filteredStrikes[filteredStrikes.length - 2].strike) : 5;
 
-                  const trailing: Array<{ id: 'LOWER' | 'SPOT' | 'UPPER'; val: number; label: string; delta: string }> = [];
-                  if (!renderedBoundaries.has('UPPER') && upperBound > 0) {
-                    if (isAscending && upperBound > lastStrike && upperBound - lastStrike <= step * 1.5) {
-                      trailing.push({ id: 'UPPER', val: upperBound, label: '+1σ Expected Move', delta: `+$${expectedMoveDollars.toFixed(2)}` });
+                  const trailing: Array<{ id: 'LOWER_2SD' | 'LOWER' | 'SPOT' | 'UPPER' | 'UPPER_2SD'; val: number; label: string; delta: string }> = [];
+                  if (isAscending) {
+                    if (!renderedBoundaries.has('UPPER') && upperBound > 0) {
+                      if (upperBound > lastStrike && upperBound - lastStrike <= step * 1.5) {
+                        renderedBoundaries.add('UPPER');
+                        trailing.push({ id: 'UPPER', val: upperBound, label: '+1σ Expected Move', delta: `+$${expectedMoveDollars.toFixed(2)}` });
+                      }
                     }
-                  }
-                  if (!renderedBoundaries.has('LOWER') && lowerBound > 0) {
-                    if (!isAscending && lowerBound < lastStrike && lastStrike - lowerBound <= step * 1.5) {
-                      trailing.push({ id: 'LOWER', val: lowerBound, label: '-1σ Expected Move', delta: `-$${expectedMoveDollars.toFixed(2)}` });
+                    if (!renderedBoundaries.has('UPPER_2SD') && upperBound2Sd > 0) {
+                      if (upperBound2Sd > lastStrike && upperBound2Sd - lastStrike <= step * 2.5) {
+                        renderedBoundaries.add('UPPER_2SD');
+                        trailing.push({ id: 'UPPER_2SD', val: upperBound2Sd, label: '+2σ Expected Move', delta: `+$${expectedMoveDollars2Sd.toFixed(2)}` });
+                      }
+                    }
+                  } else {
+                    if (!renderedBoundaries.has('LOWER') && lowerBound > 0) {
+                      if (lowerBound < lastStrike && lastStrike - lowerBound <= step * 1.5) {
+                        renderedBoundaries.add('LOWER');
+                        trailing.push({ id: 'LOWER', val: lowerBound, label: '-1σ Expected Move', delta: `-$${expectedMoveDollars.toFixed(2)}` });
+                      }
+                    }
+                    if (!renderedBoundaries.has('LOWER_2SD') && lowerBound2Sd > 0) {
+                      if (lowerBound2Sd < lastStrike && lastStrike - lowerBound2Sd <= step * 2.5) {
+                        renderedBoundaries.add('LOWER_2SD');
+                        trailing.push({ id: 'LOWER_2SD', val: lowerBound2Sd, label: '-2σ Expected Move', delta: `-$${expectedMoveDollars2Sd.toFixed(2)}` });
+                      }
                     }
                   }
                   return trailing;
                 };
 
-                const renderDividerLine = (item: { id: 'LOWER' | 'SPOT' | 'UPPER'; val: number; label: string; delta: string }) => {
+                const renderDividerLine = (item: { id: 'LOWER_2SD' | 'LOWER' | 'SPOT' | 'UPPER' | 'UPPER_2SD'; val: number; label: string; delta: string }) => {
                   if (item.id === 'SPOT') {
                     return (
                       <div
@@ -1350,6 +1559,26 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                         <div className="relative z-10 px-3 py-0.5 rounded-full bg-amber-500 text-slate-950 font-mono font-black text-[11px] flex items-center gap-1.5 shadow-lg border border-amber-300">
                           <span className="w-1.5 h-1.5 rounded-full bg-slate-950 animate-ping" />
                           <span>SPOT PRICE: ${item.val.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (item.id === 'UPPER_2SD') {
+                    return (
+                      <div
+                        key={`divider-upper-2sd-${item.val}`}
+                        className="relative my-1.5 py-0.5 flex items-center justify-center select-none"
+                        data-testid="expected-move-upper-2sd-line"
+                      >
+                        <div className="absolute inset-0 flex items-center">
+                          <div className="w-full border-t border-dashed border-cyan-400/80 shadow-[0_0_6px_rgba(34,211,238,0.35)]" />
+                        </div>
+                        <div className="relative z-10 px-2.5 py-0.5 rounded-full bg-slate-900 border border-cyan-400 text-cyan-300 font-mono font-bold text-[10px] flex items-center gap-1.5 shadow-md">
+                          <span className="text-cyan-400 font-black">+2σ Expected Move</span>
+                          <span className="text-white font-extrabold">${item.val.toFixed(2)}</span>
+                          <span className="text-cyan-400/80 text-[9px]">({item.delta})</span>
+                          <span className="text-[8.5px] px-1 py-0.5 rounded bg-cyan-950/80 text-cyan-300 border border-cyan-500/30 hidden sm:inline">95.4%</span>
                         </div>
                       </div>
                     );
@@ -1369,6 +1598,27 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                           <span className="text-amber-400 font-black">+1σ Expected Move</span>
                           <span className="text-white font-extrabold">${item.val.toFixed(2)}</span>
                           <span className="text-amber-400/80 text-[9px]">({item.delta})</span>
+                          <span className="text-[8.5px] px-1 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-500/30 hidden sm:inline">68.2%</span>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (item.id === 'LOWER_2SD') {
+                    return (
+                      <div
+                        key={`divider-lower-2sd-${item.val}`}
+                        className="relative my-1.5 py-0.5 flex items-center justify-center select-none"
+                        data-testid="expected-move-lower-2sd-line"
+                      >
+                        <div className="absolute inset-0 flex items-center">
+                          <div className="w-full border-t border-dashed border-cyan-400/80 shadow-[0_0_6px_rgba(34,211,238,0.35)]" />
+                        </div>
+                        <div className="relative z-10 px-2.5 py-0.5 rounded-full bg-slate-900 border border-cyan-400 text-cyan-300 font-mono font-bold text-[10px] flex items-center gap-1.5 shadow-md">
+                          <span className="text-cyan-400 font-black">-2σ Expected Move</span>
+                          <span className="text-white font-extrabold">${item.val.toFixed(2)}</span>
+                          <span className="text-cyan-400/80 text-[9px]">({item.delta})</span>
+                          <span className="text-[8.5px] px-1 py-0.5 rounded bg-cyan-950/80 text-cyan-300 border border-cyan-500/30 hidden sm:inline">95.4%</span>
                         </div>
                       </div>
                     );
@@ -1387,6 +1637,7 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                         <span className="text-amber-400 font-black">-1σ Expected Move</span>
                         <span className="text-white font-extrabold">${item.val.toFixed(2)}</span>
                         <span className="text-amber-400/80 text-[9px]">({item.delta})</span>
+                        <span className="text-[8.5px] px-1 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-500/30 hidden sm:inline">68.2%</span>
                       </div>
                     </div>
                   );
@@ -1403,8 +1654,9 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                       const isCallItm = row.call?.inTheMoney ?? (spotPrice > 0 && strike <= spotPrice);
                       const isPutItm = row.put?.inTheMoney ?? (spotPrice > 0 && strike >= spotPrice);
 
-                      // 1 SD Expected Move Bracket check along Strike column
+                      // 1 SD & 2 SD Expected Move Bracket checks along Strike column
                       const isWithinExpectedMove = spotPrice > 0 && expectedMoveDollars > 0 && strike >= lowerBound && strike <= upperBound;
+                      const isWithinExpectedMove2Sd = spotPrice > 0 && expectedMoveDollars2Sd > 0 && strike >= lowerBound2Sd && strike <= upperBound2Sd;
 
                       const dividersBefore = getDividersForIndex(idx);
 
@@ -1449,7 +1701,7 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                                 type="button"
                                 onClick={() => handleToggleChainLeg('SELL', 'CALL', strike, row.call)}
                                 className="hover:text-amber-300 text-slate-300 font-mono transition-colors text-left cursor-pointer"
-                                title={`Sell ${strike} Call @ $${row.call?.bid?.toFixed(2) || '0.00'}`}
+                                title={`Sell ${strike} Call @ $${row.call?.bid?.toFixed(2) || '0.00'}${row.call?.bid !== undefined && row.call?.ask !== undefined ? ` (Limit sets to Mid: $${((row.call.bid + row.call.ask) / 2).toFixed(2)})` : ''}`}
                               >
                                 {row.call?.bid ? `$${row.call.bid.toFixed(2)}` : '-'}
                               </button>
@@ -1457,14 +1709,24 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                                 type="button"
                                 onClick={() => handleToggleChainLeg('BUY', 'CALL', strike, row.call)}
                                 className="font-bold text-emerald-400 hover:text-emerald-300 transition-colors text-left cursor-pointer"
-                                title={`Buy ${strike} Call @ $${row.call?.ask?.toFixed(2) || '0.00'}`}
+                                title={`Buy ${strike} Call @ $${row.call?.ask?.toFixed(2) || '0.00'}${row.call?.bid !== undefined && row.call?.ask !== undefined ? ` (Limit sets to Mid: $${((row.call.bid + row.call.ask) / 2).toFixed(2)})` : ''}`}
                               >
                                 {row.call?.ask ? `$${row.call.ask.toFixed(2)}` : '-'}
                               </button>
                             </div>
 
-                            {/* Center Strike Ladder (Col 2) with 1 SD Vertical Ruler */}
+                            {/* Center Strike Ladder (Col 2) with 1 SD and 2 SD Vertical Rulers */}
                             <div className="col-span-2 text-center relative py-1 flex items-center justify-center">
+                              {isWithinExpectedMove2Sd && (
+                                <div
+                                  className={cn(
+                                    "absolute left-0 top-0 bottom-0 w-0.5 transition-colors",
+                                    isWithinExpectedMove ? "bg-cyan-500/30" : "bg-cyan-400/90 shadow-[0_0_4px_rgba(34,211,238,0.5)]"
+                                  )}
+                                  title={`Strike $${strike} is within 2σ Expected Move [$${lowerBound2Sd.toFixed(2)} – $${upperBound2Sd.toFixed(2)}] (95.4% Probability)`}
+                                />
+                              )}
+
                               <span
                                 className={cn(
                                   "px-2 py-0.5 rounded font-black tracking-wider text-xs",
@@ -1472,15 +1734,18 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                                     ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
                                     : isWithinExpectedMove
                                     ? "text-amber-100 font-bold"
+                                    : isWithinExpectedMove2Sd
+                                    ? "text-cyan-200/90 font-medium"
                                     : "text-slate-300"
                                 )}
                               >
                                 ${strike.toFixed(1)}
                               </span>
+
                               {isWithinExpectedMove && (
                                 <div
                                   className="absolute right-0 top-0 bottom-0 w-1 bg-amber-500/90 shadow-[0_0_6px_rgba(245,158,11,0.5)]"
-                                  title={`Strike $${strike} is within 1σ Expected Move [$${lowerBound.toFixed(2)} – $${upperBound.toFixed(2)}]`}
+                                  title={`Strike $${strike} is within 1σ Expected Move [$${lowerBound.toFixed(2)} – $${upperBound.toFixed(2)}] (68.2% Probability)`}
                                 />
                               )}
                             </div>
@@ -1499,7 +1764,7 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                                 type="button"
                                 onClick={() => handleToggleChainLeg('SELL', 'PUT', strike, row.put)}
                                 className="font-bold text-rose-400 hover:text-rose-300 transition-colors text-left cursor-pointer"
-                                title={`Sell ${strike} Put @ $${row.put?.bid?.toFixed(2) || '0.00'}`}
+                                title={`Sell ${strike} Put @ $${row.put?.bid?.toFixed(2) || '0.00'}${row.put?.bid !== undefined && row.put?.ask !== undefined ? ` (Limit sets to Mid: $${((row.put.bid + row.put.ask) / 2).toFixed(2)})` : ''}`}
                               >
                                 {row.put?.bid ? `$${row.put.bid.toFixed(2)}` : '-'}
                               </button>
@@ -1507,7 +1772,7 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                                 type="button"
                                 onClick={() => handleToggleChainLeg('BUY', 'PUT', strike, row.put)}
                                 className="hover:text-amber-300 text-slate-300 font-mono transition-colors text-right cursor-pointer"
-                                title={`Buy ${strike} Put @ $${row.put?.ask?.toFixed(2) || '0.00'}`}
+                                title={`Buy ${strike} Put @ $${row.put?.ask?.toFixed(2) || '0.00'}${row.put?.bid !== undefined && row.put?.ask !== undefined ? ` (Limit sets to Mid: $${((row.put.bid + row.put.ask) / 2).toFixed(2)})` : ''}`}
                               >
                                 {row.put?.ask ? `$${row.put.ask.toFixed(2)}` : '-'}
                               </button>
@@ -1535,12 +1800,11 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                 );
               })()}
             </div>
-          </div>
+            </div>
+          );
 
-          {/* =========================================================================
-              CENTER PANEL (Col 3): ACTIVE TRADE DRAFT & STRATEGY BUILDER
-             ========================================================================= */}
-          <div className="lg:col-span-3 border-r border-border/70 flex flex-col h-full overflow-hidden bg-slate-950/80 p-3 space-y-3">
+          const strategyBuilderNode = (
+            <div className="flex flex-col h-full overflow-y-auto bg-slate-950/80 p-3 space-y-3 min-h-0">
             {/* Header: Presets */}
             <div className="flex items-center justify-between">
               <span className="text-xs uppercase font-bold text-slate-300 flex items-center gap-1">
@@ -1692,7 +1956,17 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
 
               {orderType === 'Limit' && (
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-mono text-slate-400">Limit Price:</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-mono text-slate-400">Limit Price:</span>
+                    <button
+                      type="button"
+                      onClick={() => updateNetPrice(legs)}
+                      className="text-[9px] px-1.5 py-0.5 rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 font-mono font-bold transition-colors cursor-pointer"
+                      title="Reset limit price to Bid/Ask Midpoint"
+                    >
+                      MID
+                    </button>
+                  </div>
                   <div className="flex items-center gap-1 font-mono">
                     <button
                       type="button"
@@ -1818,12 +2092,11 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                 </div>
               </div>
             )}
-          </div>
+            </div>
+          );
 
-          {/* =========================================================================
-              RIGHT PANEL (Col 3): COMPARISON & METRICS TABS
-             ========================================================================= */}
-          <div className="lg:col-span-3 flex flex-col h-full overflow-hidden bg-slate-950/90 p-3 space-y-3">
+          const brokerComparisonNode = (
+            <div className="flex flex-col h-full overflow-y-auto bg-slate-950/90 p-3 space-y-3 min-h-0">
             <Tabs value={activeTab} onValueChange={v => setActiveTab(v as any)} className="w-full flex-1 flex flex-col">
               <TabsList className="grid grid-cols-2 bg-slate-900 border border-slate-800 rounded-xl p-0.5 shrink-0">
                 <TabsTrigger
@@ -2145,8 +2418,66 @@ export const FullWindowOptionsTradeStationModal: React.FC<FullWindowOptionsTrade
                 </div>
               </TabsContent>
             </Tabs>
-          </div>
-        </div>
+            </div>
+          );
+
+          if (isChainFullSize) {
+            return (
+              <div
+                data-testid="station-workspace-full-chain"
+                className="flex-1 flex flex-col overflow-hidden bg-slate-950/60 min-h-0"
+              >
+                {optionChainNode}
+              </div>
+            );
+          }
+
+          if (layoutMode === 'tastytrade') {
+            return (
+              <div
+                data-testid="station-workspace-tastytrade"
+                className="flex-1 flex flex-col overflow-hidden min-h-0"
+              >
+                {/* TOP: Option Chain Matrix (Full Width) */}
+                <div className="flex-1 min-h-[45%] max-h-[62%] sm:max-h-[65%] border-b border-border/70 flex flex-col overflow-hidden min-h-0">
+                  {optionChainNode}
+                </div>
+
+                {/* BOTTOM: Strategy Builder (Col 7) & Broker Compare / Payoff (Col 5) like Tastytrade app */}
+                <div className="h-[42%] min-h-[290px] max-h-[55%] grid grid-cols-1 lg:grid-cols-12 overflow-hidden bg-slate-950/90 min-h-0">
+                  <div className="lg:col-span-7 border-r border-border/70 h-full overflow-hidden min-h-0">
+                    {strategyBuilderNode}
+                  </div>
+                  <div className="lg:col-span-5 h-full overflow-hidden min-h-0">
+                    {brokerComparisonNode}
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div
+              data-testid="station-workspace-split"
+              className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-hidden min-h-0"
+            >
+              {/* LEFT PANEL (Col 6): INTERACTIVE OPTION CHAIN MATRIX */}
+              <div className="lg:col-span-6 border-r border-border/70 h-full overflow-hidden min-h-0">
+                {optionChainNode}
+              </div>
+
+              {/* CENTER PANEL (Col 3): ACTIVE TRADE DRAFT & STRATEGY BUILDER */}
+              <div className="lg:col-span-3 border-r border-border/70 h-full overflow-hidden min-h-0">
+                {strategyBuilderNode}
+              </div>
+
+              {/* RIGHT PANEL (Col 3): COMPARISON & METRICS TABS */}
+              <div className="lg:col-span-3 h-full overflow-hidden min-h-0">
+                {brokerComparisonNode}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* =========================================================================
             BOTTOM EXECUTION & STAGING ACTION BAR

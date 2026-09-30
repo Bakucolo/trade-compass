@@ -1045,9 +1045,14 @@ export function ExecutionQueueManager({
                     ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
                     : trade.action === 'SELL' || trade.action === 'STC'
                     ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
-                    : trade.action === 'SHORT'
+                    : trade.action === 'SHORT' || trade.action === 'STO'
                     ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                    : trade.action === 'COVERED_CALL'
+                    ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30'
                     : 'bg-purple-500/15 text-purple-300 border-purple-500/30';
+
+                const stratMatch = trade.notes?.match(/\[Strategy:\s*([^\]]+)\]/i);
+                const strategyName = stratMatch ? stratMatch[1] : (trade.action === 'COVERED_CALL' ? 'Covered Call' : null);
 
                 const isDragged = draggedItemId === trade.id;
                 const isDragOver = dragOverItemId === trade.id;
@@ -1125,6 +1130,12 @@ export function ExecutionQueueManager({
                             {trade.action}
                           </Badge>
 
+                          {strategyName && (
+                            <Badge variant="outline" className="text-[10px] font-bold px-2 py-0 border-indigo-500/40 bg-indigo-500/15 text-indigo-300">
+                              {strategyName}
+                            </Badge>
+                          )}
+
                           <Badge variant="outline" className="text-[10px] font-mono border-border/50 text-muted-foreground">
                             {trade.assetType}
                           </Badge>
@@ -1164,7 +1175,10 @@ export function ExecutionQueueManager({
                           Order &amp; Sizing
                         </span>
                         <p className="font-mono font-bold text-foreground">
-                          {trade.quantity.toLocaleString()} {trade.assetType === 'OPTION' ? 'cts' : 'shs'} @ {trade.orderType}
+                          {trade.action === 'COVERED_CALL'
+                            ? `${Math.round(trade.quantity * 100)} shs + ${trade.quantity} call`
+                            : `${trade.quantity.toLocaleString()} ${trade.assetType === 'OPTION' ? 'cts' : 'shs'}`
+                          } @ {trade.orderType}
                         </p>
                         <p className="text-[11px] font-mono text-muted-foreground">
                           Target: {trade.targetPrice ? `$${trade.targetPrice.toFixed(2)}` : 'Market'}

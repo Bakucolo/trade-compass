@@ -47,6 +47,13 @@ import {
   deleteTradeRecord
 } from './services/tradeService';
 import { fetchFredMacroData, fetchYieldsAndBondsChartData } from './services/fredService';
+import { fetchFedFundsCurve } from './services/fedFundsCurveService';
+import {
+  computeGoldMacroRegime,
+  fetchHistoricalGoldMacroRegime,
+  runGoldRegimeBacktest,
+  generateGoldMacroAiNarrative
+} from './services/goldMacroService';
 import { fetchSectorsOverview, fetchSectorsHistoryComparison } from './services/sectorsService';
 import { fetchGrowthAndValuationDossier } from './services/growthValuationService';
 import { fetchInvestorRelationsDossier } from './services/investorRelationsService';
@@ -2642,6 +2649,69 @@ app.get('/api/macro/volatility-intelligence', async (req, res) => {
     res.json(data);
   } catch (error: any) {
     logToFile(`Error in GET /api/macro/volatility-intelligence: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/macro/fed-funds-curve - 30-Day Fed Funds Futures (ZQ) curve, implied rate hikes/cuts, and FOMC probabilities
+app.get('/api/macro/fed-funds-curve', async (req, res) => {
+  try {
+    const forceRefresh = req.query.refresh === 'true';
+    const data = await fetchFedFundsCurve(forceRefresh);
+    res.json(data);
+  } catch (error: any) {
+    logToFile(`Error in GET /api/macro/fed-funds-curve: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==========================================
+// GOLD MACRO REGIME DASHBOARD ENDPOINTS
+// ==========================================
+
+// GET /api/macro/gold-regime - Institutional 5-Pillar Gold Macro Regime Assessment & Score
+app.get('/api/macro/gold-regime', async (req, res) => {
+  try {
+    const data = await computeGoldMacroRegime();
+    res.json(data);
+  } catch (error: any) {
+    logToFile(`Error in GET /api/macro/gold-regime: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/macro/gold-regime/history - Historical Gold Macro Score vs Gold Price & Sub-Pillars
+app.get('/api/macro/gold-regime/history', async (req, res) => {
+  try {
+    const timeframe = (req.query.timeframe as any) || '5Y';
+    const data = await fetchHistoricalGoldMacroRegime(timeframe);
+    res.json(data);
+  } catch (error: any) {
+    logToFile(`Error in GET /api/macro/gold-regime/history: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/macro/gold-regime/backtest - Point-in-Time Forward Return Backtesting Report
+app.get('/api/macro/gold-regime/backtest', async (req, res) => {
+  try {
+    const data = await runGoldRegimeBacktest();
+    res.json(data);
+  } catch (error: any) {
+    logToFile(`Error in GET /api/macro/gold-regime/backtest: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/macro/gold-regime/ai-narrative - Optional OpenRouter AI Narrative Layer
+app.post('/api/macro/gold-regime/ai-narrative', async (req, res) => {
+  try {
+    const { forceRefresh } = req.body || {};
+    const snapshot = await computeGoldMacroRegime();
+    const narrative = await generateGoldMacroAiNarrative(snapshot, forceRefresh === true);
+    res.json(narrative);
+  } catch (error: any) {
+    logToFile(`Error in POST /api/macro/gold-regime/ai-narrative: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
