@@ -6,7 +6,7 @@ import { agentActivityTracker } from './agentActivityService';
 import { transcribeTelegramVoice } from './voiceTranscriptionService';
 import { autoCreateAlertsFromText } from './thoughtLogAlertService';
 import { createPlannedTrade, PlannedTradeItem } from './plannedTradeService';
-import { sendTelegramMessage } from './telegramReportService';
+import { sendTelegramMessage, generateAndSendDailyReport } from './telegramReportService';
 
 const logToFile = (msg: string) => console.log(msg);
 
@@ -56,6 +56,35 @@ export interface BufferSyncResult {
 let lastSyncTimestamp: string | null = null;
 let lastSyncCount: number = 0;
 let isConsuming = false;
+/**
+ * Detects whether an incoming Telegram message is requesting an on-demand executive briefing
+ */
+export function isTelegramBriefingRequest(text: string): boolean {
+  if (!text || typeof text !== 'string') return false;
+  const cleaned = text.trim().toLowerCase();
+
+  // Single word or punctuated command (e.g. "briefing", "/briefing", "briefing!", "#briefing")
+  if (/^[\/#]?(?:briefing|dailybriefing|daily_briefing|executive_briefing)[\s!?.]*$/i.test(cleaned)) {
+    return true;
+  }
+
+  // Exact command phrase (e.g. "send briefing", "send me the briefing", "get briefing", "generate briefing", "need briefing")
+  if (/\b(?:send|get|give|produce|generate|dispatch|request|fetch|show|need|want)\s+(?:me\s+)?(?:the\s+)?(?:latest\s+|today'?s\s+|daily\s+|executive\s+|portfolio\s+|pdf\s+)?briefing\b/i.test(cleaned)) {
+    return true;
+  }
+
+  // Explicit type of briefing requested (e.g. "executive briefing", "daily briefing", "morning briefing", "portfolio briefing", "pdf briefing")
+  if (/\b(?:executive|daily|morning|portfolio|pdf)\s+briefing\b/i.test(cleaned)) {
+    return true;
+  }
+
+  // "briefing please", "briefing today", "today's briefing"
+  if (/\bbriefing\s+(?:please|now|today|update|report)\b/i.test(cleaned) || /\btoday'?s\s+briefing\b/i.test(cleaned)) {
+    return true;
+  }
+
+  return false;
+}
 
 /**
  * Determine sentiment from raw text
@@ -822,6 +851,86 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       const isExplicitAlertsThread = msgThreadNum !== undefined && msgThreadNum === configuredAlertsThreadId;
       const isExplicitIdeasThread = configuredIdeasThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredIdeasThreadId;
       const isExplicitExecutionThread = configuredExecutionThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredExecutionThreadId;
+
+      // On-Demand Executive Briefing Command Detection (e.g. "briefing", "/briefing", "send briefing")
+      if (isTelegramBriefingRequest(contentText)) {
+        const senderLabel = msg.sender?.username ? `@${msg.sender.username}` : (msg.sender?.firstName || 'Mobile');
+        const targetChatId = msg.chat?.id || msg.sender?.id || process.env.TELEGRAM_CHAT_ID;
+        const targetThreadId = msgThreadNum;
+
+        logToFile(`[TelegramBuffer] 📊 Detected on-demand briefing request from ${senderLabel} (chat: ${targetChatId}, thread: ${targetThreadId})`);
+
+        // 1. Immediately acknowledge request via Telegram message
+        if (process.env.TELEGRAM_BOT_TOKEN && targetChatId) {
+          try {
+            await sendTelegramMessage({
+              text: '📊 *Generating Executive Briefing PDF...*\n\n_Synthesizing live portfolio defense, dip radar, and macro volatility dossier. Sending to your phone momentarily!_ ⏳',
+              chatId: targetChatId,
+              messageThreadId: targetThreadId,
+              parseMode: 'Markdown',
+            });
+          } catch (ackErr: any) {
+            logToFile(`[TelegramBuffer] Failed to send briefing ack: ${ackErr.message}`);
+          }
+        }
+
+        // 2. Synthesize institutional report and dispatch PDF
+        let reportResult: any = null;
+        try {
+          reportResult = await generateAndSendDailyReport({
+            chatId: targetChatId,
+            messageThreadId: targetThreadId,
+            requestedBy: senderLabel,
+          });
+          logToFile(`[TelegramBuffer] Successfully dispatched on-demand briefing PDF to Telegram (${reportResult?.filename || 'report.pdf'}, ${reportResult?.sizeBytes || 0} bytes)`);
+        } catch (repErr: any) {
+          logToFile(`[TelegramBuffer] Error generating/dispatching on-demand briefing PDF: ${repErr.message}`);
+          if (process.env.TELEGRAM_BOT_TOKEN && targetChatId) {
+            try {
+              await sendTelegramMessage({
+                text: `⚠️ *Executive Briefing Generation Failed*\n\nUnable to generate briefing PDF: ${repErr.message}`,
+                chatId: targetChatId,
+                messageThreadId: targetThreadId,
+                parseMode: 'Markdown',
+              });
+            } catch {}
+          }
+        }
+
+        // 3. Log to ThoughtLog under 'Reports' folder
+        try {
+          const briefingTitle = `📊 Executive Briefing Delivered (${new Date(msg.timestamp).toLocaleTimeString()})`;
+          const savedLog = await (prisma as any).thoughtLog.create({
+            data: {
+              title: briefingTitle,
+              content: contentText.trim(),
+              folder: 'Reports',
+              tags: `Telegram, Briefing, OnDemand, PDF, ${senderLabel}`,
+              symbols: null,
+              sentiment: 'NEUTRAL',
+              isPinned: false,
+              isFulfilled: Boolean(reportResult?.success),
+              agentOutput: reportResult?.success
+                ? `📄 **Executive Briefing PDF Dispatched to Telegram**\n\n• Filename: \`${reportResult.filename}\`\n• Size: ${(reportResult.sizeBytes / 1024).toFixed(1)} KB\n• Dispatched to Chat: \`${targetChatId}\`${targetThreadId ? ` (Thread ${targetThreadId})` : ''}\n• Status: ✅ Delivered`
+                : `⚠️ Briefing generation attempted but encountered an error.`,
+              agentActionType: 'ADD_CONTEXT',
+              marketDataJson: null,
+              createdAt: new Date(msg.timestamp),
+            },
+          });
+
+          createdLogs.push({
+            id: savedLog.id,
+            title: savedLog.title,
+            symbols: null,
+          });
+        } catch (logErr: any) {
+          logToFile(`[TelegramBuffer] Failed to create ThoughtLog for briefing: ${logErr.message}`);
+        }
+
+        continue;
+      }
+
 
       const isAlertsTopic = isExplicitAlertsThread || (!isExplicitAppThread && !isExplicitIdeasThread && !isExplicitExecutionThread && Boolean(
         (msg.topicName && /alert/i.test(msg.topicName)) ||

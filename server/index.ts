@@ -147,6 +147,7 @@ import {
   consumeTelegramBuffer,
   getTelegramBufferStatus,
   setTelegramExecutionThreadId,
+  isTelegramBriefingRequest,
 } from './services/telegramBufferConsumerService';
 import { getAiRatingForStock } from './services/aiRatingService';
 import { calculatePortfolioDividendIncome } from './services/portfolioDividendIncomeService';
@@ -842,39 +843,44 @@ app.get('/api/status', (req, res) => {
 });
 
 app.get('/api/portfolio', async (req, res) => {
-  // Trigger a refresh of positions if connected
-  if (isConnected) {
-    ib.reqPositions();
+  try {
+    // Trigger a refresh of positions if connected
+    if (isConnected) {
+      ib.reqPositions();
+    }
+
+    // Fetch from DB
+    const holdings = await prisma.holding.findMany({
+      include: { broker: true }
+    });
+
+    const enriched = holdings.map(h => {
+      const isIbkr = h.broker?.name === 'Interactive Brokers' || !h.broker;
+      if (!isIbkr) return h;
+
+      const isExplicitIsa = h.brokerSpecificId.includes(IBKR_ISA_ACCOUNT);
+      const isExplicitGia = h.brokerSpecificId.includes(IBKR_GIA_ACCOUNT);
+
+      const isIsa = isExplicitIsa || (!isExplicitGia && h.assetType !== 'OPTION' && h.quantity > 0);
+      const acctNum = isIsa ? IBKR_ISA_ACCOUNT : IBKR_GIA_ACCOUNT;
+      const acctType = isIsa ? 'ISA' : 'GIA';
+      const acctName = isIsa ? `IBKR ISA (${IBKR_ISA_ACCOUNT})` : `IBKR GIA (${IBKR_GIA_ACCOUNT})`;
+      const acctBadge = isIsa ? 'IBKR (ISA)' : 'IBKR (GIA)';
+
+      return {
+        ...h,
+        accountNumber: acctNum,
+        accountType: acctType,
+        accountName: acctName,
+        accountBadge: acctBadge
+      };
+    });
+
+    res.json(enriched);
+  } catch (error: any) {
+    logToFile(`[Portfolio Error] Failed to fetch portfolio holdings: ${error?.message || error}`);
+    res.status(500).json({ error: 'Failed to fetch portfolio holdings', details: error?.message });
   }
-
-  // Fetch from DB
-  const holdings = await prisma.holding.findMany({
-    include: { broker: true }
-  });
-
-  const enriched = holdings.map(h => {
-    const isIbkr = h.broker?.name === 'Interactive Brokers' || !h.broker;
-    if (!isIbkr) return h;
-
-    const isExplicitIsa = h.brokerSpecificId.includes(IBKR_ISA_ACCOUNT);
-    const isExplicitGia = h.brokerSpecificId.includes(IBKR_GIA_ACCOUNT);
-
-    const isIsa = isExplicitIsa || (!isExplicitGia && h.assetType !== 'OPTION' && h.quantity > 0);
-    const acctNum = isIsa ? IBKR_ISA_ACCOUNT : IBKR_GIA_ACCOUNT;
-    const acctType = isIsa ? 'ISA' : 'GIA';
-    const acctName = isIsa ? `IBKR ISA (${IBKR_ISA_ACCOUNT})` : `IBKR GIA (${IBKR_GIA_ACCOUNT})`;
-    const acctBadge = isIsa ? 'IBKR (ISA)' : 'IBKR (GIA)';
-
-    return {
-      ...h,
-      accountNumber: acctNum,
-      accountType: acctType,
-      accountName: acctName,
-      accountBadge: acctBadge
-    };
-  });
-
-  res.json(enriched);
 });
 
 // In-memory cache for portfolio balances to guarantee sub-millisecond response times
@@ -5090,14 +5096,15 @@ const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 
 // Generic Symbol Search API (Fast Query2 + Yahoo Finance + Finnhub + Local Known Names)
 app.get('/api/research/search', async (req, res) => {
-  const query = (req.query.query as string || '').trim();
-  if (!query) return res.json([]);
+  try {
+    const query = (req.query.query as string || '').trim();
+    if (!query) return res.json([]);
 
-  const cacheKey = query.toLowerCase();
-  const cached = searchCache.get(cacheKey);
-  if (cached && Date.now() < cached.expiresAt && cached.results.length > 0) {
-    return res.json(cached.results);
-  }
+    const cacheKey = query.toLowerCase();
+    const cached = searchCache.get(cacheKey);
+    if (cached && Date.now() < cached.expiresAt && cached.results.length > 0) {
+      return res.json(cached.results);
+    }
 
   logToFile(`Searching ticker for query: "${query}"`);
   let results: any[] = [];
@@ -5278,7 +5285,11 @@ app.get('/api/research/search', async (req, res) => {
     searchCache.set(cacheKey, { results, expiresAt: Date.now() + SEARCH_CACHE_TTL_MS });
   }
 
-  res.json(results);
+    res.json(results);
+  } catch (err: any) {
+    logToFile(`[Search Error] Failed to search tickers: ${err?.message || err}`);
+    res.json([]);
+  }
 });
 
 // Helper to fetch enriched fundamental data for a single symbol
@@ -8119,10 +8130,56 @@ app.post('/api/telegram/config-execution-thread', (req, res) => {
 // POST /api/telegram/send-report - Generate executive PDF and dispatch to Telegram
 app.post('/api/telegram/send-report', async (req, res) => {
   try {
-    const result = await generateAndSendDailyReport();
+    const { chatId, messageThreadId } = req.body || {};
+    const result = await generateAndSendDailyReport({ chatId, messageThreadId });
     res.json(result);
   } catch (error: any) {
     console.error('Error in POST /api/telegram/send-report:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/telegram/webhook - Direct webhook endpoint for Telegram Bot API
+app.post('/api/telegram/webhook', async (req, res) => {
+  try {
+    const update = req.body;
+    const msg = update?.message || update?.edited_message || update?.channel_post;
+    if (!msg) {
+      return res.json({ ok: true, ignored: true });
+    }
+
+    const text = (msg.text || msg.caption || '').trim();
+    if (isTelegramBriefingRequest(text)) {
+      const targetChatId = msg.chat?.id || msg.from?.id || process.env.TELEGRAM_CHAT_ID;
+      const targetThreadId = msg.message_thread_id !== undefined ? Number(msg.message_thread_id) : undefined;
+      const senderLabel = msg.from?.username ? `@${msg.from.username}` : (msg.from?.first_name || 'Mobile');
+
+      // Acknowledge immediately
+      sendTelegramMessage({
+        text: '📊 *Generating Executive Briefing PDF...*\n\n_Synthesizing live portfolio defense, dip radar, and macro volatility dossier. Sending to your phone momentarily!_ ⏳',
+        chatId: targetChatId,
+        messageThreadId: targetThreadId,
+        parseMode: 'Markdown',
+      }).catch((e: any) => console.warn('Failed to send telegram briefing ack:', e.message));
+
+      // Asynchronously generate and dispatch PDF so webhook does not timeout
+      generateAndSendDailyReport({
+        chatId: targetChatId,
+        messageThreadId: targetThreadId,
+        requestedBy: senderLabel,
+      }).catch((e: any) => console.error('Failed to generate daily report from webhook:', e.message));
+
+      return res.json({ ok: true, status: 'briefing_dispatched' });
+    }
+
+    // For any other message, sync buffer if configured
+    if (process.env.TELEGRAM_BUFFER_URL) {
+      consumeTelegramBuffer(prisma).catch((e: any) => console.warn('Buffer sync from webhook warning:', e.message));
+    }
+
+    res.json({ ok: true });
+  } catch (error: any) {
+    console.error('Error in POST /api/telegram/webhook:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -8405,7 +8462,7 @@ const server = app.listen(port, () => {
         isConsumingBuffer = false;
       }
     }
-  }, 60000);
+  }, 15000);
 
   // Initial sync for broker trades (Tastytrade & IBKR)
   syncTastytradeTransactions(prisma).catch(e => console.error('Initial Tastytrade trade sync error:', e));

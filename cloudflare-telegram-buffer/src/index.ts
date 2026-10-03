@@ -84,6 +84,36 @@ export async function sendTelegramMessage(
   return data.result;
 }
 
+/**
+ * Detects whether an incoming Telegram message is requesting an on-demand executive briefing
+ */
+export function isTelegramBriefingRequest(text: string): boolean {
+  if (!text || typeof text !== 'string') return false;
+  const cleaned = text.trim().toLowerCase();
+
+  // Single word or punctuated command (e.g. "briefing", "/briefing", "briefing!", "#briefing")
+  if (/^[\/#]?(?:briefing|dailybriefing|daily_briefing|executive_briefing)[\s!?.]*$/i.test(cleaned)) {
+    return true;
+  }
+
+  // Exact command phrase (e.g. "send briefing", "send me the briefing", "get briefing", "generate briefing", "need briefing")
+  if (/\b(?:send|get|give|produce|generate|dispatch|request|fetch|show|need|want)\s+(?:me\s+)?(?:the\s+)?(?:latest\s+|today'?s\s+|daily\s+|executive\s+|portfolio\s+|pdf\s+)?briefing\b/i.test(cleaned)) {
+    return true;
+  }
+
+  // Explicit type of briefing requested (e.g. "executive briefing", "daily briefing", "morning briefing", "portfolio briefing", "pdf briefing")
+  if (/\b(?:executive|daily|morning|portfolio|pdf)\s+briefing\b/i.test(cleaned)) {
+    return true;
+  }
+
+  // "briefing please", "briefing today", "today's briefing"
+  if (/\bbriefing\s+(?:please|now|today|update|report)\b/i.test(cleaned) || /\btoday'?s\s+briefing\b/i.test(cleaned)) {
+    return true;
+  }
+
+  return false;
+}
+
 export interface TelegramUser {
   id: number;
   is_bot?: boolean;
@@ -353,6 +383,20 @@ export default {
 
         // Persist to Cloudflare KV indefinitely
         await env.APP_BUFFER.put(storageKey, JSON.stringify(bufferRecord));
+
+        // If bot token is configured in worker env, immediately ack on-demand briefing request
+        if (env.TELEGRAM_BOT_TOKEN && isTelegramBriefingRequest(bufferRecord.text)) {
+          try {
+            await sendTelegramMessage(env.TELEGRAM_BOT_TOKEN, {
+              chat_id: msg.chat.id,
+              message_thread_id: msg.message_thread_id,
+              text: '📊 *Generating Executive Briefing PDF...*\n\n_Synthesizing live portfolio defense, dip radar, and macro volatility dossier. Sending to your phone momentarily!_ ⏳',
+              parse_mode: 'Markdown',
+            });
+          } catch (ackErr) {
+            console.error('Failed to send immediate briefing ack in worker:', ackErr);
+          }
+        }
 
         return new Response(
           JSON.stringify({

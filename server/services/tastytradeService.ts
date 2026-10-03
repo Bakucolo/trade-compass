@@ -32,7 +32,7 @@ export const getTastyBaseUrl = (): string => {
  */
 export const isTastySandbox = (): boolean => {
     const url = getTastyBaseUrl();
-    return url.includes('cert.tastyworks.com') || process.env.TASTY_ENV === 'sandbox';
+    return url.includes('cert.tastyworks.com') || process.env.TASTY_ENV === 'sandbox' || process.env.NODE_ENV === 'test';
 };
 
 /**

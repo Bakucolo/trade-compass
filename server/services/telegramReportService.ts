@@ -1281,7 +1281,12 @@ export async function sendTelegramAlert(
 /**
  * End-to-End Orchestrator: Synthesizes data, renders PDF, and dispatches to Telegram
  */
-export async function generateAndSendDailyReport(): Promise<{
+export async function generateAndSendDailyReport(options?: {
+  isAlert?: boolean;
+  chatId?: string | number;
+  messageThreadId?: number;
+  requestedBy?: string;
+}): Promise<{
   success: boolean;
   filename: string;
   sizeBytes: number;
@@ -1302,7 +1307,7 @@ export async function generateAndSendDailyReport(): Promise<{
     `🌐 *Macro Regime:* ${reportData.macro.regimeTitle} (VIX: ${reportData.macro.vixLevel.toFixed(1)}, 10Y: ${reportData.macro.yield10y.toFixed(2)}%)\n\n` +
     `📄 *Detailed PDF briefing attached below:*`;
 
-  const sendResult = await sendPdfReportToTelegram(pdfBuffer, filename, caption);
+  const sendResult = await sendPdfReportToTelegram(pdfBuffer, filename, caption, options);
 
   return {
     success: sendResult.success,
@@ -1312,3 +1317,4 @@ export async function generateAndSendDailyReport(): Promise<{
     data: reportData,
   };
 }
+

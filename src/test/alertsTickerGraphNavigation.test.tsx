@@ -169,10 +169,10 @@ describe('AlertsPage Ticker Click to Graph Section in New Window', () => {
       </QueryClientProvider>
     );
 
-    const researchButtons = screen.getAllByRole('button', { name: /Analyze .* in Research/i });
-    expect(researchButtons.length).toBeGreaterThan(0);
+    const aaplResearchButton = screen.getByRole('button', { name: /Analyze AAPL in Research/i });
+    expect(aaplResearchButton).toBeInTheDocument();
 
-    fireEvent.click(researchButtons[0]);
+    fireEvent.click(aaplResearchButton);
     expect(onNavigateToResearch).toHaveBeenCalledWith('AAPL');
   });
 });
