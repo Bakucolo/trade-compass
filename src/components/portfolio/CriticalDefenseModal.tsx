@@ -238,6 +238,33 @@ export function computePositionThreat(pos: UnifiedPosition): RankedThreatPositio
     }
   }
 
+  // Long Options (Calls & Puts): OTM is losing trade / danger position; ITM is winning / safe
+  if (isOption && !isShort && hasValidUnderlyingPrice && hasValidStrike) {
+    const isCall = isOptionCall(pos);
+    const optLabel = isCall ? 'Call' : 'Put';
+    if (!isITM) {
+      // OTM Long Option is a decaying trade at danger of expiring worthless
+      if (isLosing) {
+        threatScore += 40;
+        reasons.push(`Long ${optLabel} is ${distancePct !== Infinity ? `${distancePct.toFixed(1)}% ` : ''}OTM (Losing trade with 0 intrinsic value)`);
+      } else {
+        threatScore += 25;
+        reasons.push(`Long ${optLabel} is ${distancePct !== Infinity ? `${distancePct.toFixed(1)}% ` : ''}OTM (Decaying trade at risk of expiring worthless)`);
+      }
+
+      if (distancePct !== Infinity && distancePct > 10.0) {
+        threatScore += 10;
+        reasons.push(`Deep OTM: ${distancePct.toFixed(1)}% deficit from strike`);
+      }
+    } else {
+      // ITM Long Option has intrinsic value (winning/profitable trade)
+      if (isLosing) {
+        threatScore += 10;
+        reasons.push(`Long ${optLabel} is ${distancePct.toFixed(1)}% ITM but carries entry drawdown`);
+      }
+    }
+  }
+
   // Drawdown Scoring
   if (isLosing) {
     if (lossPct >= 100) {
@@ -257,17 +284,23 @@ export function computePositionThreat(pos: UnifiedPosition): RankedThreatPositio
     }
   }
 
-  // Gamma / DTE Risk: Only escalates if the position is NOT a deep profit winner or is tested/losing
-  if (isOption && dte !== null && (!isHighProfitWinner || isITM || distancePct < 8)) {
+  // Gamma / DTE Risk: Escalates for tested/breached shorts or decaying OTM/losing longs
+  const shouldEscalateDte = isOption && dte !== null && (
+    isShort
+      ? (!isHighProfitWinner || isITM || distancePct < 8)
+      : (!isITM || isLosing || dte <= 7)
+  );
+
+  if (shouldEscalateDte) {
     if (dte === 0) {
       threatScore += 20;
       reasons.push(`0 DTE Expiration Day`);
     } else if (dte <= 7) {
       threatScore += 15;
-      reasons.push(`Extreme Gamma Zone: ${dte}d to expiration`);
+      reasons.push(`Extreme Gamma/Theta Decay Zone: ${dte}d to expiration`);
     } else if (dte <= 14) {
       threatScore += 8;
-      reasons.push(`Critical Gamma Zone: ${dte}d to expiration`);
+      reasons.push(`Critical Gamma/Theta Zone: ${dte}d to expiration`);
     } else if (dte <= 21) {
       threatScore += 4;
     }
@@ -862,6 +895,8 @@ export function CriticalDefenseModal({
               const isOption = pos.assetType === 'Option' || pos.assetType === 'OPTION';
               const isCall = isOptionCall(pos);
               const optTypeLabel = isCall ? 'CALL' : 'PUT';
+              const isLongOption = isOption && !isShort;
+              const isShortOption = isOption && isShort;
 
               const hasValidUnderlying = typeof pos.underlyingPrice === 'number' && pos.underlyingPrice > 0;
               const hasValidStrike = typeof pos.strike === 'number' && pos.strike > 0;
@@ -917,7 +952,15 @@ export function CriticalDefenseModal({
                         {/* Strategy Pill */}
                         <Badge variant="outline" className={cn(
                           "text-xs font-bold font-mono px-2 py-0.5 border",
-                          isShort ? "bg-rose-500/10 text-rose-300 border-rose-500/30" : "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
+                          isShort
+                            ? "bg-rose-500/10 text-rose-300 border-rose-500/30"
+                            : isOption
+                            ? (threat.isITM
+                                ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                                : "bg-rose-500/15 text-rose-300 border-rose-500/30")
+                            : (pl < 0
+                                ? "bg-rose-500/10 text-rose-300 border-rose-500/30"
+                                : "bg-emerald-500/10 text-emerald-300 border-emerald-500/30")
                         )}>
                           {strategyLabel}
                         </Badge>
@@ -1005,7 +1048,15 @@ export function CriticalDefenseModal({
                             </span>
                             <Badge variant="outline" className={cn(
                               "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border",
-                              isShort ? "bg-rose-500/15 text-rose-300 border-rose-500/30" : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                              isShort
+                                ? "bg-rose-500/15 text-rose-300 border-rose-500/30"
+                                : isOption
+                                ? (threat.isITM
+                                    ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                                    : "bg-rose-500/15 text-rose-300 border-rose-500/30")
+                                : (pl < 0
+                                    ? "bg-rose-500/15 text-rose-300 border-rose-500/30"
+                                    : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30")
                             )}>
                               {isOption ? (isShort ? 'Short Opt' : 'Long Opt') : (isShort ? 'Short Stk' : 'Long Stk')}
                             </Badge>
@@ -1025,9 +1076,13 @@ export function CriticalDefenseModal({
                               {isOption && pos.strike && (
                                 <span className={cn(
                                   "text-xs font-mono font-black px-2 py-0.5 rounded-md border",
-                                  isCall
-                                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
-                                    : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                                  isLongOption
+                                    ? (threat.isITM
+                                        ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                                        : "bg-rose-500/20 text-rose-300 border-rose-500/40")
+                                    : (isCall
+                                        ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                                        : "bg-amber-500/20 text-amber-300 border-amber-500/40")
                                 )}>
                                   ${pos.strike} {optTypeLabel}
                                 </span>
@@ -1070,31 +1125,60 @@ export function CriticalDefenseModal({
                         "rounded-2xl p-4 flex flex-col justify-between border transition-all shadow-md relative overflow-hidden",
                         !isOption
                           ? "bg-slate-900/80 border-slate-700/70"
-                          : threat.isITM
-                          ? "bg-gradient-to-br from-rose-950/50 via-rose-900/30 to-slate-950 border-rose-500/60 shadow-[0_0_24px_rgba(244,63,94,0.22)] ring-1 ring-rose-500/30"
-                          : threat.distancePct <= 3.5
-                          ? "bg-gradient-to-br from-amber-950/45 via-amber-900/25 to-slate-950 border-amber-500/60 shadow-[0_0_20px_rgba(245,158,11,0.2)] ring-1 ring-amber-500/30"
-                          : threat.distancePct <= 8.0
-                          ? "bg-gradient-to-br from-amber-950/30 via-slate-900/40 to-slate-950 border-amber-500/40"
-                          : "bg-gradient-to-br from-emerald-950/30 via-slate-900/40 to-slate-950 border-emerald-500/40"
+                          : isLongOption
+                          ? (threat.isITM
+                              ? "bg-gradient-to-br from-emerald-950/45 via-emerald-900/25 to-slate-950 border-emerald-500/60 shadow-[0_0_24px_rgba(16,185,129,0.22)] ring-1 ring-emerald-500/30"
+                              : threat.distancePct <= 3.5
+                              ? "bg-gradient-to-br from-amber-950/45 via-amber-900/25 to-slate-950 border-amber-500/60 shadow-[0_0_20px_rgba(245,158,11,0.2)] ring-1 ring-amber-500/30"
+                              : "bg-gradient-to-br from-rose-950/50 via-rose-900/30 to-slate-950 border-rose-500/60 shadow-[0_0_24px_rgba(244,63,94,0.22)] ring-1 ring-rose-500/30")
+                          : (threat.isITM
+                              ? "bg-gradient-to-br from-rose-950/50 via-rose-900/30 to-slate-950 border-rose-500/60 shadow-[0_0_24px_rgba(244,63,94,0.22)] ring-1 ring-rose-500/30"
+                              : threat.distancePct <= 3.5
+                              ? "bg-gradient-to-br from-amber-950/45 via-amber-900/25 to-slate-950 border-amber-500/60 shadow-[0_0_20px_rgba(245,158,11,0.2)] ring-1 ring-amber-500/30"
+                              : threat.distancePct <= 8.0
+                              ? "bg-gradient-to-br from-amber-950/30 via-slate-900/40 to-slate-950 border-amber-500/40"
+                              : "bg-gradient-to-br from-emerald-950/30 via-slate-900/40 to-slate-950 border-emerald-500/40")
                       )}>
                         <div>
                           <div className="flex items-center justify-between gap-1.5 mb-1.5">
                             <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground flex items-center gap-1">
-                              <Target className="w-3.5 h-3.5 text-rose-400" /> Moneyness & Distance
+                              <Target className={cn(
+                                "w-3.5 h-3.5",
+                                isLongOption
+                                  ? (threat.isITM ? "text-emerald-400" : "text-rose-400")
+                                  : (threat.isITM ? "text-rose-400" : "text-emerald-400")
+                              )} /> Moneyness & Distance
                             </span>
                             {isOption && (
                               <Badge className={cn(
                                 "text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border shadow-sm",
-                                threat.isITM
-                                  ? "bg-rose-500/30 text-rose-200 border-rose-500/50 animate-pulse"
-                                  : threat.distancePct <= 3.5
-                                  ? "bg-amber-500/30 text-amber-200 border-amber-500/50"
-                                  : threat.distancePct <= 8.0
-                                  ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
-                                  : "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                                isLongOption
+                                  ? (threat.isITM
+                                      ? "bg-emerald-500/30 text-emerald-200 border-emerald-500/50"
+                                      : threat.distancePct <= 3.5
+                                      ? "bg-amber-500/30 text-amber-200 border-amber-500/50"
+                                      : "bg-rose-500/30 text-rose-200 border-rose-500/50 animate-pulse")
+                                  : (threat.isITM
+                                      ? "bg-rose-500/30 text-rose-200 border-rose-500/50 animate-pulse"
+                                      : threat.distancePct <= 3.5
+                                      ? "bg-amber-500/30 text-amber-200 border-amber-500/50"
+                                      : threat.distancePct <= 8.0
+                                      ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                                      : "bg-emerald-500/20 text-emerald-300 border-emerald-500/40")
                               )}>
-                                {threat.isITM ? '🚨 ITM BREACH' : threat.distancePct <= 3.5 ? '⚠️ TESTED' : threat.distancePct <= 8.0 ? '⚡ APPROACHING' : '🛡️ SAFE OTM'}
+                                {isLongOption
+                                  ? (threat.isITM
+                                      ? '✅ ITM IN PROFIT'
+                                      : threat.distancePct <= 3.5
+                                      ? '⚠️ NEAR STRIKE OTM'
+                                      : '🚨 OTM LOSING TRADE')
+                                  : (threat.isITM
+                                      ? '🚨 ITM BREACH'
+                                      : threat.distancePct <= 3.5
+                                      ? '⚠️ TESTED'
+                                      : threat.distancePct <= 8.0
+                                      ? '⚡ APPROACHING'
+                                      : '🛡️ SAFE OTM')}
                               </Badge>
                             )}
                           </div>
@@ -1107,32 +1191,63 @@ export function CriticalDefenseModal({
                                   <div className="flex items-baseline gap-1.5">
                                     <span className={cn(
                                       "font-mono font-black text-2xl sm:text-3xl tracking-tight",
-                                      threat.isITM
-                                        ? "text-rose-200"
-                                        : threat.distancePct <= 3.5
-                                        ? "text-amber-300"
-                                        : threat.distancePct <= 8.0
-                                        ? "text-amber-200"
-                                        : "text-emerald-300"
+                                      isLongOption
+                                        ? (threat.isITM
+                                            ? "text-emerald-300"
+                                            : threat.distancePct <= 3.5
+                                            ? "text-amber-300"
+                                            : "text-rose-200")
+                                        : (threat.isITM
+                                            ? "text-rose-200"
+                                            : threat.distancePct <= 3.5
+                                            ? "text-amber-300"
+                                            : threat.distancePct <= 8.0
+                                            ? "text-amber-200"
+                                            : "text-emerald-300")
                                     )}>
-                                      {threat.isITM ? `-${threat.distancePct.toFixed(1)}%` : `${threat.distancePct.toFixed(1)}%`}
+                                      {isLongOption
+                                        ? (threat.isITM
+                                            ? `+${threat.distancePct.toFixed(1)}%`
+                                            : `-${threat.distancePct.toFixed(1)}%`)
+                                        : (threat.isITM
+                                            ? `-${threat.distancePct.toFixed(1)}%`
+                                            : `${threat.distancePct.toFixed(1)}%`)}
                                     </span>
                                     <span className={cn(
                                       "text-xs font-bold uppercase tracking-wider",
-                                      threat.isITM ? "text-rose-300" : "text-slate-300"
+                                      isLongOption
+                                        ? (threat.isITM ? "text-emerald-300" : "text-rose-300")
+                                        : (threat.isITM ? "text-rose-300" : "text-slate-300")
                                     )}>
-                                      {threat.isITM ? 'In The Money' : 'Buffer'}
+                                      {isLongOption
+                                        ? (threat.isITM ? 'In The Money' : 'OTM Deficit')
+                                        : (threat.isITM ? 'In The Money' : 'Buffer')}
                                     </span>
                                   </div>
 
                                   <p className="text-[11px] font-medium text-slate-300 mt-1">
                                     {dollarDiff !== null ? (
-                                      threat.isITM
-                                        ? `Breached by $${dollarDiff.toFixed(2)} beyond strike`
-                                        : `$${dollarDiff.toFixed(2)} buffer remaining before strike`
+                                      isLongOption
+                                        ? (threat.isITM
+                                            ? `+$${dollarDiff.toFixed(2)} intrinsic value ${isCall ? 'above' : 'below'} strike`
+                                            : `$${dollarDiff.toFixed(2)} deficit ${isCall ? 'below' : 'above'} strike (0 intrinsic value)`)
+                                        : (threat.isITM
+                                            ? `Breached by $${dollarDiff.toFixed(2)} beyond strike`
+                                            : `$${dollarDiff.toFixed(2)} buffer remaining before strike`)
                                     ) : (
-                                      threat.isITM ? 'Strike price has been breached' : 'Distance from active strike'
+                                      isLongOption
+                                        ? (threat.isITM ? 'In The Money (Intrinsic value intact)' : 'Out of the Money (Expiring worthless risk)')
+                                        : (threat.isITM ? 'Strike price has been breached' : 'Distance from active strike')
                                     )}
+                                  </p>
+                                </div>
+                              ) : isLongOption ? (
+                                <div>
+                                  <span className={cn("font-mono font-black text-2xl", threat.isITM ? "text-emerald-300" : "text-rose-300")}>
+                                    {threat.isITM ? 'ITM' : 'OTM'}
+                                  </span>
+                                  <p className={cn("text-[11px] font-medium mt-1", threat.isITM ? "text-emerald-400/90" : "text-rose-400/90")}>
+                                    {threat.isITM ? 'In The Money (Winning Trade)' : 'Losing Trade (0 Intrinsic Value)'}
                                   </p>
                                 </div>
                               ) : plPercent >= 70 ? (
@@ -1171,22 +1286,38 @@ export function CriticalDefenseModal({
                               <div
                                 className={cn(
                                   "h-full rounded-full transition-all duration-300",
-                                  threat.isITM
-                                    ? "w-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]"
-                                    : threat.distancePct <= 3.5
-                                    ? "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)]"
-                                    : threat.distancePct <= 8.0
-                                    ? "bg-amber-400"
-                                    : "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"
+                                  isLongOption
+                                    ? (threat.isITM
+                                        ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]"
+                                        : threat.distancePct <= 3.5
+                                        ? "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)]"
+                                        : "bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]")
+                                    : (threat.isITM
+                                        ? "w-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]"
+                                        : threat.distancePct <= 3.5
+                                        ? "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)]"
+                                        : threat.distancePct <= 8.0
+                                        ? "bg-amber-400"
+                                        : "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]")
                                 )}
                                 style={{
-                                  width: threat.isITM ? '100%' : `${Math.min(100, Math.max(10, threat.distancePct * 5))}%`
+                                  width: isLongOption
+                                    ? (threat.isITM ? '100%' : `${Math.min(100, Math.max(15, threat.distancePct * 5))}%`)
+                                    : (threat.isITM ? '100%' : `${Math.min(100, Math.max(10, threat.distancePct * 5))}%`)
                                 }}
                               />
                             </div>
                             <div className="flex items-center justify-between text-[10px] text-muted-foreground mt-1 font-mono">
-                              <span>{threat.isITM ? 'Breach Depth' : '0% (At Strike)'}</span>
-                              <span>{threat.isITM ? 'Assignment Danger' : 'Buffer Safety'}</span>
+                              <span>
+                                {isLongOption
+                                  ? (threat.isITM ? 'Intrinsic Cushion' : 'Strike Deficit')
+                                  : (threat.isITM ? 'Breach Depth' : '0% (At Strike)')}
+                              </span>
+                              <span>
+                                {isLongOption
+                                  ? (threat.isITM ? 'In The Money' : 'Expiring Worthless Risk')
+                                  : (threat.isITM ? 'Assignment Danger' : 'Buffer Safety')}
+                              </span>
                             </div>
                           </div>
                         )}

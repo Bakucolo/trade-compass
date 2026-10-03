@@ -326,4 +326,68 @@ describe('CriticalDefenseModal - Highlighted Data & Tactical HUD', () => {
     expect(screen.getByText('$MSFT')).toBeInTheDocument();
     expect(screen.queryByTestId('filter-clear-side-type')).not.toBeInTheDocument();
   });
+
+  it('restyles Long Calls OTM as danger positions and Long Calls ITM in green', () => {
+    const longCallPositions: UnifiedPosition[] = [
+      {
+        id: 'long-call-otm-tsla',
+        symbol: 'TSLA  261016C00260000',
+        underlyingSymbol: 'TSLA',
+        quantity: 2, // Long
+        averageCost: 8.0,
+        currentPrice: 4.0,
+        marketValue: 800,
+        unrealizedPL: -800,
+        unrealizedPLPercent: -50.0,
+        source: 'Tastytrade',
+        assetType: 'Option',
+        strike: 260,
+        optionType: 'Call',
+        underlyingPrice: 245, // OTM: 245 < 260 by $15 (5.8% deficit)
+        expiry: '20261016',
+      },
+      {
+        id: 'long-call-itm-aapl',
+        symbol: 'AAPL  261016C00200000',
+        underlyingSymbol: 'AAPL',
+        quantity: 1, // Long
+        averageCost: 30.0,
+        currentPrice: 25.0,
+        marketValue: 2500,
+        unrealizedPL: -500,
+        unrealizedPLPercent: -16.67,
+        source: 'IBKR',
+        assetType: 'Option',
+        strike: 200,
+        optionType: 'Call',
+        underlyingPrice: 220, // ITM: 220 > 200 by $20 (10.0% intrinsic)
+        expiry: '20261016',
+      },
+    ];
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <CriticalDefenseModal
+          isOpen={true}
+          onClose={vi.fn()}
+          positions={longCallPositions}
+          onOpenAdvisorForPosition={vi.fn()}
+        />
+      </QueryClientProvider>
+    );
+
+    // 1. Long Call OTM (TSLA): Danger position
+    expect(screen.getByText(/🚨 OTM LOSING TRADE/i)).toBeInTheDocument();
+    expect(screen.queryByText(/🛡️ SAFE OTM/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/-5\.8%/i)).toBeInTheDocument();
+    expect(screen.getByText(/OTM Deficit/i)).toBeInTheDocument();
+    expect(screen.getByText(/\$15\.00 deficit below strike \(0 intrinsic value\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Expiring Worthless Risk/i)).toBeInTheDocument();
+
+    // 2. Long Call ITM (AAPL): Green winning position
+    expect(screen.getByText(/✅ ITM IN PROFIT/i)).toBeInTheDocument();
+    expect(screen.getByText(/\+10\.0%/i)).toBeInTheDocument();
+    expect(screen.getByText(/\+\$20\.00 intrinsic value above strike/i)).toBeInTheDocument();
+    expect(screen.getByText(/Intrinsic Cushion/i)).toBeInTheDocument();
+  });
 });

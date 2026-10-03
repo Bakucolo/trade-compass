@@ -41,11 +41,13 @@ import {
     Folder,
     FolderPlus,
     Settings2,
-    Coins
+    Coins,
+    Maximize2,
+    Minimize2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { toast } from "sonner";
 import { useStockNotesMap } from "@/services/noteService";
 import { 
@@ -59,6 +61,7 @@ import { CriticalDefenseModal, isOptionCall } from "./CriticalDefenseModal";
 import { PositionFolderManagerModal, renderFolderIcon } from "./PositionFolderManagerModal";
 import { PositionFolderDropdown } from "./PositionFolderDropdown";
 import { PortfolioDividendIncomeModal } from "./PortfolioDividendIncomeModal";
+import { TastytradePositionsTable } from "./TastytradePositionsTable";
 import {
     usePositionFolderMap,
     getFolderThemeStyle,
@@ -97,7 +100,15 @@ type SortKey =
     | 'theme';
 
 type SortDirection = 'asc' | 'desc';
-type ViewLayout = 'CATEGORIZED' | 'FOLDERS' | 'OPTIONS_ONLY' | 'EQUITIES_ONLY' | 'UNIFIED';
+type ViewLayout = 
+    | 'TASTY' 
+    | 'TASTY_OPTIONS' 
+    | 'TASTY_EQUITIES' 
+    | 'CATEGORIZED' 
+    | 'FOLDERS' 
+    | 'OPTIONS_ONLY' 
+    | 'EQUITIES_ONLY' 
+    | 'UNIFIED';
 
 interface SortConfig {
     key: SortKey;
@@ -120,7 +131,83 @@ export function HoldingsTable({
     const [themeFilter, setThemeFilter] = useState<string>('All');
     const [sideFilter, setSideFilter] = useState<'All' | 'Long' | 'Short'>('All');
     const [folderFilter, setFolderFilter] = useState<string>('All');
-    const [viewLayout, setViewLayout] = useState<ViewLayout>('CATEGORIZED');
+    const [viewLayout, setViewLayout] = useState<ViewLayout>(() => {
+        try {
+            const saved = localStorage.getItem('finance_holdings_layout');
+            if (saved && ['TASTY', 'TASTY_OPTIONS', 'TASTY_EQUITIES', 'CATEGORIZED', 'FOLDERS', 'OPTIONS_ONLY', 'EQUITIES_ONLY', 'UNIFIED'].includes(saved)) {
+                return saved as ViewLayout;
+            }
+        } catch {}
+        return 'TASTY'; // Default view is now Tastytrade view
+    });
+
+    const isTastyView = viewLayout === 'TASTY' || viewLayout === 'TASTY_OPTIONS' || viewLayout === 'TASTY_EQUITIES';
+
+    const [lastClassicLayout, setLastClassicLayout] = useState<ViewLayout>(() => {
+        try {
+            const saved = localStorage.getItem('finance_last_classic_layout');
+            if (saved && !saved.startsWith('TASTY') && ['CATEGORIZED', 'FOLDERS', 'OPTIONS_ONLY', 'EQUITIES_ONLY', 'UNIFIED'].includes(saved)) {
+                return saved as ViewLayout;
+            }
+        } catch {}
+        return 'CATEGORIZED';
+    });
+
+    const handleSetViewLayout = (newLayout: ViewLayout) => {
+        setViewLayout(newLayout);
+        try {
+            localStorage.setItem('finance_holdings_layout', newLayout);
+            if (!newLayout.startsWith('TASTY')) {
+                setLastClassicLayout(newLayout);
+                localStorage.setItem('finance_last_classic_layout', newLayout);
+            }
+        } catch {}
+    };
+
+    const handleTogglePresentationMode = (target: 'TASTY' | 'CLASSIC') => {
+        if (target === 'TASTY') {
+            if (viewLayout === 'OPTIONS_ONLY') {
+                handleSetViewLayout('TASTY_OPTIONS');
+            } else if (viewLayout === 'EQUITIES_ONLY') {
+                handleSetViewLayout('TASTY_EQUITIES');
+            } else {
+                handleSetViewLayout('TASTY');
+            }
+        } else {
+            if (viewLayout === 'TASTY_OPTIONS') {
+                handleSetViewLayout('OPTIONS_ONLY');
+            } else if (viewLayout === 'TASTY_EQUITIES') {
+                handleSetViewLayout('EQUITIES_ONLY');
+            } else {
+                handleSetViewLayout(lastClassicLayout || 'CATEGORIZED');
+            }
+        }
+    };
+
+    // Full Window State
+    const [isFullScreen, setIsFullScreen] = useState(false);
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && isFullScreen) {
+                setIsFullScreen(false);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isFullScreen]);
+
+    useEffect(() => {
+        if (isFullScreen) {
+            document.body.style.overflow = 'hidden';
+        } else {
+            document.body.style.overflow = '';
+        }
+        return () => {
+            document.body.style.overflow = '';
+        };
+    }, [isFullScreen]);
+
     const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'marketValue', direction: 'desc' });
 
     // Position Folders State
@@ -1247,7 +1334,35 @@ export function HoldingsTable({
     };
 
     return (
-        <div className="space-y-4">
+        <div className={cn(
+            "space-y-4 transition-all duration-300",
+            isFullScreen && "fixed inset-0 z-50 bg-slate-950/98 backdrop-blur-3xl p-4 sm:p-6 overflow-y-auto m-0 shadow-2xl"
+        )}>
+            {isFullScreen && (
+                <div className="flex items-center justify-between p-3 bg-slate-900/95 border border-cyan-500/40 rounded-xl shadow-xl backdrop-blur-md sticky top-0 z-30 animate-in fade-in slide-in-from-top-2">
+                    <div className="flex items-center gap-2.5">
+                        <span className="flex h-2.5 w-2.5 rounded-full bg-cyan-400 animate-ping" />
+                        <span className="text-xs font-bold text-cyan-300 font-mono tracking-wider uppercase">
+                            Full Window Positions View
+                        </span>
+                        <Badge variant="outline" className="bg-cyan-950/40 border-cyan-500/30 text-cyan-300 font-mono text-[10px]">
+                            {isTastyView ? '⚡ Tastytrade Engine' : 'Classic View'}
+                        </Badge>
+                        <span className="text-[11px] text-muted-foreground hidden md:inline">
+                            (Press <kbd className="px-1.5 py-0.5 text-[10px] bg-slate-800 border border-slate-700 rounded text-slate-300">Esc</kbd> to exit)
+                        </span>
+                    </div>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setIsFullScreen(false)}
+                        className="h-7 text-xs border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/20 gap-1.5 font-semibold"
+                    >
+                        <Minimize2 className="w-3.5 h-3.5" />
+                        <span>Exit Full Window</span>
+                    </Button>
+                </div>
+            )}
             
             {/* ================= STYLE & THEMATIC COMMAND RIBBON ================= */}
             <div className="glass-card rounded-2xl p-3.5 border border-white/10 bg-slate-900/60 backdrop-blur-xl shadow-xl space-y-3">
@@ -1348,22 +1463,66 @@ export function HoldingsTable({
                         />
                     </div>
 
+                    {/* Primary Mode Switcher (Classic vs Tastytrade) */}
+                    <div className="flex items-center gap-1 p-0.5 bg-slate-950/80 rounded-xl border border-white/10 shadow-inner">
+                        <button
+                            onClick={() => handleTogglePresentationMode('CLASSIC')}
+                            className={cn(
+                                "px-3 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5",
+                                !isTastyView
+                                    ? "bg-slate-800 text-white font-bold shadow-sm border border-white/10"
+                                    : "text-muted-foreground hover:text-white"
+                            )}
+                            title="Switch to Classic View"
+                        >
+                            <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                            <span>Classic View</span>
+                        </button>
+                        <button
+                            onClick={() => handleTogglePresentationMode('TASTY')}
+                            className={cn(
+                                "px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 shadow-sm",
+                                isTastyView
+                                    ? "bg-gradient-to-r from-amber-500/25 to-orange-500/25 text-amber-300 border border-amber-500/50 shadow-amber-500/10 ring-1 ring-amber-500/20 font-black"
+                                    : "text-amber-400/80 hover:text-amber-300 hover:bg-amber-500/10"
+                            )}
+                            title="Switch to Tastytrade-style matrix view (Greeks, dual-pill quotes, PoP, P/L Day bars)"
+                        >
+                            <Zap className="w-3.5 h-3.5 text-amber-400" />
+                            <span>⚡ Tastytrade View</span>
+                        </button>
+                    </div>
+
                     {/* View Layout Tabs */}
                     <div className="flex items-center gap-2 flex-wrap">
                         <div className="flex p-1 bg-slate-950/60 rounded-xl border border-white/5 flex-wrap gap-0.5">
                             <button
-                                onClick={() => setViewLayout('CATEGORIZED')}
+                                onClick={() => {
+                                    if (isTastyView) handleSetViewLayout('TASTY');
+                                    else handleSetViewLayout('CATEGORIZED');
+                                }}
                                 className={cn(
                                     "px-3 py-1 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5",
-                                    viewLayout === 'CATEGORIZED'
-                                        ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm"
+                                    (viewLayout === 'CATEGORIZED' || (isTastyView && viewLayout === 'TASTY'))
+                                        ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm font-bold"
                                         : "text-muted-foreground hover:text-foreground"
                                 )}
                             >
-                                <Layers className="w-3.5 h-3.5" /> Categorized
+                                <Layers className="w-3.5 h-3.5" /> All / Categorized
                             </button>
                             <button
-                                onClick={() => setViewLayout('FOLDERS')}
+                                onClick={() => handleSetViewLayout('TASTY')}
+                                className={cn(
+                                    "px-3 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5",
+                                    isTastyView && viewLayout === 'TASTY'
+                                        ? "bg-amber-500/25 text-amber-300 border border-amber-500/50 shadow-sm font-black"
+                                        : "text-amber-400/80 hover:text-amber-300 hover:bg-amber-500/10"
+                                )}
+                            >
+                                <Zap className="w-3.5 h-3.5 text-amber-400" /> Tastytrade
+                            </button>
+                            <button
+                                onClick={() => handleSetViewLayout('FOLDERS')}
                                 className={cn(
                                     "px-3 py-1 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5",
                                     viewLayout === 'FOLDERS'
@@ -1374,39 +1533,78 @@ export function HoldingsTable({
                                 <Folder className="w-3.5 h-3.5 text-blue-400" /> Folders ({folders.length})
                             </button>
                             <button
-                                onClick={() => setViewLayout('OPTIONS_ONLY')}
+                                onClick={() => {
+                                    if (isTastyView) {
+                                        handleSetViewLayout('TASTY_OPTIONS');
+                                    } else {
+                                        handleSetViewLayout('OPTIONS_ONLY');
+                                    }
+                                }}
                                 className={cn(
                                     "px-3 py-1 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5",
-                                    viewLayout === 'OPTIONS_ONLY'
-                                        ? "bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-sm"
+                                    (viewLayout === 'OPTIONS_ONLY' || viewLayout === 'TASTY_OPTIONS')
+                                        ? "bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-sm font-bold"
                                         : "text-muted-foreground hover:text-foreground"
                                 )}
                             >
                                 Options ({optionsPositions.length})
                             </button>
                             <button
-                                onClick={() => setViewLayout('EQUITIES_ONLY')}
+                                onClick={() => {
+                                    if (isTastyView) {
+                                        handleSetViewLayout('TASTY_EQUITIES');
+                                    } else {
+                                        handleSetViewLayout('EQUITIES_ONLY');
+                                    }
+                                }}
                                 className={cn(
                                     "px-3 py-1 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5",
-                                    viewLayout === 'EQUITIES_ONLY'
-                                        ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm"
+                                    (viewLayout === 'EQUITIES_ONLY' || viewLayout === 'TASTY_EQUITIES')
+                                        ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm font-bold"
                                         : "text-muted-foreground hover:text-foreground"
                                 )}
                             >
                                 Equities ({equitiesPositions.length})
                             </button>
                             <button
-                                onClick={() => setViewLayout('UNIFIED')}
+                                onClick={() => handleSetViewLayout('UNIFIED')}
                                 className={cn(
                                     "px-3 py-1 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5",
                                     viewLayout === 'UNIFIED'
-                                        ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 shadow-sm"
+                                        ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 shadow-sm font-bold"
                                         : "text-muted-foreground hover:text-foreground"
                                 )}
                             >
                                 Unified ({filteredPositions.length})
                             </button>
                         </div>
+
+                        {/* Full Window Toggle Button */}
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setIsFullScreen(prev => !prev)}
+                            className={cn(
+                                "h-9 px-3 text-xs font-semibold rounded-xl border transition-all gap-1.5 shadow-sm",
+                                isFullScreen
+                                    ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/50 hover:bg-cyan-500/30"
+                                    : "bg-slate-950/80 border-white/10 text-muted-foreground hover:text-white hover:border-white/20"
+                            )}
+                            title={isFullScreen ? "Exit Full Window (Esc)" : "Expand positions table to full window"}
+                            aria-label={isFullScreen ? "Exit Full Window" : "Full Window"}
+                        >
+                            {isFullScreen ? (
+                                <>
+                                    <Minimize2 className="w-3.5 h-3.5 text-cyan-400" />
+                                    <span>Exit Full Window</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
+                                    <span>Full Window</span>
+                                </>
+                            )}
+                        </Button>
 
                         <Button
                             variant="outline"
@@ -1601,8 +1799,46 @@ export function HoldingsTable({
                 </div>
             </div>
 
+            {/* ================= TASTYTRADE MATRIX VIEW SECTION ================= */}
+            {isTastyView && (
+                <TastytradePositionsTable
+                    positions={
+                        viewLayout === 'TASTY_OPTIONS'
+                            ? optionsPositions
+                            : viewLayout === 'TASTY_EQUITIES'
+                            ? equitiesPositions
+                            : filteredPositions
+                    }
+                    isLoading={isLoading}
+                    isPrivacyMode={isPrivacyMode}
+                    onNavigateToResearch={handleOpenResearch}
+                    onNavigateToGraphs={onNavigateToGraphs}
+                    onOpenNoteModal={(sym, name, price) => {
+                        setNoteModalStock({
+                            symbol: sym,
+                            name: name || `${sym} Position`,
+                            price: price,
+                        });
+                        setIsNoteModalOpen(true);
+                    }}
+                    onOpenAdvisorModal={(pos) => {
+                        setAdvisorPosition(pos);
+                        setIsAdvisorOpen(true);
+                    }}
+                    onOpenDefenseModal={() => setIsDefenseCenterOpen(true)}
+                    isFullScreen={isFullScreen}
+                    onToggleFullScreen={() => setIsFullScreen(prev => !prev)}
+                    activeFilter={viewLayout === 'TASTY_OPTIONS' ? 'OPTIONS' : viewLayout === 'TASTY_EQUITIES' ? 'EQUITIES' : 'ALL'}
+                    onFilterChange={(filter) => {
+                        if (filter === 'OPTIONS') handleSetViewLayout('TASTY_OPTIONS');
+                        else if (filter === 'EQUITIES') handleSetViewLayout('TASTY_EQUITIES');
+                        else handleSetViewLayout('TASTY');
+                    }}
+                />
+            )}
+
             {/* ================= OPTIONS SECTION ================= */}
-            {(viewLayout === 'CATEGORIZED' || viewLayout === 'OPTIONS_ONLY') && (
+            {!isTastyView && (viewLayout === 'CATEGORIZED' || viewLayout === 'OPTIONS_ONLY') && (
                 <div className="glass-card rounded-2xl overflow-hidden border border-purple-500/30 shadow-2xl bg-slate-950/40">
                     
                     {/* Options Section Header */}
@@ -1745,7 +1981,7 @@ export function HoldingsTable({
             )}
 
             {/* ================= EQUITIES SECTION ================= */}
-            {(viewLayout === 'CATEGORIZED' || viewLayout === 'EQUITIES_ONLY') && (
+            {!isTastyView && (viewLayout === 'CATEGORIZED' || viewLayout === 'EQUITIES_ONLY') && (
                 <div className="glass-card rounded-2xl overflow-hidden border border-emerald-500/30 shadow-2xl bg-slate-950/40">
                     
                     {/* Equities Section Header */}
@@ -1856,7 +2092,7 @@ export function HoldingsTable({
             )}
 
             {/* ================= FOLDERS VIEW SECTION ================= */}
-            {viewLayout === 'FOLDERS' && (
+            {!isTastyView && viewLayout === 'FOLDERS' && (
                 <div className="space-y-6">
                     {/* Folders Summary Banner */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-gradient-to-r from-blue-950/30 via-slate-900/40 to-slate-950/40 border border-blue-500/20 glass-card">
@@ -2149,7 +2385,7 @@ export function HoldingsTable({
             )}
 
             {/* ================= UNIFIED TABLE SECTION ================= */}
-            {viewLayout === 'UNIFIED' && (
+            {!isTastyView && viewLayout === 'UNIFIED' && (
                 <div className="glass-card rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950/40">
                     <div className="p-4 border-b border-white/5 bg-slate-900/40 flex items-center justify-between">
                         <div className="flex items-center gap-2">

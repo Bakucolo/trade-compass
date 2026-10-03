@@ -512,7 +512,7 @@
       "optionType": "PUT",
       "pct": 10,
       "provisionedAt": "2026-08-31T05:57:29.844Z",
-      "dismissedAt": null
+      "dismissedAt": "2026-10-03T03:31:31.648Z"
     },
     "APP_250_PUT_20261016_5": {
       "key": "APP_250_PUT_20261016_5",
@@ -575,7 +575,7 @@
       "optionType": "PUT",
       "pct": 10,
       "provisionedAt": "2026-09-05T06:22:47.553Z",
-      "dismissedAt": null
+      "dismissedAt": "2026-10-03T03:31:31.654Z"
     },
     "ZETA_35_CALL_2026-10-16T20:00:00.000Z_5": {
       "key": "ZETA_35_CALL_2026-10-16T20:00:00.000Z_5",
@@ -874,6 +874,26 @@
       "expiryDate": "2026-11-20T21:00:00.000Z",
       "pct": 5,
       "provisionedAt": "2026-09-23T03:48:13.374Z",
+      "dismissedAt": null
+    },
+    "FOUR_30_PUT_2026-11-20T21:00:00.000Z_10": {
+      "key": "FOUR_30_PUT_2026-11-20T21:00:00.000Z_10",
+      "underlyingSymbol": "FOUR",
+      "strikePrice": 30,
+      "optionType": "PUT",
+      "expiryDate": "2026-11-20T21:00:00.000Z",
+      "pct": 10,
+      "provisionedAt": "2026-10-03T03:05:42.618Z",
+      "dismissedAt": null
+    },
+    "FOUR_30_PUT_2026-11-20T21:00:00.000Z_5": {
+      "key": "FOUR_30_PUT_2026-11-20T21:00:00.000Z_5",
+      "underlyingSymbol": "FOUR",
+      "strikePrice": 30,
+      "optionType": "PUT",
+      "expiryDate": "2026-11-20T21:00:00.000Z",
+      "pct": 5,
+      "provisionedAt": "2026-10-03T03:05:42.624Z",
       "dismissedAt": null
     }
   }

@@ -424,7 +424,10 @@ export function AlertsPage({ onNavigateToResearch, onNavigateToGraphs }: AlertsP
     }
   };
 
-  const handleDeleteAllMuted = async () => {
+  const handleDeleteAllMuted = async (e?: React.MouseEvent) => {
+    e?.stopPropagation?.();
+    e?.preventDefault?.();
+    if (mutedCount === 0) return;
     if (!window.confirm(`Are you sure you want to permanently delete all ${mutedCount} muted alerts?`)) return;
     try {
       const res = await deleteMutedMutation.mutateAsync();
@@ -737,17 +740,38 @@ export function AlertsPage({ onNavigateToResearch, onNavigateToGraphs }: AlertsP
             </p>
             <BellOff className={cn("w-3.5 h-3.5 transition-colors", statusFilter === 'MUTED' ? "text-slate-300" : "text-muted-foreground group-hover:text-slate-300")} />
           </div>
-          <div className="flex items-baseline justify-between mt-2">
+          <div className="flex items-center justify-between mt-2 gap-2">
             <p className="text-2xl font-bold font-mono text-muted-foreground group-hover:text-slate-200 transition-colors">{mutedCount}</p>
-            {statusFilter === 'MUTED' ? (
-              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-300 bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700">
-                <Check className="w-2.5 h-2.5" /> Filtered
-              </span>
-            ) : (
-              <span className="text-[10px] text-muted-foreground/60 opacity-0 group-hover:opacity-100 group-hover:text-slate-300 transition-all">
-                Filter
-              </span>
-            )}
+            <div className="flex items-center gap-1.5">
+              {mutedCount > 0 && (
+                <button
+                  type="button"
+                  data-testid="delete-all-muted-card-btn"
+                  onClick={handleDeleteAllMuted}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  disabled={deleteMutedMutation.isPending}
+                  className={cn(
+                    "inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all z-10",
+                    "border border-rose-500/40 bg-rose-500/15 text-rose-300 hover:bg-rose-500/30 hover:border-rose-400 hover:text-white active:scale-95 shadow-sm shadow-rose-950/20",
+                    deleteMutedMutation.isPending && "opacity-50 cursor-not-allowed"
+                  )}
+                  title={`Delete all ${mutedCount} muted alerts`}
+                  aria-label="Delete all muted alerts"
+                >
+                  <Trash2 className={cn("w-3 h-3 text-rose-400", deleteMutedMutation.isPending && "animate-spin")} />
+                  <span>Delete All</span>
+                </button>
+              )}
+              {statusFilter === 'MUTED' ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-300 bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700">
+                  <Check className="w-2.5 h-2.5" /> Filtered
+                </span>
+              ) : (
+                <span className="text-[10px] text-muted-foreground/60 opacity-0 group-hover:opacity-100 group-hover:text-slate-300 transition-all">
+                  Filter
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -974,8 +998,24 @@ export function AlertsPage({ onNavigateToResearch, onNavigateToGraphs }: AlertsP
               </Button>
             </div>
           ) : (
-            <div className="text-[11px] text-muted-foreground hidden sm:block">
-              Check boxes to select alerts for bulk deletion
+            <div className="flex items-center justify-between w-full sm:w-auto gap-3">
+              <div className="text-[11px] text-muted-foreground hidden sm:block">
+                Check boxes to select alerts for bulk deletion
+              </div>
+              {statusFilter === 'MUTED' && mutedCount > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  data-testid="delete-all-muted-toolbar-btn"
+                  onClick={handleDeleteAllMuted}
+                  disabled={deleteMutedMutation.isPending}
+                  className="h-7 text-xs font-semibold gap-1.5 border-rose-500/40 bg-rose-500/15 text-rose-300 hover:bg-rose-500/25 hover:text-rose-100 hover:border-rose-400 shadow-sm shadow-rose-950/20"
+                  title="Permanently delete all muted alerts"
+                >
+                  <Trash2 className={cn("w-3.5 h-3.5 text-rose-400", deleteMutedMutation.isPending && "animate-spin")} />
+                  <span>Delete All Muted ({mutedCount})</span>
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -1126,6 +1166,20 @@ export function AlertsPage({ onNavigateToResearch, onNavigateToGraphs }: AlertsP
                           <Badge className="bg-purple-500/20 text-purple-300 border-purple-500/40 text-[10px] font-bold flex items-center gap-1 font-mono">
                             <Shield className="w-3 h-3 text-amber-400" />
                             10% Strike Buffer
+                          </Badge>
+                        )}
+
+                        {item.notes && item.notes.includes('[Auto-Bracket +5%]') && (
+                          <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 text-[10px] font-bold flex items-center gap-1 font-mono">
+                            <TrendingUp className="w-3 h-3 text-emerald-400" />
+                            Auto +5% Bracket
+                          </Badge>
+                        )}
+
+                        {item.notes && item.notes.includes('[Auto-Bracket -5%]') && (
+                          <Badge className="bg-rose-500/20 text-rose-300 border-rose-500/40 text-[10px] font-bold flex items-center gap-1 font-mono">
+                            <TrendingDown className="w-3 h-3 text-rose-400" />
+                            Auto -5% Bracket
                           </Badge>
                         )}
                       </div>

@@ -27,6 +27,7 @@ import {
 import { cn } from '@/lib/utils';
 import { UnifiedPosition } from './types';
 import { STYLE_CONFIG, getThemeBadgeStyle } from '@/services/stockThematics';
+import { parseTrading212Ticker } from '@/utils/tickerUtils';
 
 export type TimeframePeriod = '1D' | '1W' | '1M' | 'YTD';
 export type ViewMode = 'DUAL_DECK' | 'TABLE';
@@ -39,7 +40,7 @@ interface PerformanceLeaderboardProps {
   onSelectPosition?: (pos: UnifiedPosition) => void;
 }
 
-interface PositionPerformance {
+export interface PositionPerformance {
   position: UnifiedPosition;
   cleanSymbol: string;
   name: string;
@@ -52,6 +53,100 @@ interface PositionPerformance {
   assetType: 'Stock' | 'Option';
   currency: string;
   source: string;
+  sources?: string[];
+}
+
+/**
+ * Standardize ticker across brokers (IBKR, Tastytrade, Trading 212)
+ */
+export function extractCleanSymbol(pos: UnifiedPosition): string {
+  const isOption = pos.assetType === 'Option';
+  let cleanSymbol = (pos.underlyingSymbol || '').trim().toUpperCase();
+  if (!cleanSymbol) {
+    if (isOption) {
+      cleanSymbol = (pos.symbol?.match(/^[A-Z]+/)?.[0] || pos.symbol || '').trim().toUpperCase();
+    } else if (pos.ticker) {
+      cleanSymbol = parseTrading212Ticker(pos.ticker).cleanSymbol.toUpperCase();
+    } else {
+      const raw = (pos.symbol || '').trim().toUpperCase();
+      if (raw.endsWith('_US_EQ')) cleanSymbol = raw.replace('_US_EQ', '');
+      else if (raw.endsWith('_CA_EQ')) cleanSymbol = raw.replace('_CA_EQ', '') + '.TO';
+      else if (raw.endsWith('L_EQ') || raw.endsWith('P_EQ')) cleanSymbol = raw.replace(/[LP]_EQ$/, '') + '.L';
+      else if (raw.endsWith('_EQ')) cleanSymbol = raw.replace('_EQ', '');
+      else cleanSymbol = raw;
+    }
+  }
+  if (cleanSymbol.endsWith('_US_EQ')) cleanSymbol = cleanSymbol.replace('_US_EQ', '');
+  else if (cleanSymbol.endsWith('_CA_EQ')) cleanSymbol = cleanSymbol.replace('_CA_EQ', '') + '.TO';
+  else if (cleanSymbol.endsWith('_EQ')) cleanSymbol = cleanSymbol.replace('_EQ', '');
+
+  return cleanSymbol;
+}
+
+/**
+ * Consolidate multiple positions of the same ticker across broker accounts
+ * into a single unified performance entry with dollar-weighted return.
+ */
+export function aggregatePositionPerformance(items: PositionPerformance[]): PositionPerformance {
+  const primary = items[0];
+  const cleanSymbol = primary.cleanSymbol;
+
+  // Total market value
+  const totalMarketValue = items.reduce((sum, it) => sum + (it.marketValue || 0), 0);
+
+  // Total dollar change
+  const totalChangeDollar = items.reduce((sum, it) => sum + (it.changeDollar || 0), 0);
+
+  // Dollar-weighted return percent
+  const absMktSum = items.reduce((sum, it) => sum + Math.abs(it.marketValue || 0), 0);
+  let changePercent: number;
+  if (absMktSum > 0) {
+    changePercent = items.reduce((sum, it) => sum + (it.changePercent || 0) * Math.abs(it.marketValue || 0), 0) / absMktSum;
+  } else {
+    changePercent = items.reduce((sum, it) => sum + (it.changePercent || 0), 0) / items.length;
+  }
+
+  // Total quantity and weighted average cost
+  const totalQuantity = items.reduce((sum, it) => sum + (it.position?.quantity || 0), 0);
+  const totalCostBasis = items.reduce((sum, it) => sum + (Math.abs(it.position?.quantity || 0) * (it.averageCost || 0)), 0);
+  const averageCost = totalQuantity > 0 ? (totalCostBasis / totalQuantity) : primary.averageCost;
+
+  // Pick best description if available
+  const bestName = items.find(it => it.name && !it.name.includes('Position'))?.name || primary.name;
+
+  // Extract unique sources/brokers
+  const sources = Array.from(new Set(items.map(it => it.source).filter(Boolean)));
+  const source = sources.join(' + ');
+
+  // Consolidated UnifiedPosition
+  const totalPL = items.reduce((sum, it) => sum + (it.position?.unrealizedPL || 0), 0);
+  const totalPLPercent = totalCostBasis > 0 ? (totalPL / totalCostBasis) * 100 : changePercent;
+  const combinedPosition: UnifiedPosition = {
+    ...primary.position,
+    id: `merged-${cleanSymbol}`,
+    quantity: totalQuantity,
+    marketValue: totalMarketValue,
+    averageCost: averageCost,
+    unrealizedPL: totalPL,
+    unrealizedPLPercent: totalPLPercent,
+    source: source,
+  };
+
+  return {
+    position: combinedPosition,
+    cleanSymbol,
+    name: bestName,
+    timeframe: primary.timeframe,
+    changePercent: isNaN(changePercent) ? 0 : changePercent,
+    changeDollar: isNaN(totalChangeDollar) ? 0 : totalChangeDollar,
+    marketValue: totalMarketValue,
+    currentPrice: primary.currentPrice,
+    averageCost,
+    assetType: primary.assetType,
+    currency: primary.currency,
+    source,
+    sources,
+  };
 }
 
 export function PerformanceLeaderboard({
@@ -74,8 +169,7 @@ export function PerformanceLeaderboard({
     return positions.map((pos) => {
       if (!pos) return null;
       const isOption = pos.assetType === 'Option';
-      const baseSymbol = pos.underlyingSymbol || (isOption ? pos.symbol.match(/^[A-Z]+/)?.[0] : pos.symbol) || pos.symbol || '';
-      const cleanSymbol = baseSymbol.trim().toUpperCase();
+      const cleanSymbol = extractCleanSymbol(pos);
       const name = pos.description || (isOption ? `${cleanSymbol} ${pos.optionType || 'Option'} $${pos.strike || ''}` : `${cleanSymbol} Position`);
 
       let changePercent = 0;
@@ -122,19 +216,49 @@ export function PerformanceLeaderboard({
         assetType: pos.assetType === 'Option' ? 'Option' : 'Stock',
         currency: (pos.currency || 'USD').toUpperCase(),
         source: pos.source || 'IBKR',
+        sources: [pos.source || 'IBKR'],
       };
     }).filter((p): p is PositionPerformance => p !== null);
   }, [positions, timeframe]);
 
-  // --- Filtering ---
+  // --- Filtering & Deduplication ---
   const filteredList = useMemo(() => {
-    return performanceList.filter((item) => {
+    // 1. Filter raw performance items by asset type, broker, and currency
+    const matching = performanceList.filter((item) => {
       if (assetFilter === 'STOCK' && item.assetType !== 'Stock') return false;
       if (assetFilter === 'OPTION' && item.assetType !== 'Option') return false;
       if (brokerFilter !== 'ALL' && item.source !== brokerFilter) return false;
       if (currencyFilter !== 'ALL' && item.currency !== currencyFilter) return false;
       return true;
     });
+
+    // 2. Group by unique ticker instrument so the same ticker across accounts appears only once
+    const groupedMap = new Map<string, PositionPerformance[]>();
+    for (const item of matching) {
+      const isOpt = item.assetType === 'Option';
+      const key = isOpt
+        ? `OPTION:${item.position?.symbol || `${item.cleanSymbol}-${item.position?.expiry}-${item.position?.strike}-${item.position?.optionType}`}`
+        : `STOCK:${item.cleanSymbol}`;
+
+      const existing = groupedMap.get(key);
+      if (existing) {
+        existing.push(item);
+      } else {
+        groupedMap.set(key, [item]);
+      }
+    }
+
+    // 3. Aggregate any multi-account positions into a single unified entry
+    const result: PositionPerformance[] = [];
+    for (const items of groupedMap.values()) {
+      if (items.length === 1) {
+        result.push(items[0]);
+      } else {
+        result.push(aggregatePositionPerformance(items));
+      }
+    }
+
+    return result;
   }, [performanceList, assetFilter, brokerFilter, currencyFilter]);
 
   // --- Winners and Losers Split ---
@@ -561,6 +685,7 @@ export function PerformanceLeaderboard({
                     return (
                       <div
                         key={item.position.id || `${item.cleanSymbol}-${idx}`}
+                        data-testid={`leaderboard-winner-${item.cleanSymbol}`}
                         onClick={() => onSelectPosition && onSelectPosition(item.position)}
                         className="p-2.5 rounded-xl border border-border/40 bg-card/30 hover:bg-emerald-950/20 hover:border-emerald-500/40 transition-all cursor-pointer group/row space-y-1.5 relative overflow-hidden"
                       >
@@ -587,14 +712,32 @@ export function PerformanceLeaderboard({
                                     {item.position.investmentStyle}
                                   </Badge>
                                 )}
-                                <Badge variant="outline" className={cn(
-                                  "text-[9px] px-1 py-0 h-4 font-mono",
-                                  item.source === 'IBKR' ? "text-orange-400 border-orange-500/40" :
-                                  item.source === 'Trading 212' ? "text-blue-400 border-blue-500/40" :
-                                  "text-rose-400 border-rose-500/40"
-                                )}>
-                                  {item.source}
-                                </Badge>
+                                {item.sources && item.sources.length > 1 ? (
+                                  item.sources.map((src) => (
+                                    <Badge
+                                      key={src}
+                                      variant="outline"
+                                      className={cn(
+                                        "text-[9px] px-1 py-0 h-4 font-mono",
+                                        src === 'IBKR' ? "text-orange-400 border-orange-500/40 bg-orange-500/10" :
+                                        src === 'Trading 212' ? "text-blue-400 border-blue-500/40 bg-blue-500/10" :
+                                        src === 'Tastytrade' ? "text-rose-400 border-rose-500/40 bg-rose-500/10" :
+                                        "text-purple-400 border-purple-500/40"
+                                      )}
+                                    >
+                                      {src}
+                                    </Badge>
+                                  ))
+                                ) : (
+                                  <Badge variant="outline" className={cn(
+                                    "text-[9px] px-1 py-0 h-4 font-mono",
+                                    item.source === 'IBKR' ? "text-orange-400 border-orange-500/40" :
+                                    item.source === 'Trading 212' ? "text-blue-400 border-blue-500/40" :
+                                    "text-rose-400 border-rose-500/40"
+                                  )}>
+                                    {item.source}
+                                  </Badge>
+                                )}
                                 {item.assetType === 'Option' && (
                                   <Badge className="bg-purple-500/15 text-purple-300 border-purple-500/30 text-[9px] px-1 py-0 h-4">
                                     Option
@@ -694,6 +837,7 @@ export function PerformanceLeaderboard({
                     return (
                       <div
                         key={item.position.id || `${item.cleanSymbol}-${idx}`}
+                        data-testid={`leaderboard-loser-${item.cleanSymbol}`}
                         onClick={() => onSelectPosition && onSelectPosition(item.position)}
                         className="p-2.5 rounded-xl border border-border/40 bg-card/30 hover:bg-rose-950/20 hover:border-rose-500/40 transition-all cursor-pointer group/row space-y-1.5 relative overflow-hidden"
                       >
@@ -720,14 +864,32 @@ export function PerformanceLeaderboard({
                                     {item.position.investmentStyle}
                                   </Badge>
                                 )}
-                                <Badge variant="outline" className={cn(
-                                  "text-[9px] px-1 py-0 h-4 font-mono",
-                                  item.source === 'IBKR' ? "text-orange-400 border-orange-500/40" :
-                                  item.source === 'Trading 212' ? "text-blue-400 border-blue-500/40" :
-                                  "text-rose-400 border-rose-500/40"
-                                )}>
-                                  {item.source}
-                                </Badge>
+                                {item.sources && item.sources.length > 1 ? (
+                                  item.sources.map((src) => (
+                                    <Badge
+                                      key={src}
+                                      variant="outline"
+                                      className={cn(
+                                        "text-[9px] px-1 py-0 h-4 font-mono",
+                                        src === 'IBKR' ? "text-orange-400 border-orange-500/40 bg-orange-500/10" :
+                                        src === 'Trading 212' ? "text-blue-400 border-blue-500/40 bg-blue-500/10" :
+                                        src === 'Tastytrade' ? "text-rose-400 border-rose-500/40 bg-rose-500/10" :
+                                        "text-purple-400 border-purple-500/40"
+                                      )}
+                                    >
+                                      {src}
+                                    </Badge>
+                                  ))
+                                ) : (
+                                  <Badge variant="outline" className={cn(
+                                    "text-[9px] px-1 py-0 h-4 font-mono",
+                                    item.source === 'IBKR' ? "text-orange-400 border-orange-500/40" :
+                                    item.source === 'Trading 212' ? "text-blue-400 border-blue-500/40" :
+                                    "text-rose-400 border-rose-500/40"
+                                  )}>
+                                    {item.source}
+                                  </Badge>
+                                )}
                                 {item.assetType === 'Option' && (
                                   <Badge className="bg-purple-500/15 text-purple-300 border-purple-500/30 text-[9px] px-1 py-0 h-4">
                                     Option

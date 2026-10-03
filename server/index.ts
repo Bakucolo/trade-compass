@@ -132,6 +132,7 @@ import {
   extractShortOptionKeyFromNote,
   recordShortOptionAlertDismissedByKey,
 } from './services/shortOptionAlertService';
+import { createAutoBracketAlerts, AutoBracketResult } from './services/alertFollowUpService';
 import {
   runAgentOnThoughtLog,
   extractSymbolsFromText,
@@ -5937,16 +5938,28 @@ async function checkPriceAlerts() {
           }
         });
 
+        // Automatically create follow-up bracket alerts: +5% (ABOVE) and -5% (BELOW)
+        let autoBracketInfo: AutoBracketResult | null = null;
+        try {
+          autoBracketInfo = await createAutoBracketAlerts(prisma, alert, currentPrice, logToFile);
+        } catch (bracketErr: any) {
+          logToFile(`[Auto-Bracket Error] Failed creating follow-up alerts for ${alert.symbol}: ${bracketErr?.message || bracketErr}`);
+        }
+
         // Dispatch alert to Telegram Alerts topic (chat_id: -1003872409872, message_thread_id: 2) and save to Alerts folder
         try {
           const conditionLabel = alert.condition === 'ABOVE' ? '▲ Risen Above' : '▼ Fallen Below';
           const alertTitle = `🚨 Alert: ${alert.symbol} ${conditionLabel} $${alert.targetPrice.toFixed(2)} (Hit $${currentPrice.toFixed(2)})`;
+          const autoFollowUpText = autoBracketInfo && autoBracketInfo.createdCount > 0
+            ? `• *Auto Follow-ups:* Set +5% ($${autoBracketInfo.upperTarget.toFixed(2)}) & -5% ($${autoBracketInfo.lowerTarget.toFixed(2)})\n`
+            : '';
           const alertMsg =
             `🚨 *PRICE ALERT TRIGGERED*\n\n` +
             `• *Symbol:* ${alert.symbol}\n` +
             `• *Current Price:* $${currentPrice.toFixed(2)}\n` +
             `• *Target Condition:* ${alert.condition} $${alert.targetPrice.toFixed(2)}\n` +
             (alert.notes ? `• *Notes:* _${alert.notes}_\n` : '') +
+            autoFollowUpText +
             `• *Timestamp:* ${new Date().toLocaleTimeString()} UTC`;
 
           await sendTelegramAlert(alertMsg, {
