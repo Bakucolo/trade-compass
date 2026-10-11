@@ -9,6 +9,7 @@ import { createPlannedTrade, PlannedTradeItem } from './plannedTradeService';
 import { sendTelegramMessage, generateAndSendDailyReport } from './telegramReportService';
 import { generateJsonCompletion } from './llmFallbackRouter';
 import { handleWatchlistTopicMessage } from './telegramWatchlistQueryService';
+import { handlePositionsTopicMessage } from './telegramPositionsQueryService';
 
 const logToFile = (msg: string) => console.log(msg);
 
@@ -1060,6 +1061,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       const configuredExecutionThreadId = process.env.TELEGRAM_EXECUTION_THREAD_ID ? Number(process.env.TELEGRAM_EXECUTION_THREAD_ID) : 100;
       const configuredWatchlistThreadId = process.env.TELEGRAM_WATCHLIST_THREAD_ID ? Number(process.env.TELEGRAM_WATCHLIST_THREAD_ID) : 293;
       const configuredNotesThreadId = process.env.TELEGRAM_NOTES_THREAD_ID ? Number(process.env.TELEGRAM_NOTES_THREAD_ID) : 294;
+      const configuredPositionsThreadId = process.env.TELEGRAM_POSITIONS_THREAD_ID ? Number(process.env.TELEGRAM_POSITIONS_THREAD_ID) : undefined;
 
       const msgThreadNum = msg.messageThreadId !== undefined ? Number(msg.messageThreadId) : undefined;
       const isExplicitAppThread = msgThreadNum !== undefined && msgThreadNum === configuredAppThreadId;
@@ -1068,6 +1070,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       const isExplicitExecutionThread = configuredExecutionThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredExecutionThreadId;
       const isExplicitWatchlistThread = configuredWatchlistThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredWatchlistThreadId;
       const isExplicitNotesThread = configuredNotesThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredNotesThreadId;
+      const isExplicitPositionsThread = configuredPositionsThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredPositionsThreadId;
 
       const resolvedTopicName = msg.topicName || (msgThreadNum !== undefined ? topicNameByThreadId.get(msgThreadNum) : undefined);
 
@@ -1075,12 +1078,15 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         topicNameByThreadId.set(msgThreadNum, resolvedTopicName);
       }
 
-      // Auto-discover and persist Watchlist & Notes thread IDs if not yet configured
+      // Auto-discover and persist Watchlist, Notes & Positions thread IDs if not yet configured
       if (resolvedTopicName && /watchlist/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_WATCHLIST_THREAD_ID) {
         setTelegramWatchlistThreadId(msgThreadNum);
       }
       if (resolvedTopicName && /notes?/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_NOTES_THREAD_ID) {
         setTelegramNotesThreadId(msgThreadNum);
+      }
+      if (resolvedTopicName && /positions?/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_POSITIONS_THREAD_ID) {
+        setTelegramPositionsThreadId(msgThreadNum);
       }
 
       // Topic created status message handling
@@ -1217,21 +1223,29 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         }
       }
 
-      const isWatchlistTopic = isExplicitWatchlistThread || (!isExplicitAppThread && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isExplicitNotesThread && Boolean(
+      const isPositionsTopic = isExplicitPositionsThread || (!isExplicitAppThread && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isExplicitWatchlistThread && !isExplicitNotesThread && Boolean(
+        (resolvedTopicName && /positions?/i.test(resolvedTopicName)) ||
+        contentText.toLowerCase().startsWith('#position') ||
+        contentText.toLowerCase().startsWith('#positions') ||
+        contentText.match(/#(?:topic:)?positions?\b/i) ||
+        (msg.chat?.id === -1003872409872 && configuredPositionsThreadId !== undefined && msgThreadNum === configuredPositionsThreadId)
+      ));
+
+      const isWatchlistTopic = isExplicitWatchlistThread || (!isExplicitAppThread && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isExplicitNotesThread && !isPositionsTopic && Boolean(
         (resolvedTopicName && /watchlist/i.test(resolvedTopicName)) ||
         contentText.toLowerCase().startsWith('#watchlist') ||
         contentText.match(/#(?:topic:)?watchlist\b/i) ||
         (msg.chat?.id === -1003872409872 && msgThreadNum === configuredWatchlistThreadId)
       ));
 
-      const isNotesTopic = isExplicitNotesThread || (!isExplicitAppThread && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && Boolean(
+      const isNotesTopic = isExplicitNotesThread || (!isExplicitAppThread && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isPositionsTopic && Boolean(
         (resolvedTopicName && /notes?/i.test(resolvedTopicName)) ||
         contentText.toLowerCase().startsWith('#note') ||
         contentText.match(/#(?:topic:)?notes?\b/i) ||
         (msg.chat?.id === -1003872409872 && msgThreadNum === configuredNotesThreadId)
       ));
 
-      const isAppTopic = isExplicitAppThread || (!isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isNotesTopic && Boolean(
+      const isAppTopic = isExplicitAppThread || (!isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isNotesTopic && !isPositionsTopic && Boolean(
         (resolvedTopicName && resolvedTopicName.toLowerCase().includes('app')) ||
         contentText.toLowerCase().startsWith('#app') ||
         contentText.toLowerCase().includes('#app-idea') ||
@@ -1241,6 +1255,40 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
 
       const senderLabel = msg.sender?.username ? `@${msg.sender.username}` : (msg.sender?.firstName || 'Mobile');
       const targetChatId = msg.chat?.id || msg.sender?.id || process.env.TELEGRAM_ALERTS_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
+
+      // ==========================================
+      // POSITIONS TOPIC HANDLER
+      // ==========================================
+      if (isPositionsTopic) {
+        const targetThreadId = msgThreadNum || configuredPositionsThreadId;
+        logToFile(`[TelegramBuffer] 💼 Processing Positions query in thread ${targetThreadId}: "${contentText}"`);
+
+        const queryResult = await handlePositionsTopicMessage({
+          text: contentText,
+          chatId: targetChatId,
+          messageThreadId: targetThreadId,
+          prisma,
+        });
+
+        const savedLog = await (prisma as any).thoughtLog.create({
+          data: {
+            title: `💼 Telegram: Positions Query (${queryResult.intent})`,
+            content: `User query: "${contentText}"\n\n${queryResult.replyText || ''}`,
+            folder: 'Positions',
+            tags: `Telegram, Positions, ${queryResult.intent}, ${senderLabel}`,
+            symbols: null,
+            sentiment: 'NEUTRAL',
+            isPinned: false,
+            isFulfilled: true,
+            agentOutput: queryResult.replyText,
+            agentActionType: 'ADD_CONTEXT',
+            marketDataJson: null,
+            createdAt: new Date(msg.timestamp),
+          },
+        });
+        createdLogs.push({ id: savedLog.id, title: savedLog.title, symbols: null });
+        continue;
+      }
 
       // ==========================================
       // WATCHLIST TOPIC HANDLER
@@ -1908,6 +1956,7 @@ export function getTelegramBufferStatus() {
     appThreadId: process.env.TELEGRAM_APP_THREAD_ID || null,
     watchlistThreadId: process.env.TELEGRAM_WATCHLIST_THREAD_ID || null,
     notesThreadId: process.env.TELEGRAM_NOTES_THREAD_ID || null,
+    positionsThreadId: process.env.TELEGRAM_POSITIONS_THREAD_ID || null,
     lastSyncTimestamp,
     lastSyncCount,
   };
@@ -1986,6 +2035,32 @@ export function setTelegramNotesThreadId(threadId: string | number): boolean {
     return true;
   } catch (e: any) {
     logToFile(`[TelegramBuffer] Error setting notes thread ID: ${e.message}`);
+    return false;
+  }
+}
+
+/**
+ * Explicitly update and persist TELEGRAM_POSITIONS_THREAD_ID to environment & .env.local
+ */
+export function setTelegramPositionsThreadId(threadId: string | number): boolean {
+  try {
+    const threadIdStr = String(threadId).trim();
+    process.env.TELEGRAM_POSITIONS_THREAD_ID = threadIdStr;
+    topicNameByThreadId.set(Number(threadIdStr), 'Positions');
+    logToFile(`[TelegramBuffer] Updated TELEGRAM_POSITIONS_THREAD_ID=${threadIdStr}`);
+    const envPath = path.resolve(process.cwd(), '.env.local');
+    if (fs.existsSync(envPath)) {
+      let envContent = fs.readFileSync(envPath, 'utf8');
+      if (/TELEGRAM_POSITIONS_THREAD_ID=/i.test(envContent)) {
+        envContent = envContent.replace(/TELEGRAM_POSITIONS_THREAD_ID=.*/g, `TELEGRAM_POSITIONS_THREAD_ID=${threadIdStr}`);
+      } else {
+        envContent += `\nTELEGRAM_POSITIONS_THREAD_ID=${threadIdStr}\n`;
+      }
+      fs.writeFileSync(envPath, envContent, 'utf8');
+    }
+    return true;
+  } catch (e: any) {
+    logToFile(`[TelegramBuffer] Error setting positions thread ID: ${e.message}`);
     return false;
   }
 }

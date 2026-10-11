@@ -155,6 +155,7 @@ import {
   setTelegramExecutionThreadId,
   setTelegramWatchlistThreadId,
   setTelegramNotesThreadId,
+  setTelegramPositionsThreadId,
   isTelegramBriefingRequest,
 } from './services/telegramBufferConsumerService';
 import { getAiRatingForStock } from './services/aiRatingService';
@@ -8208,6 +8209,20 @@ app.post('/api/telegram/config-notes-thread', (req, res) => {
       return res.status(400).json({ error: 'threadId is required' });
     }
     const success = setTelegramNotesThreadId(threadId);
+    res.json({ success, threadId: String(threadId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/telegram/config-positions-thread - Update Telegram positions topic thread ID
+app.post('/api/telegram/config-positions-thread', (req, res) => {
+  try {
+    const { threadId } = req.body;
+    if (threadId === undefined || threadId === null) {
+      return res.status(400).json({ error: 'threadId is required' });
+    }
+    const success = setTelegramPositionsThreadId(threadId);
     res.json({ success, threadId: String(threadId) });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
