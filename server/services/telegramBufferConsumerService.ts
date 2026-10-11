@@ -8,6 +8,7 @@ import { autoCreateAlertsFromText } from './thoughtLogAlertService';
 import { createPlannedTrade, PlannedTradeItem } from './plannedTradeService';
 import { sendTelegramMessage, generateAndSendDailyReport } from './telegramReportService';
 import { generateJsonCompletion } from './llmFallbackRouter';
+import { handleWatchlistTopicMessage } from './telegramWatchlistQueryService';
 
 const logToFile = (msg: string) => console.log(msg);
 
@@ -1245,8 +1246,39 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       // WATCHLIST TOPIC HANDLER
       // ==========================================
       if (isWatchlistTopic) {
-        const parsed = parseWatchlistMessage(contentText);
         const targetThreadId = msgThreadNum || configuredWatchlistThreadId;
+
+        // CHECK 1: Query all watchlists OR query specific watchlist with criteria!
+        const queryResult = await handleWatchlistTopicMessage({
+          text: contentText,
+          chatId: targetChatId,
+          messageThreadId: targetThreadId,
+          prisma,
+        });
+
+        if (queryResult.handled) {
+          logToFile(`[TelegramBuffer] Watchlist query handled (${queryResult.actionTaken}) for ${senderLabel}`);
+          const savedLog = await (prisma as any).thoughtLog.create({
+            data: {
+              title: queryResult.actionTaken === 'LIST_ALL' ? `📋 Telegram: All Watchlists Query` : `🎯 Telegram: Watchlist Criteria Query`,
+              content: `User query: "${contentText}"\n\n${queryResult.replyText || ''}`,
+              folder: 'Watchlists',
+              tags: `Telegram, Watchlist, Query, ${senderLabel}`,
+              symbols: '',
+              sentiment: 'NEUTRAL',
+              isPinned: false,
+              isFulfilled: true,
+              agentOutput: queryResult.replyText || 'Watchlist query processed.',
+              agentActionType: 'ADD_CONTEXT',
+              marketDataJson: null,
+              createdAt: new Date(msg.timestamp),
+            },
+          });
+          createdLogs.push({ id: savedLog.id, title: savedLog.title, symbols: savedLog.symbols });
+          continue;
+        }
+
+        const parsed = parseWatchlistMessage(contentText);
 
         // SUB-CASE 1: Only watchlist theme name provided -> Call AI Agent to curate theme stocks
         if (parsed.isAgentThemeRequest && parsed.watchlistName) {
