@@ -458,8 +458,8 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
               Tastytrade
             </span>
             <span className="text-muted-foreground">•</span>
-            <span className="flex items-center gap-1" title={`Trading 212: ${isT212Connected ? 'Connected' : 'Disconnected'}`}>
-              <span className={cn('w-2 h-2 rounded-full', isT212Connected ? 'bg-emerald-400 animate-pulse' : 'bg-slate-400')} />
+            <span className="flex items-center gap-1" title={isT212Connected ? 'Trading 212: Connected' : (t212Status?.error ? `Trading 212: Disconnected (${t212Status.error})` : 'Trading 212: Disconnected')}>
+              <span className={cn('w-2 h-2 rounded-full', isT212Connected ? 'bg-emerald-400 animate-pulse' : (t212Status?.error ? 'bg-amber-400' : 'bg-slate-400'))} />
               Trading 212
             </span>
           </div>

@@ -18,6 +18,8 @@ export interface Env {
   TELEGRAM_ALERTS_THREAD_ID?: string | number; // Specific Alerts topic thread ID: 2
   TELEGRAM_APP_THREAD_ID?: string | number; // Specific App topic thread ID: 10
   TELEGRAM_EXECUTION_THREAD_ID?: string | number; // Specific Execution topic thread ID
+  TELEGRAM_WATCHLIST_THREAD_ID?: string | number; // Specific Watchlist topic thread ID: 293
+  TELEGRAM_NOTES_THREAD_ID?: string | number; // Specific Notes topic thread ID: 294
 }
 
 export interface SendTelegramMessageOptions {
@@ -324,6 +326,10 @@ export default {
         const isAppThread = msg.message_thread_id !== undefined && String(msg.message_thread_id) === appThreadIdStr;
         const executionThreadIdStr = env.TELEGRAM_EXECUTION_THREAD_ID ? String(env.TELEGRAM_EXECUTION_THREAD_ID) : undefined;
         const isExecutionThread = msg.message_thread_id !== undefined && executionThreadIdStr !== undefined && String(msg.message_thread_id) === executionThreadIdStr;
+        const watchlistThreadIdStr = String(env.TELEGRAM_WATCHLIST_THREAD_ID || '293');
+        const isWatchlistThread = msg.message_thread_id !== undefined && String(msg.message_thread_id) === watchlistThreadIdStr;
+        const notesThreadIdStr = String(env.TELEGRAM_NOTES_THREAD_ID || '294');
+        const isNotesThread = msg.message_thread_id !== undefined && String(msg.message_thread_id) === notesThreadIdStr;
 
         // Try reading cached topic name from KV if available
         let cachedTopicName: string | null = null;
@@ -339,11 +345,15 @@ export default {
           msg.forum_topic_created?.name ||
           msg.reply_to_message?.forum_topic_created?.name ||
           cachedTopicName ||
-          (isExecutionThread ? 'Execution' : (isAppThread ? 'App' : (isAlertsThread ? 'Alerts' : undefined)));
+          (isWatchlistThread ? 'Watchlist' : (isNotesThread ? 'Notes' : (isExecutionThread ? 'Execution' : (isAppThread ? 'App' : (isAlertsThread ? 'Alerts' : undefined)))));
 
         // If message text contains execution keywords or tags, also remember topic as Execution
         const topicName = (isExecutionThread || (rawTopicName && /execution/i.test(rawTopicName)))
           ? 'Execution'
+          : (isWatchlistThread || (rawTopicName && /watchlist/i.test(rawTopicName)))
+          ? 'Watchlist'
+          : (isNotesThread || (rawTopicName && /notes?/i.test(rawTopicName)))
+          ? 'Notes'
           : rawTopicName;
 
         if (topicName && msg.message_thread_id && env.APP_BUFFER && !cachedTopicName) {

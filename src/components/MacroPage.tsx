@@ -49,6 +49,7 @@ import { FedFundsCurveCard } from './macro/FedFundsCurveCard';
 import { VolatilityMacroCard } from './macro/VolatilityMacroCard';
 import { TrendFinderCard } from './macro/TrendFinderCard';
 import { GoldMacroRegimeDashboard } from './macro/GoldMacroRegimeDashboard';
+import { CommoditiesForwardCurveCard } from './macro/CommoditiesForwardCurveCard';
 
 interface MacroPageProps {
   onNavigateToResearch?: (symbol: string) => void;
@@ -59,6 +60,7 @@ interface MacroPageProps {
 type MacroCategoryTab = 'all' | 'economic' | 'volatility' | 'rates_bonds' | 'indices' | 'currencies' | 'metals' | 'energy';
 
 export type MacroSectionId =
+  | 'commodities'
   | 'gold_macro_regime'
   | 'macro_trends'
   | 'volatility'
@@ -70,6 +72,7 @@ export type MacroSectionId =
   | 'asset_catalog';
 
 const DEFAULT_SECTION_ORDER: MacroSectionId[] = [
+  'commodities',
   'gold_macro_regime',
   'macro_trends',
   'volatility',
@@ -81,7 +84,7 @@ const DEFAULT_SECTION_ORDER: MacroSectionId[] = [
   'asset_catalog',
 ];
 
-const MACRO_SECTIONS_STORAGE_KEY = 'macro_page_sections_order_v2';
+const MACRO_SECTIONS_STORAGE_KEY = 'macro_page_sections_order_v3';
 
 function loadSavedSectionOrder(): MacroSectionId[] {
   try {
@@ -313,6 +316,20 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
     preview: string;
     renderContent: () => React.ReactNode;
   }> = {
+    commodities: {
+      title: 'Commodities Pricing, Forward Curves & Term Structures',
+      badge: 'Futures & Cash Strips',
+      subtitle: 'Real-time commodity futures pricing, M1 to M24 term structures, backwardation vs contango, and macro ratio spreads',
+      icon: Flame,
+      iconColorClasses: 'bg-amber-500/15 border-amber-500/40 text-amber-300',
+      preview: '21 Commodities • WTI / Brent / Gas / Gold / Copper Forward Strips • Roll Yields • GSR & Crack Spreads',
+      renderContent: () => (
+        <CommoditiesForwardCurveCard
+          onNavigateToResearch={onNavigateToResearch}
+          onNavigateToGraphs={onNavigateToGraphs}
+        />
+      ),
+    },
     gold_macro_regime: {
       title: 'Gold Macro Regime & Sovereign Debt Stress Station',
       badge: 'Institutional Macro',

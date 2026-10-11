@@ -7,6 +7,7 @@ import { transcribeTelegramVoice } from './voiceTranscriptionService';
 import { autoCreateAlertsFromText } from './thoughtLogAlertService';
 import { createPlannedTrade, PlannedTradeItem } from './plannedTradeService';
 import { sendTelegramMessage, generateAndSendDailyReport } from './telegramReportService';
+import { generateJsonCompletion } from './llmFallbackRouter';
 
 const logToFile = (msg: string) => console.log(msg);
 
@@ -56,6 +57,17 @@ export interface BufferSyncResult {
 let lastSyncTimestamp: string | null = null;
 let lastSyncCount: number = 0;
 let isConsuming = false;
+let lastDirectTelegramUpdateId = 0;
+
+// In-memory cache for thread ID to topic name mappings
+export const topicNameByThreadId = new Map<number, string>([
+  [2, 'Alerts'],
+  [10, 'App'],
+  [100, 'Execution'],
+  [293, 'Watchlist'],
+  [294, 'Notes'],
+]);
+
 /**
  * Detects whether an incoming Telegram message is requesting an on-demand executive briefing
  */
@@ -87,49 +99,217 @@ export function isTelegramBriefingRequest(text: string): boolean {
 }
 
 /**
- * Determine sentiment from raw text
+ * Fetch direct updates from Telegram Bot API getUpdates endpoint as a reliable fallback/live channel
  */
-function detectSentimentFromText(text: string): string {
-  const upper = text.toUpperCase();
-  if (upper.includes('BULL') || upper.includes('CALL') || upper.includes('LONG') || upper.includes('BUY') || upper.includes('MOON') || upper.includes('BREAKOUT')) {
-    return 'BULLISH';
+export async function fetchDirectTelegramUpdates(botToken: string): Promise<BufferedTelegramMessage[]> {
+  try {
+    const url = `https://api.telegram.org/bot${botToken}/getUpdates?offset=${lastDirectTelegramUpdateId + 1}&limit=20&timeout=2`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    if (!res.ok) return [];
+    const data: any = await res.json();
+    if (!data.ok || !data.result || !Array.isArray(data.result)) return [];
+
+    const messages: BufferedTelegramMessage[] = [];
+    for (const update of data.result) {
+      if (update.update_id > lastDirectTelegramUpdateId) {
+        lastDirectTelegramUpdateId = update.update_id;
+      }
+      const msg = update.message || update.edited_message || update.channel_post;
+      if (!msg) continue;
+
+      const voiceObj = msg.voice || msg.audio;
+      const isVoice = Boolean(voiceObj && voiceObj.file_id);
+      const text = (msg.text || msg.caption || '').trim();
+      const topicCreatedName = msg.forum_topic_created?.name || msg.reply_to_message?.forum_topic_created?.name;
+
+      if (topicCreatedName && msg.message_thread_id) {
+        topicNameByThreadId.set(msg.message_thread_id, topicCreatedName);
+      }
+
+      if (!text && !isVoice && !topicCreatedName) continue;
+
+      const resolvedTopic = topicCreatedName || (msg.message_thread_id ? topicNameByThreadId.get(msg.message_thread_id) : undefined);
+
+      messages.push({
+        id: `direct_msg_${update.update_id}_${msg.message_id}`,
+        messageId: msg.message_id,
+        messageThreadId: msg.message_thread_id,
+        isTopicMessage: Boolean(msg.is_topic_message),
+        topicName: resolvedTopic,
+        type: isVoice ? 'voice' : 'text',
+        text: text || (topicCreatedName ? `📌 Topic created: ${topicCreatedName}` : ''),
+        date: msg.date,
+        timestamp: new Date(msg.date * 1000).toISOString(),
+        fileId: voiceObj?.file_id,
+        duration: voiceObj?.duration,
+        mimeType: voiceObj?.mime_type || 'audio/ogg',
+        fileSize: voiceObj?.file_size,
+        sender: msg.from ? {
+          id: msg.from.id,
+          username: msg.from.username,
+          firstName: msg.from.first_name,
+          lastName: msg.from.last_name,
+        } : undefined,
+        chat: {
+          id: msg.chat.id,
+          type: msg.chat.type,
+          title: msg.chat.title || msg.chat.first_name,
+        },
+      });
+    }
+
+    return messages;
+  } catch (err: any) {
+    logToFile(`[TelegramBuffer] Direct Telegram updates poll warning: ${err.message}`);
+    return [];
   }
-  if (upper.includes('BEAR') || upper.includes('PUT') || upper.includes('SHORT') || upper.includes('SELL') || upper.includes('DROP') || upper.includes('BREAKDOWN') || upper.includes('DUMP')) {
-    return 'BEARISH';
-  }
-  if (upper.includes('FED') || upper.includes('CPI') || upper.includes('PMI') || upper.includes('INFLATION') || upper.includes('RATES') || upper.includes('YIELD') || upper.includes('MACRO')) {
-    return 'MACRO';
-  }
-  if (upper.includes('RISK') || upper.includes('CAUTION') || upper.includes('WARNING') || upper.includes('HEDGE') || upper.includes('DOWNSIDE')) {
-    return 'CAUTION';
-  }
-  return 'NEUTRAL';
 }
 
 /**
- * Extract clean headline title from note text
+ * Parses incoming message for Watchlist topic:
+ * - If contains watchlist name and tickers: returns { watchlistName, symbols, isAgentThemeRequest: false }
+ * - If contains only watchlist name: returns { watchlistName, symbols: [], isAgentThemeRequest: true }
  */
-function createTitleFromText(text: string, dateStr: string): string {
-  const clean = text.trim().replace(/\n+/g, ' ');
-  const firstSentence = clean.split(/[.!?]/)[0].trim();
-  const excerpt = firstSentence.length > 50 ? firstSentence.slice(0, 47) + '...' : firstSentence;
-  const timeFormatted = new Date(dateStr).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  return `📱 ${excerpt || 'Mobile Note'} (${timeFormatted})`;
+export interface ParsedWatchlistInput {
+  watchlistName: string;
+  symbols: string[];
+  isAgentThemeRequest: boolean;
+}
+
+export function parseWatchlistMessage(rawText: string): ParsedWatchlistInput {
+  if (!rawText) return { watchlistName: '', symbols: [], isAgentThemeRequest: false };
+
+  // Remove topic hashtags & leading emojis
+  let text = rawText
+    .replace(/#(?:topic:)?(?:watchlist|watch)\b/gi, '')
+    .replace(/\+watchlist\b/gi, '')
+    .replace(/^📋\s*/, '')
+    .trim();
+
+  // 1. Colon pattern: "WatchlistName: TICKER1 TICKER2" or "Watchlist: SYM1, SYM2"
+  const colonMatch = text.match(/^([^:]+):\s*(.*)$/s);
+  if (colonMatch) {
+    const rawName = colonMatch[1].replace(/^watchlist\s+/i, '').trim();
+    const rightSide = colonMatch[2].trim();
+    const extracted = extractSymbolsFromText(rightSide);
+    if (extracted.length > 0) {
+      return {
+        watchlistName: rawName || 'Watchlist',
+        symbols: extracted,
+        isAgentThemeRequest: false,
+      };
+    } else {
+      return {
+        watchlistName: text.trim(),
+        symbols: [],
+        isAgentThemeRequest: true,
+      };
+    }
+  }
+
+  // 2. Dollar signs present: "Theme Name $SYM1 $SYM2"
+  const dollarMatches = (text.match(/\$([A-Za-z]{1,6})\b/g) || []).map(s => s.replace('$', '').toUpperCase());
+  if (dollarMatches.length > 0) {
+    const firstDollarIdx = text.indexOf('$');
+    const namePart = firstDollarIdx > 0 ? text.slice(0, firstDollarIdx).trim() : 'Watchlist';
+    return {
+      watchlistName: namePart || 'Watchlist',
+      symbols: Array.from(new Set(dollarMatches)),
+      isAgentThemeRequest: false,
+    };
+  }
+
+  // 3. Space-separated tokens: Watchlist name first, tickers after
+  // E.g. "Semiconductors NVDA AMD TSM" or "Quantum Computing"
+  const tokens = text.split(/\s+/).filter(Boolean);
+  if (tokens.length <= 1) {
+    return {
+      watchlistName: text.trim(),
+      symbols: [],
+      isAgentThemeRequest: true,
+    };
+  }
+
+  const nonTickerWords = new Set([
+    'AND', 'THE', 'FOR', 'WITH', 'IN', 'ON', 'AT', 'TO', 'OF', 'BY', 'OR',
+    'TOP', 'BEST', 'NEW', 'OLD', 'HIGH', 'LOW', 'MID', 'ALL', 'BIG',
+    'AI', 'TECH', 'ENERGY', 'CLEAN', 'AUTO', 'SPACE', 'WAR', 'OIL', 'GAS',
+    'BIO', 'GROWTH', 'VALUE', 'DIVIDEND', 'DIVIDENDS', 'DEFENSE', 'MINING',
+    'MINERS', 'CRYPTO', 'SOLAR', 'URANIUM', 'NUCLEAR', 'LEADERS', 'WINNERS',
+    'WATCHLIST', 'WATCH', 'THEME', 'THEMES', 'STOCKS', 'STOCK', 'SECTOR',
+    'COMPUTING', 'ROBOTICS', 'AUTOMATION', 'CLOUD', 'SAAS', 'SECURITY',
+    'HARDWARE', 'SOFTWARE', 'DRUGS', 'HEALTHCARE', 'HEALTH', 'INFRASTRUCTURE'
+  ]);
+
+  const trailingSymbols: string[] = [];
+  let nameEndIndex = tokens.length;
+
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    const cleanTok = tokens[i].replace(/[,\/]/g, '').trim().toUpperCase();
+    const isTickerLike = /^[A-Z]{1,5}$/.test(cleanTok) && !nonTickerWords.has(cleanTok);
+    if (isTickerLike) {
+      trailingSymbols.unshift(cleanTok);
+      nameEndIndex = i;
+    } else {
+      break;
+    }
+  }
+
+  if (trailingSymbols.length > 0 && nameEndIndex > 0) {
+    const namePart = tokens.slice(0, nameEndIndex).join(' ').trim();
+    return {
+      watchlistName: namePart,
+      symbols: Array.from(new Set(trailingSymbols)),
+      isAgentThemeRequest: false,
+    };
+  }
+
+  return {
+    watchlistName: text.trim(),
+    symbols: [],
+    isAgentThemeRequest: true,
+  };
 }
 
 /**
- * Extract clean headline title for voice notes
+ * Parses incoming message for Notes topic:
+ * Expects stock ticker first, then notes content.
+ * E.g. "AAPL Impressive earnings guidance, buy dip if it drops below 220"
  */
-function createVoiceTitleFromText(text: string, dateStr: string): string {
-  const clean = text.trim().replace(/\n+/g, ' ');
-  const firstSentence = clean.split(/[.!?]/)[0].trim();
-  const excerpt = firstSentence.length > 50 ? firstSentence.slice(0, 47) + '...' : firstSentence;
-  const timeFormatted = new Date(dateStr).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  return `🎙️ ${excerpt || 'Voice Note'} (${timeFormatted})`;
+export function parseStockNoteMessage(rawText: string): { symbol: string; note: string } | null {
+  if (!rawText) return null;
+
+  let text = rawText
+    .replace(/#(?:topic:)?(?:notes?|stocknote)\b/gi, '')
+    .replace(/^📝\s*/, '')
+    .trim();
+
+  // Pattern 1: Starts with ticker (optional $, 1-6 chars, optional .A/.B, optional colon)
+  const match = text.match(/^(\$?[A-Za-z]{1,6}(?:\.[A-Za-z])?):?\s*(.*)$/s);
+  if (match) {
+    const rawSym = match[1].replace('$', '').toUpperCase();
+    const noteText = match[2].trim();
+    return {
+      symbol: rawSym,
+      note: noteText,
+    };
+  }
+
+  // Fallback: check extractSymbolsFromText
+  const extracted = extractSymbolsFromText(text);
+  if (extracted.length > 0) {
+    return {
+      symbol: extracted[0],
+      note: text,
+    };
+  }
+
+  return null;
 }
 
 /**
- * Helper to save symbols directly into a watchlist (default or named) in Prisma
+ * Helper to save symbols directly into a watchlist (default or named) in Prisma.
+ * If specificWatchlistName is given and does not exist, it automatically creates it!
  */
 export async function saveSymbolsToWatchlist(
   prisma: PrismaClient,
@@ -146,6 +326,16 @@ export async function saveSymbolsToWatchlist(
       targetWatchlist = await (prisma as any).watchlist.findFirst({
         where: { name: { equals: cleanName } },
       });
+      // If not found, create new watchlist with this exact name!
+      if (!targetWatchlist) {
+        targetWatchlist = await (prisma as any).watchlist.create({
+          data: {
+            name: cleanName,
+            isDefault: false,
+          },
+        });
+        logToFile(`[TelegramBuffer] Created new watchlist "${cleanName}"`);
+      }
     }
 
     if (!targetWatchlist) {
@@ -741,19 +931,20 @@ export function parseTradeExecutionCandidates(text: string, defaultTimeframe = '
 export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<BufferSyncResult> {
   const bufferUrl = process.env.TELEGRAM_BUFFER_URL?.trim();
   const bufferSecret = process.env.TELEGRAM_BUFFER_SECRET?.trim() || 'tradecompass_secret_consume_token_2026';
+  const botToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
 
-  if (!bufferUrl) {
+  if (!bufferUrl && !botToken) {
     return {
       success: false,
       consumedCount: 0,
       createdLogs: [],
-      message: 'TELEGRAM_BUFFER_URL not configured in environment (.env.local)',
+      message: 'Neither TELEGRAM_BUFFER_URL nor TELEGRAM_BOT_TOKEN configured in environment (.env.local)',
       timestamp: new Date().toISOString(),
     };
   }
 
   // Ensure /consume path is targeted
-  const targetUrl = bufferUrl.endsWith('/consume') ? bufferUrl : `${bufferUrl.replace(/\/+$/, '')}/consume`;
+  const targetUrl = bufferUrl ? (bufferUrl.endsWith('/consume') ? bufferUrl : `${bufferUrl.replace(/\/+$/, '')}/consume`) : null;
 
   if (isConsuming) {
     logToFile(`[TelegramBuffer] A buffer consumption cycle is already active. Skipping concurrent execution.`);
@@ -769,22 +960,43 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
   isConsuming = true;
 
   try {
-    const response = await fetch(targetUrl, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Consume-Secret': bufferSecret,
-        'Authorization': `Bearer ${bufferSecret}`,
-      },
-    });
+    const messages: BufferedTelegramMessage[] = [];
 
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '');
-      throw new Error(`Buffer Worker returned HTTP ${response.status}: ${errText}`);
+    // 1. Fetch from Cloudflare KV buffer if configured
+    if (targetUrl) {
+      try {
+        const response = await fetch(targetUrl, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Consume-Secret': bufferSecret,
+            'Authorization': `Bearer ${bufferSecret}`,
+          },
+          signal: AbortSignal.timeout(4000),
+        });
+
+        if (response.ok) {
+          const data: TelegramConsumeResponse = await response.json();
+          if (data && Array.isArray(data.messages)) {
+            messages.push(...data.messages);
+          }
+        }
+      } catch (kvErr: any) {
+        logToFile(`[TelegramBuffer] Cloudflare KV fetch notice: ${kvErr.message}. Checking direct updates...`);
+      }
     }
 
-    const data: TelegramConsumeResponse = await response.json();
-    const messages = data.messages || [];
+    // 2. Fetch directly from Telegram Bot API getUpdates (ensures 100% reliability in local dev and production)
+    if (botToken) {
+      try {
+        const directUpdates = await fetchDirectTelegramUpdates(botToken);
+        if (directUpdates.length > 0) {
+          messages.push(...directUpdates);
+        }
+      } catch (directErr: any) {
+        logToFile(`[TelegramBuffer] Direct Telegram fetch notice: ${directErr.message}`);
+      }
+    }
 
     lastSyncTimestamp = new Date().toISOString();
     lastSyncCount = messages.length;
@@ -800,7 +1012,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       };
     }
 
-    logToFile(`[TelegramBuffer] Consumed ${messages.length} messages from Cloudflare KV. Ingesting into database...`);
+    logToFile(`[TelegramBuffer] Consumed ${messages.length} messages from Telegram buffer/queue. Ingesting into database...`);
 
     const task = agentActivityTracker.startTask({
       agentName: 'Telegram Mobile Buffer Ingestion Agent',
@@ -844,13 +1056,37 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       const configuredAlertsThreadId = process.env.TELEGRAM_ALERTS_THREAD_ID ? Number(process.env.TELEGRAM_ALERTS_THREAD_ID) : 2;
       const configuredAppThreadId = process.env.TELEGRAM_APP_THREAD_ID ? Number(process.env.TELEGRAM_APP_THREAD_ID) : 10;
       const configuredIdeasThreadId = process.env.TELEGRAM_IDEAS_THREAD_ID ? Number(process.env.TELEGRAM_IDEAS_THREAD_ID) : undefined;
-      const configuredExecutionThreadId = process.env.TELEGRAM_EXECUTION_THREAD_ID ? Number(process.env.TELEGRAM_EXECUTION_THREAD_ID) : undefined;
+      const configuredExecutionThreadId = process.env.TELEGRAM_EXECUTION_THREAD_ID ? Number(process.env.TELEGRAM_EXECUTION_THREAD_ID) : 100;
+      const configuredWatchlistThreadId = process.env.TELEGRAM_WATCHLIST_THREAD_ID ? Number(process.env.TELEGRAM_WATCHLIST_THREAD_ID) : 293;
+      const configuredNotesThreadId = process.env.TELEGRAM_NOTES_THREAD_ID ? Number(process.env.TELEGRAM_NOTES_THREAD_ID) : 294;
 
       const msgThreadNum = msg.messageThreadId !== undefined ? Number(msg.messageThreadId) : undefined;
       const isExplicitAppThread = msgThreadNum !== undefined && msgThreadNum === configuredAppThreadId;
       const isExplicitAlertsThread = msgThreadNum !== undefined && msgThreadNum === configuredAlertsThreadId;
       const isExplicitIdeasThread = configuredIdeasThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredIdeasThreadId;
       const isExplicitExecutionThread = configuredExecutionThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredExecutionThreadId;
+      const isExplicitWatchlistThread = configuredWatchlistThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredWatchlistThreadId;
+      const isExplicitNotesThread = configuredNotesThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredNotesThreadId;
+
+      const resolvedTopicName = msg.topicName || (msgThreadNum !== undefined ? topicNameByThreadId.get(msgThreadNum) : undefined);
+
+      if (resolvedTopicName && msgThreadNum !== undefined) {
+        topicNameByThreadId.set(msgThreadNum, resolvedTopicName);
+      }
+
+      // Auto-discover and persist Watchlist & Notes thread IDs if not yet configured
+      if (resolvedTopicName && /watchlist/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_WATCHLIST_THREAD_ID) {
+        setTelegramWatchlistThreadId(msgThreadNum);
+      }
+      if (resolvedTopicName && /notes?/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_NOTES_THREAD_ID) {
+        setTelegramNotesThreadId(msgThreadNum);
+      }
+
+      // Topic created status message handling
+      if (contentText.startsWith('📌 Topic created:')) {
+        logToFile(`[TelegramBuffer] Registered forum topic: "${resolvedTopicName || contentText}" in thread ${msgThreadNum}`);
+        continue;
+      }
 
       // On-Demand Executive Briefing Command Detection (e.g. "briefing", "/briefing", "send briefing")
       if (isTelegramBriefingRequest(contentText)) {
@@ -931,9 +1167,8 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         continue;
       }
 
-
-      const isAlertsTopic = isExplicitAlertsThread || (!isExplicitAppThread && !isExplicitIdeasThread && !isExplicitExecutionThread && Boolean(
-        (msg.topicName && /alert/i.test(msg.topicName)) ||
+      const isAlertsTopic = isExplicitAlertsThread || (!isExplicitAppThread && !isExplicitIdeasThread && !isExplicitExecutionThread && !isExplicitWatchlistThread && !isExplicitNotesThread && Boolean(
+        (resolvedTopicName && /alert/i.test(resolvedTopicName)) ||
         contentText.toLowerCase().startsWith('#alert') ||
         contentText.match(/#(?:topic:)?alert(?:s)?\b/i) ||
         contentText.toUpperCase().includes('PRICE ALERT') ||
@@ -942,8 +1177,8 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         (msg.chat?.id === -1003872409872 && msgThreadNum === configuredAlertsThreadId)
       ));
 
-      const isIdeasTopic = isExplicitIdeasThread || (!isExplicitAppThread && !isAlertsTopic && !isExplicitExecutionThread && Boolean(
-        (msg.topicName && /ideas?/i.test(msg.topicName)) ||
+      const isIdeasTopic = isExplicitIdeasThread || (!isExplicitAppThread && !isAlertsTopic && !isExplicitExecutionThread && !isExplicitWatchlistThread && !isExplicitNotesThread && Boolean(
+        (resolvedTopicName && /ideas?/i.test(resolvedTopicName)) ||
         contentText.toLowerCase().startsWith('#idea') ||
         contentText.toLowerCase().startsWith('#ideas') ||
         contentText.toLowerCase().startsWith('#tradeidea') ||
@@ -952,8 +1187,8 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         contentText.includes('💡')
       ));
 
-      const isExecutionTopic = isExplicitExecutionThread || (!isExplicitAppThread && !isAlertsTopic && !isIdeasTopic && Boolean(
-        (msg.topicName && /execution/i.test(msg.topicName)) ||
+      const isExecutionTopic = isExplicitExecutionThread || (!isExplicitAppThread && !isAlertsTopic && !isIdeasTopic && !isExplicitWatchlistThread && !isExplicitNotesThread && Boolean(
+        (resolvedTopicName && /execution/i.test(resolvedTopicName)) ||
         contentText.toLowerCase().startsWith('#execution') ||
         contentText.toLowerCase().startsWith('#execute') ||
         contentText.match(/#(?:topic:)?(?:execution|execute|trade-execution|queue)\b/i) ||
@@ -981,16 +1216,342 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         }
       }
 
-      const isAppTopic = isExplicitAppThread || (!isAlertsTopic && !isIdeasTopic && !isExecutionTopic && Boolean(
-        (msg.topicName && msg.topicName.toLowerCase().includes('app')) ||
+      const isWatchlistTopic = isExplicitWatchlistThread || (!isExplicitAppThread && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isExplicitNotesThread && Boolean(
+        (resolvedTopicName && /watchlist/i.test(resolvedTopicName)) ||
+        contentText.toLowerCase().startsWith('#watchlist') ||
+        contentText.match(/#(?:topic:)?watchlist\b/i) ||
+        (msg.chat?.id === -1003872409872 && msgThreadNum === configuredWatchlistThreadId)
+      ));
+
+      const isNotesTopic = isExplicitNotesThread || (!isExplicitAppThread && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && Boolean(
+        (resolvedTopicName && /notes?/i.test(resolvedTopicName)) ||
+        contentText.toLowerCase().startsWith('#note') ||
+        contentText.match(/#(?:topic:)?notes?\b/i) ||
+        (msg.chat?.id === -1003872409872 && msgThreadNum === configuredNotesThreadId)
+      ));
+
+      const isAppTopic = isExplicitAppThread || (!isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isNotesTopic && Boolean(
+        (resolvedTopicName && resolvedTopicName.toLowerCase().includes('app')) ||
         contentText.toLowerCase().startsWith('#app') ||
         contentText.toLowerCase().includes('#app-idea') ||
         contentText.match(/#(?:topic:)?app\b/i) ||
         (msg.chat?.id === -1003872409872 && msgThreadNum === configuredAppThreadId)
       ));
 
-      // Automatically detect and create price alerts only if NOT an app feature idea, idea topic, or execution topic
-      const autoCreatedAlerts = (isAppTopic || isIdeasTopic || isExecutionTopic)
+      const senderLabel = msg.sender?.username ? `@${msg.sender.username}` : (msg.sender?.firstName || 'Mobile');
+      const targetChatId = msg.chat?.id || msg.sender?.id || process.env.TELEGRAM_ALERTS_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
+
+      // ==========================================
+      // WATCHLIST TOPIC HANDLER
+      // ==========================================
+      if (isWatchlistTopic) {
+        const parsed = parseWatchlistMessage(contentText);
+        const targetThreadId = msgThreadNum || configuredWatchlistThreadId;
+
+        // SUB-CASE 1: Only watchlist theme name provided -> Call AI Agent to curate theme stocks
+        if (parsed.isAgentThemeRequest && parsed.watchlistName) {
+          const themeName = parsed.watchlistName;
+          logToFile(`[TelegramBuffer] 🤖 Curating thematic watchlist via AI Agent for theme: "${themeName}"`);
+
+          // 1. Immediately acknowledge request via Telegram
+          if (process.env.TELEGRAM_BOT_TOKEN && targetChatId) {
+            sendTelegramMessage({
+              text: `🤖 *Curating Thematic Watchlist: ${themeName}*...\n\n_Researching market leaders, pure-plays, and high-conviction US equities. Assembling holdings..._ ⏳`,
+              chatId: targetChatId,
+              messageThreadId: targetThreadId,
+              parseMode: 'Markdown',
+            }).catch((e: any) => logToFile(`[TelegramBuffer] Watchlist ack error: ${e.message}`));
+          }
+
+          // 2. Call LLM Agent via fallback router
+          const agentTask = agentActivityTracker.startTask({
+            agentName: 'Thematic Watchlist Agent',
+            agentType: 'RESEARCH',
+            taskDescription: `Curating institutional stock portfolio for theme: "${themeName}"`,
+          });
+
+          let generatedStocks: Array<{ symbol: string; companyName?: string; thesis?: string }> = [];
+          let cleanWatchlistName = themeName;
+          let themeDesc = '';
+
+          try {
+            const completion = await generateJsonCompletion<{
+              watchlistName?: string;
+              themeDescription?: string;
+              stocks: Array<{ symbol: string; companyName: string; thesis: string }>;
+            }>({
+              systemPrompt: `You are an elite Wall Street quantitative equity research analyst and sector strategist.
+The user wants to construct a high-conviction thematic watchlist for the investment theme: "${themeName}".
+Identify 5 to 8 premier, highly liquid, leading US-listed stocks (or major ADRs) that represent core leaders or pure-play exposure to this theme.
+Ensure ticker symbols are standard US equity tickers (e.g. NVDA, TSM, PLTR, MSFT, AAPL, etc.).
+
+Output strictly valid JSON matching this schema:
+{
+  "watchlistName": "Refined Clean Watchlist Title",
+  "themeDescription": "1-2 sentence compelling investment thesis for this theme",
+  "stocks": [
+    {
+      "symbol": "TICKER",
+      "companyName": "Full Company Name",
+      "thesis": "Concise 1-sentence reason why this stock is a core winner in this theme"
+    }
+  ]
+}`,
+              userPrompt: `Investment theme: "${themeName}"`,
+              temperature: 0.3,
+              tag: '[WatchlistThemeAgent] ',
+            });
+
+            if (completion.data?.stocks && Array.isArray(completion.data.stocks) && completion.data.stocks.length > 0) {
+              generatedStocks = completion.data.stocks;
+              cleanWatchlistName = completion.data.watchlistName || themeName;
+              themeDesc = completion.data.themeDescription || '';
+            }
+          } catch (llmErr: any) {
+            logToFile(`[TelegramBuffer] LLM Theme Agent error: ${llmErr.message}`);
+          }
+
+          // 3. Find or create Watchlist in Prisma
+          let targetWatchlist = await (prisma as any).watchlist.findFirst({
+            where: { name: { equals: cleanWatchlistName } },
+          });
+          if (!targetWatchlist) {
+            targetWatchlist = await (prisma as any).watchlist.create({
+              data: {
+                name: cleanWatchlistName,
+                isDefault: false,
+              },
+            });
+            logToFile(`[TelegramBuffer] Created new thematic watchlist "${cleanWatchlistName}"`);
+          }
+
+          // 4. Save items to Watchlist
+          const addedSymbols: string[] = [];
+          for (const st of generatedStocks) {
+            const sym = st.symbol.trim().toUpperCase();
+            if (!sym) continue;
+            const existing = await (prisma as any).watchlistItem.findUnique({
+              where: {
+                watchlistId_symbol: {
+                  watchlistId: targetWatchlist.id,
+                  symbol: sym,
+                },
+              },
+            });
+            if (!existing) {
+              await (prisma as any).watchlistItem.create({
+                data: {
+                  watchlistId: targetWatchlist.id,
+                  symbol: sym,
+                  addedAt: new Date(),
+                },
+              });
+            }
+            addedSymbols.push(sym);
+          }
+
+          agentActivityTracker.completeTask(agentTask.id, {
+            status: 'SUCCESS',
+            outcomeSummary: `Created watchlist "${cleanWatchlistName}" with ${addedSymbols.length} stocks (${addedSymbols.join(', ')}).`,
+          });
+
+          // 5. Reply to Telegram
+          if (process.env.TELEGRAM_BOT_TOKEN && targetChatId) {
+            const bullets = generatedStocks
+              .map((s) => `• *$${s.symbol}*${s.companyName ? ` (${s.companyName})` : ''}${s.thesis ? ` — _${s.thesis}_` : ''}`)
+              .join('\n');
+            const replyMsg = `📋 *Thematic Watchlist Created: ${cleanWatchlistName}*\n${themeDesc ? `_${themeDesc}_\n\n` : '\n'}${bullets}\n\n✅ *Saved to Trade Compass Watchlists.*`;
+
+            sendTelegramMessage({
+              text: replyMsg,
+              chatId: targetChatId,
+              messageThreadId: targetThreadId,
+              parseMode: 'Markdown',
+            }).catch((e: any) => logToFile(`[TelegramBuffer] Failed to reply with agent watchlist: ${e.message}`));
+          }
+
+          // 6. Save ThoughtLog under 'Watchlists'
+          const bulletsMarkdown = generatedStocks
+            .map((s) => `• **$${s.symbol}** (${s.companyName || ''}): ${s.thesis || ''}`)
+            .join('\n');
+          const savedLog = await (prisma as any).thoughtLog.create({
+            data: {
+              title: `📋 Watchlist: ${cleanWatchlistName}`,
+              content: `Theme: ${themeName}\n\n${themeDesc}\n\n${bulletsMarkdown}`,
+              folder: 'Watchlists',
+              tags: `Telegram, Watchlist, Theme, AI-Agent, ${senderLabel}`,
+              symbols: addedSymbols.join(', '),
+              sentiment: 'BULLISH',
+              isPinned: false,
+              isFulfilled: true,
+              agentOutput: `🤖 **Thematic AI Watchlist Generated**\n\n• Watchlist: **${cleanWatchlistName}**\n• Total Stocks: **${addedSymbols.length}**\n• Stocks: ${addedSymbols.map(s => `$${s}`).join(', ')}`,
+              agentActionType: 'ADD_CONTEXT',
+              marketDataJson: null,
+              createdAt: new Date(msg.timestamp),
+            },
+          });
+          createdLogs.push({ id: savedLog.id, title: savedLog.title, symbols: savedLog.symbols });
+          continue;
+        } else if (parsed.symbols.length > 0) {
+          // SUB-CASE 2: Watchlist name + symbols provided
+          const targetWlName = parsed.watchlistName || 'Watchlist';
+          let targetWatchlist = await (prisma as any).watchlist.findFirst({
+            where: { name: { equals: targetWlName } },
+          });
+          let wasCreated = false;
+          if (!targetWatchlist) {
+            targetWatchlist = await (prisma as any).watchlist.create({
+              data: {
+                name: targetWlName,
+                isDefault: false,
+              },
+            });
+            wasCreated = true;
+            logToFile(`[TelegramBuffer] Created new watchlist "${targetWlName}"`);
+          }
+
+          const added: string[] = [];
+          for (const sym of parsed.symbols) {
+            const cleanSym = sym.trim().toUpperCase();
+            if (!cleanSym) continue;
+            const existing = await (prisma as any).watchlistItem.findUnique({
+              where: {
+                watchlistId_symbol: {
+                  watchlistId: targetWatchlist.id,
+                  symbol: cleanSym,
+                },
+              },
+            });
+            if (!existing) {
+              await (prisma as any).watchlistItem.create({
+                data: {
+                  watchlistId: targetWatchlist.id,
+                  symbol: cleanSym,
+                  addedAt: new Date(),
+                },
+              });
+            }
+            added.push(cleanSym);
+          }
+
+          if (process.env.TELEGRAM_BOT_TOKEN && targetChatId) {
+            const statusTitle = wasCreated ? `Created & Populated` : `Updated`;
+            const replyMsg = `📋 *Watchlist ${statusTitle}: ${targetWatchlist.name}*\n\nAdded ${added.length} stock(s):\n${added.map(s => `• *$${s}*`).join('\n')}\n\n_View and manage in Trade Compass > Watchlists._`;
+
+            sendTelegramMessage({
+              text: replyMsg,
+              chatId: targetChatId,
+              messageThreadId: targetThreadId,
+              parseMode: 'Markdown',
+            }).catch((e: any) => logToFile(`[TelegramBuffer] Failed to reply to watchlist message: ${e.message}`));
+          }
+
+          const savedLog = await (prisma as any).thoughtLog.create({
+            data: {
+              title: `📋 Watchlist: ${targetWatchlist.name} (${added.join(', ')})`,
+              content: contentText.trim(),
+              folder: 'Watchlists',
+              tags: `Telegram, Watchlist, Mobile, ${senderLabel}`,
+              symbols: added.join(', '),
+              sentiment: 'NEUTRAL',
+              isPinned: false,
+              isFulfilled: true,
+              agentOutput: `📋 **Watchlist Updated: ${targetWatchlist.name}**\n\nAdded: ${added.map(s => `$${s}`).join(', ')}`,
+              agentActionType: 'ADD_CONTEXT',
+              marketDataJson: null,
+              createdAt: new Date(msg.timestamp),
+            },
+          });
+          createdLogs.push({ id: savedLog.id, title: savedLog.title, symbols: savedLog.symbols });
+          continue;
+        }
+      }
+
+      // ==========================================
+      // NOTES TOPIC HANDLER
+      // ==========================================
+      if (isNotesTopic) {
+        const parsed = parseStockNoteMessage(contentText);
+        const targetThreadId = msgThreadNum || configuredNotesThreadId;
+
+        if (parsed && parsed.symbol) {
+          const symbol = parsed.symbol;
+          const noteText = parsed.note || contentText.replace(new RegExp(`^\\$?${symbol}:?\\s*`, 'i'), '').trim();
+          const sentiment = detectSentimentFromText(noteText);
+
+          // 1. Upsert into Prisma StockNote (preserve previous notes with a timestamp separator)
+          const existing = await (prisma as any).stockNote.findUnique({
+            where: { symbol },
+          });
+
+          const nowFormatted = new Date().toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          });
+
+          let finalContent = noteText;
+          if (existing && existing.content && existing.content.trim()) {
+            finalContent = `${existing.content.trim()}\n\n---\n📅 **${nowFormatted} (Telegram Note):**\n${noteText}`;
+          }
+
+          await (prisma as any).stockNote.upsert({
+            where: { symbol },
+            update: {
+              content: finalContent,
+              tags: 'Telegram, Mobile',
+              sentiment,
+            },
+            create: {
+              symbol,
+              content: finalContent,
+              tags: 'Telegram, Mobile',
+              sentiment,
+            },
+          });
+          logToFile(`[TelegramBuffer] Saved StockNote for $${symbol} (sentiment: ${sentiment})`);
+
+          // 2. Reply in Telegram notes topic
+          if (process.env.TELEGRAM_BOT_TOKEN && targetChatId) {
+            const excerpt = noteText.length > 100 ? noteText.slice(0, 97) + '...' : noteText;
+            const sentimentEmoji = sentiment === 'BULLISH' ? '🟢 Bullish' : sentiment === 'BEARISH' ? '🔴 Bearish' : sentiment === 'CAUTION' ? '🟡 Caution' : '⚪ Neutral';
+            const replyMsg = `📝 *Note Saved for $${symbol}*\n\n"${excerpt}"\n\n• Sentiment: *${sentimentEmoji}*\n• Status: ✅ Pinned in App\n\n_This note will be displayed whenever you look up $${symbol} in Trade Compass._`;
+
+            sendTelegramMessage({
+              text: replyMsg,
+              chatId: targetChatId,
+              messageThreadId: targetThreadId,
+              parseMode: 'Markdown',
+            }).catch((e: any) => logToFile(`[TelegramBuffer] Failed to reply to notes topic: ${e.message}`));
+          }
+
+          // 3. Create ThoughtLog under 'Notes' folder
+          const noteExcerpt = noteText.length > 50 ? noteText.slice(0, 47) + '...' : noteText;
+          const savedLog = await (prisma as any).thoughtLog.create({
+            data: {
+              title: `📝 Note: $${symbol} - ${noteExcerpt || 'Mobile Note'}`,
+              content: noteText,
+              folder: 'Notes',
+              tags: `Telegram, Note, Mobile, ${senderLabel}`,
+              symbols: symbol,
+              sentiment,
+              isPinned: true,
+              isFulfilled: true,
+              agentOutput: `📝 **Stock Note Pinned for $${symbol}**\n\n${noteText}\n\n*Sentiment: ${sentiment}*`,
+              agentActionType: 'ADD_CONTEXT',
+              marketDataJson: null,
+              createdAt: new Date(msg.timestamp),
+            },
+          });
+          createdLogs.push({ id: savedLog.id, title: savedLog.title, symbols: savedLog.symbols });
+          continue;
+        }
+      }
+
+      // Automatically detect and create price alerts only if NOT an app feature idea, idea topic, execution topic, watchlist, or notes
+      const autoCreatedAlerts = (isAppTopic || isIdeasTopic || isExecutionTopic || isWatchlistTopic || isNotesTopic)
         ? []
         : await autoCreateAlertsFromText(
             prisma,
@@ -1040,7 +1601,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
             
             await sendTelegramMessage({
               text: replyText,
-              chatId: msg.chat?.id || process.env.TELEGRAM_ALERTS_CHAT_ID || '-1003872409872',
+              chatId: targetChatId,
               messageThreadId: msgThreadNum || (process.env.TELEGRAM_EXECUTION_THREAD_ID ? Number(process.env.TELEGRAM_EXECUTION_THREAD_ID) : undefined),
               parseMode: 'Markdown',
             });
@@ -1050,7 +1611,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         }
       }
 
-      // Check if message requests saving directly to a watchlist
+      // Check if message requests saving directly to a watchlist via directive
       const hasWatchlistDirective = Boolean(
         contentText.match(/#(?:topic:)?(?:watchlist|watch)\b/i) ||
         contentText.match(/\+watchlist\b/i) ||
@@ -1069,7 +1630,6 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         }
       }
 
-      const senderLabel = msg.sender?.username ? `@${msg.sender.username}` : (msg.sender?.firstName || 'Mobile');
       let tags = isAlertsTopic
         ? (isVoice ? `Telegram, Alerts, Mobile, Voice, ${senderLabel}` : `Telegram, Alerts, Mobile, ${senderLabel}`)
         : (isIdeasTopic
@@ -1307,13 +1867,15 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
  * Get current configuration and sync status
  */
 export function getTelegramBufferStatus() {
-  const isConfigured = Boolean(process.env.TELEGRAM_BUFFER_URL);
+  const isConfigured = Boolean(process.env.TELEGRAM_BUFFER_URL || process.env.TELEGRAM_BOT_TOKEN);
   return {
     isConfigured,
     bufferUrl: process.env.TELEGRAM_BUFFER_URL || null,
     executionThreadId: process.env.TELEGRAM_EXECUTION_THREAD_ID || null,
     alertsThreadId: process.env.TELEGRAM_ALERTS_THREAD_ID || null,
     appThreadId: process.env.TELEGRAM_APP_THREAD_ID || null,
+    watchlistThreadId: process.env.TELEGRAM_WATCHLIST_THREAD_ID || null,
+    notesThreadId: process.env.TELEGRAM_NOTES_THREAD_ID || null,
     lastSyncTimestamp,
     lastSyncCount,
   };
@@ -1340,6 +1902,58 @@ export function setTelegramExecutionThreadId(threadId: string | number): boolean
     return true;
   } catch (e: any) {
     logToFile(`[TelegramBuffer] Error setting execution thread ID: ${e.message}`);
+    return false;
+  }
+}
+
+/**
+ * Explicitly update and persist TELEGRAM_WATCHLIST_THREAD_ID to environment & .env.local
+ */
+export function setTelegramWatchlistThreadId(threadId: string | number): boolean {
+  try {
+    const threadIdStr = String(threadId).trim();
+    process.env.TELEGRAM_WATCHLIST_THREAD_ID = threadIdStr;
+    topicNameByThreadId.set(Number(threadIdStr), 'Watchlist');
+    logToFile(`[TelegramBuffer] Updated TELEGRAM_WATCHLIST_THREAD_ID=${threadIdStr}`);
+    const envPath = path.resolve(process.cwd(), '.env.local');
+    if (fs.existsSync(envPath)) {
+      let envContent = fs.readFileSync(envPath, 'utf8');
+      if (/TELEGRAM_WATCHLIST_THREAD_ID=/i.test(envContent)) {
+        envContent = envContent.replace(/TELEGRAM_WATCHLIST_THREAD_ID=.*/g, `TELEGRAM_WATCHLIST_THREAD_ID=${threadIdStr}`);
+      } else {
+        envContent += `\nTELEGRAM_WATCHLIST_THREAD_ID=${threadIdStr}\n`;
+      }
+      fs.writeFileSync(envPath, envContent, 'utf8');
+    }
+    return true;
+  } catch (e: any) {
+    logToFile(`[TelegramBuffer] Error setting watchlist thread ID: ${e.message}`);
+    return false;
+  }
+}
+
+/**
+ * Explicitly update and persist TELEGRAM_NOTES_THREAD_ID to environment & .env.local
+ */
+export function setTelegramNotesThreadId(threadId: string | number): boolean {
+  try {
+    const threadIdStr = String(threadId).trim();
+    process.env.TELEGRAM_NOTES_THREAD_ID = threadIdStr;
+    topicNameByThreadId.set(Number(threadIdStr), 'Notes');
+    logToFile(`[TelegramBuffer] Updated TELEGRAM_NOTES_THREAD_ID=${threadIdStr}`);
+    const envPath = path.resolve(process.cwd(), '.env.local');
+    if (fs.existsSync(envPath)) {
+      let envContent = fs.readFileSync(envPath, 'utf8');
+      if (/TELEGRAM_NOTES_THREAD_ID=/i.test(envContent)) {
+        envContent = envContent.replace(/TELEGRAM_NOTES_THREAD_ID=.*/g, `TELEGRAM_NOTES_THREAD_ID=${threadIdStr}`);
+      } else {
+        envContent += `\nTELEGRAM_NOTES_THREAD_ID=${threadIdStr}\n`;
+      }
+      fs.writeFileSync(envPath, envContent, 'utf8');
+    }
+    return true;
+  } catch (e: any) {
+    logToFile(`[TelegramBuffer] Error setting notes thread ID: ${e.message}`);
     return false;
   }
 }

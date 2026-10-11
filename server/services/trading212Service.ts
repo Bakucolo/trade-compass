@@ -34,11 +34,18 @@ export interface Trading212Position {
 
 const TRADING212_BASE_URL = 'https://live.trading212.com/api/v0';
 
+let lastTrading212Error: string | null = null;
+
+export function getTrading212LastError(): string | null {
+  return lastTrading212Error;
+}
+
 export function getTrading212AuthHeader(): string | null {
   const apiKey = process.env.TRADING212_API_KEY;
   const secretKey = process.env.TRADING212_SECRET_KEY;
 
   if (!apiKey || !secretKey) {
+    lastTrading212Error = 'Trading 212 API credentials missing in environment (TRADING212_API_KEY or TRADING212_SECRET_KEY)';
     return null;
   }
 
@@ -52,16 +59,27 @@ export async function fetchTrading212Cash(): Promise<Trading212Cash | null> {
 
   try {
     const res = await fetch(`${TRADING212_BASE_URL}/equity/account/cash`, {
-      headers: { Authorization: auth },
+      headers: {
+        Authorization: auth,
+        'Accept': 'application/json',
+        'User-Agent': 'TradeCompass/1.0'
+      },
     });
 
     if (!res.ok) {
+      if (res.status === 401) {
+        lastTrading212Error = 'Trading 212 API key unauthorized (401). Key may have expired or been revoked in Trading 212 app settings.';
+      } else {
+        lastTrading212Error = `Trading 212 Cash API responded with status ${res.status}`;
+      }
       console.warn(`Trading212 Cash API responded with status ${res.status}`);
       return null;
     }
 
+    lastTrading212Error = null;
     return await res.json();
   } catch (err: any) {
+    lastTrading212Error = `Trading 212 network error: ${err.message}`;
     console.error('Trading212 fetchCash error:', err.message);
     return null;
   }
@@ -73,7 +91,11 @@ export async function fetchTrading212AccountInfo(): Promise<Trading212AccountInf
 
   try {
     const res = await fetch(`${TRADING212_BASE_URL}/equity/account/info`, {
-      headers: { Authorization: auth },
+      headers: {
+        Authorization: auth,
+        'Accept': 'application/json',
+        'User-Agent': 'TradeCompass/1.0'
+      },
     });
 
     if (!res.ok) return null;
@@ -90,7 +112,11 @@ export async function fetchTrading212Portfolio(): Promise<Trading212Position[]> 
 
   try {
     const res = await fetch(`${TRADING212_BASE_URL}/equity/portfolio`, {
-      headers: { Authorization: auth },
+      headers: {
+        Authorization: auth,
+        'Accept': 'application/json',
+        'User-Agent': 'TradeCompass/1.0'
+      },
     });
 
     if (!res.ok) {

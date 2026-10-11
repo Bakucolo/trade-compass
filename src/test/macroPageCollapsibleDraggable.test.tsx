@@ -41,6 +41,10 @@ vi.mock('../components/graphs/TradingViewChart', () => ({
   TradingViewChart: () => <div data-testid="tradingview-chart">TradingView Chart</div>,
 }));
 
+vi.mock('../components/macro/CommoditiesForwardCurveCard', () => ({
+  CommoditiesForwardCurveCard: () => <div data-testid="commodities-content">Commodities Content</div>,
+}));
+
 // Mock macro overview hook
 vi.mock('@/services/macroService', () => ({
   useMacroOverview: () => ({
@@ -97,10 +101,11 @@ describe('MacroPage Collapsible & Draggable Sections', () => {
 
     // Check header control bar
     expect(screen.getByText('Macro Dashboard Sections')).toBeDefined();
-    expect(screen.getByText('0 of 9 Open')).toBeDefined();
+    expect(screen.getByText('0 of 10 Open')).toBeDefined();
     expect(screen.getByText('Expand All')).toBeDefined();
 
-    // Check all 9 section titles are rendered in the list
+    // Check all 10 section titles are rendered in the list
+    expect(screen.getByText('Commodities Pricing, Forward Curves & Term Structures')).toBeDefined();
     expect(screen.getByText('Gold Macro Regime & Sovereign Debt Stress Station')).toBeDefined();
     expect(screen.getByText('Macro Trend Finder & Lifecycle Scanner')).toBeDefined();
     expect(screen.getByText('Volatility Term Structure, Dispersion & Signals')).toBeDefined();
@@ -112,6 +117,7 @@ describe('MacroPage Collapsible & Draggable Sections', () => {
     expect(screen.getByText('Global Macro & FRED Asset Catalog')).toBeDefined();
 
     // Content should NOT be rendered when collapsed
+    expect(screen.queryByTestId('commodities-content')).toBeNull();
     expect(screen.queryByTestId('gold-macro-regime-content')).toBeNull();
     expect(screen.queryByTestId('fed-funds-curve-content')).toBeNull();
     expect(screen.queryByTestId('trend-finder-content')).toBeNull();
@@ -126,12 +132,12 @@ describe('MacroPage Collapsible & Draggable Sections', () => {
 
     // Now content should be visible
     expect(screen.getByTestId('fed-funds-curve-content')).toBeDefined();
-    expect(screen.getByText('1 of 9 Open')).toBeDefined();
+    expect(screen.getByText('1 of 10 Open')).toBeDefined();
 
     // Clicking again collapses it
     fireEvent.click(fedFundsSection);
     expect(screen.queryByTestId('fed-funds-curve-content')).toBeNull();
-    expect(screen.getByText('0 of 9 Open')).toBeDefined();
+    expect(screen.getByText('0 of 10 Open')).toBeDefined();
   });
 
   it('expands all sections with Expand All button and collapses with Collapse All', () => {
@@ -141,7 +147,8 @@ describe('MacroPage Collapsible & Draggable Sections', () => {
     fireEvent.click(expandAllButton);
 
     // All should be open
-    expect(screen.getByText('9 of 9 Open')).toBeDefined();
+    expect(screen.getByText('10 of 10 Open')).toBeDefined();
+    expect(screen.getByTestId('commodities-content')).toBeDefined();
     expect(screen.getByTestId('gold-macro-regime-content')).toBeDefined();
     expect(screen.getByTestId('trend-finder-content')).toBeDefined();
     expect(screen.getByTestId('volatility-content')).toBeDefined();
@@ -153,7 +160,8 @@ describe('MacroPage Collapsible & Draggable Sections', () => {
     fireEvent.click(collapseAllButton);
 
     // All should be closed
-    expect(screen.getByText('0 of 9 Open')).toBeDefined();
+    expect(screen.getByText('0 of 10 Open')).toBeDefined();
+    expect(screen.queryByTestId('commodities-content')).toBeNull();
     expect(screen.queryByTestId('gold-macro-regime-content')).toBeNull();
     expect(screen.queryByTestId('trend-finder-content')).toBeNull();
   });
@@ -163,7 +171,7 @@ describe('MacroPage Collapsible & Draggable Sections', () => {
 
     // Find the Move Down button of the first section
     const moveDownButtons = screen.getAllByTitle('Move Section Down');
-    expect(moveDownButtons.length).toBe(9);
+    expect(moveDownButtons.length).toBe(10);
 
     // Click Move Down on the first section
     fireEvent.click(moveDownButtons[0]);

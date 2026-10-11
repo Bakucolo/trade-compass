@@ -10,6 +10,9 @@ const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 dotenv.config({ path: '.env.local' });
 dotenv.config();
 
+import { initDnsResolver } from './services/dnsResolver';
+initDnsResolver();
+
 // Global process error handlers to prevent unexpected server terminations
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
@@ -20,6 +23,7 @@ process.on('uncaughtException', (err) => {
 
 import { PrismaClient } from '@prisma/client';
 import { fetchTastyPositions, fetchTastyBalances, fetchTastyAccountInfo, getTastyConfigSummary } from './services/tastytradeService';
+import { fetchTrading212Cash, fetchTrading212AccountInfo, fetchTrading212Portfolio, getTrading212LastError } from './services/trading212Service';
 import { executeApprovedDraft, cancelDraft, getDraftOrder, getAllDraftOrders, runTastyCopilotAgent } from './services/tastytradeToolService';
 import {
   startIbkrTickleDaemon,
@@ -73,6 +77,8 @@ import { optionsChainService } from './services/optionsChainService';
 import { optionsSkewAgentService } from './services/optionsSkewAgentService';
 import { volatilityMacroService } from './services/volatilityMacroService';
 import { trendFinderService } from './services/trendFinderService';
+import { getCommoditiesIntelligence } from './services/commoditiesService';
+import { researchThematicStocks } from './services/thematicWatchlistService';
 import { technicalAnalysisService } from './services/technicalAnalysisService';
 import {
   scanHoldingsAndWatchlistsForDips,
@@ -147,6 +153,8 @@ import {
   consumeTelegramBuffer,
   getTelegramBufferStatus,
   setTelegramExecutionThreadId,
+  setTelegramWatchlistThreadId,
+  setTelegramNotesThreadId,
   isTelegramBriefingRequest,
 } from './services/telegramBufferConsumerService';
 import { getAiRatingForStock } from './services/aiRatingService';
@@ -1145,8 +1153,12 @@ app.get('/api/portfolio/balances', async (req, res) => {
       )
     ]);
 
-    let tastyRawBalances: any = tastyResult.status === 'fulfilled' ? tastyResult.value.balances : lastKnownTastyBalances;
-    let tastyAccountMeta: any = tastyResult.status === 'fulfilled' ? tastyResult.value.meta : lastKnownTastyMeta;
+    let tastyRawBalances: any = (tastyResult.status === 'fulfilled' && tastyResult.value.balances)
+      ? tastyResult.value.balances
+      : lastKnownTastyBalances;
+    let tastyAccountMeta: any = (tastyResult.status === 'fulfilled' && tastyResult.value.meta)
+      ? tastyResult.value.meta
+      : lastKnownTastyMeta;
     if (tastyRawBalances) {
       lastKnownTastyBalances = tastyRawBalances;
       if (tastyAccountMeta) lastKnownTastyMeta = tastyAccountMeta;
@@ -1230,8 +1242,12 @@ app.get('/api/portfolio/balances', async (req, res) => {
 
     // --- Trading 212 Live Balances & Account Info ---
     const t212Holdings = holdings.filter(h => h.broker?.name === 'Trading 212');
-    let t212RawCash: any = t212Result.status === 'fulfilled' ? t212Result.value.cash : lastKnownT212Cash;
-    let t212AccountInfo: any = t212Result.status === 'fulfilled' ? t212Result.value.info : lastKnownT212Meta;
+    let t212RawCash: any = (t212Result.status === 'fulfilled' && t212Result.value.cash)
+      ? t212Result.value.cash
+      : lastKnownT212Cash;
+    let t212AccountInfo: any = (t212Result.status === 'fulfilled' && t212Result.value.info)
+      ? t212Result.value.info
+      : lastKnownT212Meta;
     if (t212RawCash) {
       lastKnownT212Cash = t212RawCash;
       if (t212AccountInfo) lastKnownT212Meta = t212AccountInfo;
@@ -1745,11 +1761,21 @@ app.get('/api/trading212/status', async (req, res) => {
     const cash = await fetchTrading212Cash();
     const info = await fetchTrading212AccountInfo();
     const isConnected = !!cash;
+    const lastError = getTrading212LastError();
+
+    // Check if we have synced holdings in DB
+    const t212Broker = await prisma.broker.findUnique({
+      where: { name: 'Trading 212' },
+      include: { _count: { select: { holdings: true } } }
+    });
+
     res.json({
       connected: isConnected,
       accountId: info?.id || 22885001,
       currency: info?.currencyCode || 'GBP',
-      lastSync: new Date().toISOString()
+      lastSync: t212Broker?.lastSyncTime?.toISOString() || new Date().toISOString(),
+      holdingsCount: t212Broker?._count?.holdings || 0,
+      error: lastError || undefined
     });
   } catch (err: any) {
     res.status(500).json({ connected: false, error: err.message });
@@ -2719,6 +2745,17 @@ app.post('/api/macro/gold-regime/ai-narrative', async (req, res) => {
     res.json(narrative);
   } catch (error: any) {
     logToFile(`Error in POST /api/macro/gold-regime/ai-narrative: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/macro/commodities-intelligence - Complete Commodities Pricing, Term Structures & Forward Curves
+app.get('/api/macro/commodities-intelligence', async (req, res) => {
+  try {
+    const data = await getCommoditiesIntelligence();
+    res.json(data);
+  } catch (error: any) {
+    logToFile(`Error in GET /api/macro/commodities-intelligence: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
@@ -5787,6 +5824,28 @@ app.post('/api/watchlists/resolve-bulk', async (req, res) => {
   }
 });
 
+// POST /api/watchlists/ai-topic-lookup - Autonomous AI agent to research and screen stocks related to a watchlist topic
+app.post('/api/watchlists/ai-topic-lookup', async (req, res) => {
+  try {
+    const { topic, existingSymbols, customFocus, count } = req.body;
+    if (!topic || typeof topic !== 'string' || !topic.trim()) {
+      return res.status(400).json({ error: 'Watchlist topic or name is required.' });
+    }
+
+    const result = await researchThematicStocks({
+      topic: topic.trim(),
+      existingSymbols: Array.isArray(existingSymbols) ? existingSymbols : [],
+      customFocus: typeof customFocus === 'string' ? customFocus.trim() : undefined,
+      count: typeof count === 'number' ? count : 8,
+    });
+
+    res.json(result);
+  } catch (error: any) {
+    logToFile(`Error in POST /api/watchlists/ai-topic-lookup: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // DELETE /api/watchlists/:id/symbols/:symbol - Remove symbol from watchlist
 app.delete('/api/watchlists/:id/symbols/:symbol', async (req, res) => {
   try {
@@ -8121,6 +8180,34 @@ app.post('/api/telegram/config-execution-thread', (req, res) => {
       return res.status(400).json({ error: 'threadId is required' });
     }
     const success = setTelegramExecutionThreadId(threadId);
+    res.json({ success, threadId: String(threadId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/telegram/config-watchlist-thread - Update Telegram watchlist topic thread ID
+app.post('/api/telegram/config-watchlist-thread', (req, res) => {
+  try {
+    const { threadId } = req.body;
+    if (threadId === undefined || threadId === null) {
+      return res.status(400).json({ error: 'threadId is required' });
+    }
+    const success = setTelegramWatchlistThreadId(threadId);
+    res.json({ success, threadId: String(threadId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/telegram/config-notes-thread - Update Telegram notes topic thread ID
+app.post('/api/telegram/config-notes-thread', (req, res) => {
+  try {
+    const { threadId } = req.body;
+    if (threadId === undefined || threadId === null) {
+      return res.status(400).json({ error: 'threadId is required' });
+    }
+    const success = setTelegramNotesThreadId(threadId);
     res.json({ success, threadId: String(threadId) });
   } catch (error: any) {
     res.status(500).json({ error: error.message });

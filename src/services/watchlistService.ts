@@ -308,3 +308,56 @@ export function useBulkCreateWatchlist() {
     },
   });
 }
+
+// ================= AI THEMATIC AGENT =================
+
+export interface ThematicStockCandidate {
+  symbol: string;
+  companyName: string;
+  thesis: string;
+  subCategory?: string;
+  marketCapCategory?: string;
+  price?: number;
+  changePercent?: number;
+  marketCap?: number;
+  pe?: number;
+  sector?: string;
+  industry?: string;
+  isAlreadyInWatchlist?: boolean;
+}
+
+export interface ThematicLookupResult {
+  topic: string;
+  refinedTopicName: string;
+  themeDescription: string;
+  keyDrivers: string[];
+  stocks: ThematicStockCandidate[];
+  source: 'ai_agent' | 'thematic_heuristic';
+}
+
+export interface LookupThematicOptions {
+  topic: string;
+  existingSymbols?: string[];
+  customFocus?: string;
+  count?: number;
+}
+
+export async function lookupThematicStocks(options: LookupThematicOptions): Promise<ThematicLookupResult> {
+  const res = await fetch('/api/watchlists/ai-topic-lookup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(options),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || 'Failed to research thematic stocks');
+  }
+  return res.json();
+}
+
+export function useThematicStockLookup() {
+  return useMutation({
+    mutationFn: (options: LookupThematicOptions) => lookupThematicStocks(options),
+  });
+}
+

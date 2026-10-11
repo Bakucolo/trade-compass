@@ -30,6 +30,7 @@ import {
   LineChart,
   Bell,
   Zap,
+  Bot,
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -77,6 +78,7 @@ import { BulkWatchlistAlertModal } from './watchlist/BulkWatchlistAlertModal';
 import { CreateWatchlistModal } from './watchlist/CreateWatchlistModal';
 import { PopulateByCriteriaModal } from './watchlist/PopulateByCriteriaModal';
 import { OddLotTenderModal } from './watchlist/OddLotTenderModal';
+import { AiThematicWatchlistModal } from './watchlist/AiThematicWatchlistModal';
 import ReactMarkdown from 'react-markdown';
 
 type SortField =
@@ -163,6 +165,7 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [isCriteriaModalOpen, setIsCriteriaModalOpen] = useState(false);
   const [isOddLotModalOpen, setIsOddLotModalOpen] = useState(false);
+  const [isAiThematicModalOpen, setIsAiThematicModalOpen] = useState(false);
 
   // Autocomplete Suggestions
   const [suggestions, setSuggestions] = useState<Array<{ symbol: string; name: string }>>([]);
@@ -476,6 +479,17 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
           <Button
             variant="outline"
             size="sm"
+            onClick={() => setIsAiThematicModalOpen(true)}
+            className="gap-1.5 bg-gradient-to-r from-purple-500/15 via-indigo-500/15 to-primary/10 border-purple-500/40 text-purple-200 hover:text-white hover:bg-purple-600/25 shadow-sm font-bold"
+            title={`Ask AI Agent to look up stocks related to "${activeWatchlist?.name || 'this watchlist'}" and add them`}
+          >
+            <Bot className="w-4 h-4 text-purple-400 animate-pulse" />
+            <span>AI Topic Agent</span>
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => setIsCriteriaModalOpen(true)}
             className="gap-1.5 bg-gradient-to-r from-cyan-500/10 via-purple-500/10 to-primary/10 border-primary/40 text-foreground hover:bg-primary/20 shadow-sm font-bold"
           >
@@ -647,6 +661,19 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
                     <Plus className="w-4 h-4" /> Add Stock
                   </>
                 )}
+              </Button>
+
+              <Button
+                variant="outline"
+                className="h-11 px-3.5 gap-1.5 font-semibold border-purple-500/40 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 shadow-sm shrink-0 group"
+                onClick={() => setIsAiThematicModalOpen(true)}
+                title={`AI Agent: Look up and add stocks related to "${activeWatchlist?.name || 'this topic'}"`}
+              >
+                <Bot className="w-4 h-4 text-purple-400 group-hover:scale-110 transition-transform animate-pulse" />
+                <span className="hidden sm:inline">AI Expand Topic</span>
+                <Badge className="bg-purple-500/20 text-purple-200 border-purple-500/40 text-[9px] px-1 py-0 ml-0.5">
+                  Agent
+                </Badge>
               </Button>
 
               <Button
@@ -862,6 +889,17 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
                           ? `No tickers matched "${tableFilter}". Try clearing your filter.`
                           : 'Use the search box above to add stocks like AAPL, NVDA, TSLA, or ORA to this list.'}
                       </p>
+                      {!tableFilter && (
+                        <Button
+                          variant="glow"
+                          size="sm"
+                          onClick={() => setIsAiThematicModalOpen(true)}
+                          className="mt-2 bg-gradient-to-r from-purple-600 via-indigo-600 to-primary text-white gap-2 text-xs font-bold shadow-lg shadow-purple-500/20"
+                        >
+                          <Bot className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+                          <span>Find Stocks for "{activeWatchlist?.name || 'Watchlist'}" with AI</span>
+                        </Button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1668,6 +1706,18 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
               refetchData();
             }}
             onNavigateToResearch={onNavigateToResearch}
+          />
+
+          {/* AI Thematic Topic Agent Modal */}
+          <AiThematicWatchlistModal
+            isOpen={isAiThematicModalOpen}
+            onClose={() => setIsAiThematicModalOpen(false)}
+            activeWatchlist={activeWatchlist}
+            existingSymbols={items.map((i) => i.symbol)}
+            onAddedSuccess={() => {
+              refetchWatchlists();
+              refetchData();
+            }}
           />
         </div>
       );
