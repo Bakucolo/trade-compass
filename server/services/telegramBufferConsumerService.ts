@@ -10,6 +10,11 @@ import { sendTelegramMessage, generateAndSendDailyReport } from './telegramRepor
 import { generateJsonCompletion } from './llmFallbackRouter';
 import { handleWatchlistTopicMessage } from './telegramWatchlistQueryService';
 import { handlePositionsTopicMessage } from './telegramPositionsQueryService';
+import {
+  isTopicHelpRequest,
+  handleTopicHelpMessage,
+  TelegramTopicType,
+} from './telegramTopicHelpService';
 
 const logToFile = (msg: string) => console.log(msg);
 
@@ -1255,6 +1260,72 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
 
       const senderLabel = msg.sender?.username ? `@${msg.sender.username}` : (msg.sender?.firstName || 'Mobile');
       const targetChatId = msg.chat?.id || msg.sender?.id || process.env.TELEGRAM_ALERTS_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
+
+      // ==========================================
+      // TOPIC-AWARE HELP & INSTRUCTIONS HANDLER
+      // ==========================================
+      if (isTopicHelpRequest(contentText)) {
+        let topicType: TelegramTopicType = 'GENERAL';
+        let topicFolder = 'Help';
+        let targetThreadId = msgThreadNum;
+
+        if (isPositionsTopic) {
+          topicType = 'POSITIONS';
+          topicFolder = 'Positions';
+          targetThreadId = msgThreadNum || configuredPositionsThreadId;
+        } else if (isWatchlistTopic) {
+          topicType = 'WATCHLIST';
+          topicFolder = 'Watchlists';
+          targetThreadId = msgThreadNum || configuredWatchlistThreadId;
+        } else if (isNotesTopic) {
+          topicType = 'NOTES';
+          topicFolder = 'Notes';
+          targetThreadId = msgThreadNum || configuredNotesThreadId;
+        } else if (isExecutionTopic) {
+          topicType = 'EXECUTION';
+          topicFolder = 'Execution';
+          targetThreadId = msgThreadNum || configuredExecutionThreadId;
+        } else if (isIdeasTopic) {
+          topicType = 'IDEAS';
+          topicFolder = 'Ideas';
+          targetThreadId = msgThreadNum || configuredIdeasThreadId;
+        } else if (isAlertsTopic) {
+          topicType = 'ALERTS';
+          topicFolder = 'Alerts';
+          targetThreadId = msgThreadNum || configuredAlertsThreadId;
+        } else if (isAppTopic) {
+          topicType = 'APP';
+          topicFolder = 'App';
+          targetThreadId = msgThreadNum || configuredAppThreadId;
+        }
+
+        logToFile(`[TelegramBuffer] ❓ Help requested for topic: ${topicType} (thread: ${targetThreadId}) by ${senderLabel}`);
+
+        const helpResult = await handleTopicHelpMessage({
+          topic: topicType,
+          chatId: targetChatId,
+          messageThreadId: targetThreadId,
+        });
+
+        const savedLog = await (prisma as any).thoughtLog.create({
+          data: {
+            title: `❓ Telegram Help: ${topicType} Topic Instructions`,
+            content: `User query: "${contentText}"\n\n${helpResult.replyText}`,
+            folder: topicFolder,
+            tags: `Telegram, Help, ${topicType}, ${senderLabel}`,
+            symbols: null,
+            sentiment: 'NEUTRAL',
+            isPinned: false,
+            isFulfilled: true,
+            agentOutput: helpResult.replyText,
+            agentActionType: 'ADD_CONTEXT',
+            marketDataJson: null,
+            createdAt: new Date(msg.timestamp),
+          },
+        });
+        createdLogs.push({ id: savedLog.id, title: savedLog.title, symbols: null });
+        continue;
+      }
 
       // ==========================================
       // POSITIONS TOPIC HANDLER

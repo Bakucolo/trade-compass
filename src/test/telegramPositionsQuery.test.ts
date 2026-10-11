@@ -314,10 +314,10 @@ describe('Telegram Positions Query Service', () => {
 
       expect(result.handled).toBe(true);
       expect(result.intent).toBe('HELP');
-      expect(result.replyText).toContain('Positions Intelligence Assistant');
+      expect(result.replyText).toContain('Positions Topic — Instructions & Commands');
       expect(result.replyText).toContain('Ticker Lookup');
       expect(result.replyText).toContain('Asset Classes');
-      expect(result.replyText).toContain('Brokers Breakdown');
+      expect(result.replyText).toContain('Broker Portfolios');
     });
   });
 });

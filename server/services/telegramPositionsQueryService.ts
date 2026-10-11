@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { sendTelegramMessage } from './telegramReportService';
 import { extractSymbolsFromText } from './thoughtLogAgentService';
+import { getPositionsTopicHelp } from './telegramTopicHelpService';
 
 const logToFile = (msg: string) => console.log(msg);
 
@@ -441,7 +442,7 @@ export async function handlePositionsTopicMessage({
     // 6. HELP & QUICK GUIDE
     // ==========================================
     default: {
-      replyText = `💼 *Positions Intelligence Assistant*\n\nAsk about your positions across brokers:\n\n• *Ticker Lookup:* \`AAPL\`, \`NVDA\`, \`show PLTR\`\n  _Shows all positions in that ticker across all brokers._\n\n• *Asset Classes:* \`options\`, \`equities\`, \`stocks\`\n  _Lists all contracts or shares held in your portfolio._\n\n• *Brokers Breakdown:* \`brokers\`, \`tastytrade\`, \`t212\`, \`ibkr\`\n  _Breaks down positions and P&L by brokerage account._\n\n• *Portfolio Summary:* \`all\`, \`portfolio\`, \`summary\`\n  _Complete grand overview of all active holdings._`;
+      replyText = getPositionsTopicHelp();
       break;
     }
   }

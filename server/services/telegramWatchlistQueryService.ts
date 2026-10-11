@@ -3,6 +3,7 @@ import YahooFinance from 'yahoo-finance2';
 import { sendTelegramMessage } from './telegramReportService';
 import { generateJsonCompletion } from './llmFallbackRouter';
 import { resolveYahooFinanceSymbol } from './tickerResolutionService';
+import { isTopicHelpRequest, getWatchlistTopicHelp } from './telegramTopicHelpService';
 
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey', 'ripHistorical'] });
 const logToFile = (msg: string) => console.log(msg);
@@ -359,7 +360,7 @@ export async function handleWatchlistTopicMessage({
 }): Promise<{
   handled: boolean;
   replyText?: string;
-  actionTaken: 'LIST_ALL' | 'CRITERIA_QUERY' | 'NOT_QUERY';
+  actionTaken: 'LIST_ALL' | 'CRITERIA_QUERY' | 'NOT_QUERY' | 'HELP';
 }> {
   if (!text || !text.trim()) {
     return { handled: false, actionTaken: 'NOT_QUERY' };
@@ -369,6 +370,25 @@ export async function handleWatchlistTopicMessage({
     .replace(/#(?:topic:)?(?:watchlist|watch)\b/gi, '')
     .replace(/^📋\s*/, '')
     .trim();
+
+  // ===================================================
+  // 0. INTENT: HELP & INSTRUCTIONS
+  // ===================================================
+  if (isTopicHelpRequest(cleanText)) {
+    logToFile(`[TelegramWatchlistQuery] Executing HELP intent`);
+    const helpMsg = getWatchlistTopicHelp();
+
+    if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
+      await sendTelegramMessage({
+        text: helpMsg,
+        chatId,
+        messageThreadId,
+        parseMode: 'Markdown',
+      }).catch((e: any) => logToFile(`[TelegramWatchlistQuery] Send help error: ${e.message}`));
+    }
+
+    return { handled: true, replyText: helpMsg, actionTaken: 'HELP' };
+  }
 
   // ===================================================
   // 1. INTENT: GET ALL WATCHLISTS
