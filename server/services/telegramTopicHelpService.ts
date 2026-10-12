@@ -55,11 +55,16 @@ Ask for any stock or option position:
 • \`positions in PLTR\` or \`show MSFT\`
 • \`do I have TSLA?\` or \`how many AMZN shares\`
 • \`AAPL options\` or \`NVDA calls\` — Filter options specifically for that ticker.
+• \`AAPL short options\` or \`NVDA longs\` — Filter short or long option contracts for a ticker.
 
-⚡ *2. Asset Classes*
+⚡ *2. Asset Classes & Options Filtering*
 Get a unified view of all open positions in an asset class:
 • \`options\` (or \`all options\`, \`contracts\`, \`calls\`, \`puts\`)
-  _Lists every active option contract across brokers with strike, expiry, long/short, mark prices, and total options P&L._
+  _Lists every active option contract across brokers with strike, expiry, DTE, long/short, mark prices, and total options P&L._
+• \`short options\` (or \`shorts\`, \`short calls\`, \`short puts\`)
+  _Filters specifically for short option positions (sold contracts) across all brokers._
+• \`long options\` (or \`longs\`, \`long calls\`, \`long puts\`)
+  _Filters specifically for long option positions (bought contracts) across all brokers._
 • \`equities\` (or \`stocks\`, \`shares\`, \`all stocks\`)
   _Lists every stock holding across brokers with cost basis, spot prices, and total equities P&L._
 

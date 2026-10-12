@@ -25,10 +25,13 @@ export type PositionQueryIntent =
   | 'SPECIFIC_BROKER'
   | 'HELP';
 
+export type OptionSideFilter = 'SHORT' | 'LONG';
+
 export interface ParsedPositionQuery {
   intent: PositionQueryIntent;
   ticker?: string;
   brokerName?: string;
+  optionSide?: OptionSideFilter;
 }
 
 /**
@@ -110,7 +113,8 @@ export function getOptionExpiryAndDte(h: {
 const STOPWORDS = new Set([
   'WHAT', 'WHEN', 'WHERE', 'WHICH', 'WHO', 'WHY', 'HOW', 'SHOW', 'VIEW', 'LIST', 'GET', 'CHECK', 'FIND',
   'MY', 'ALL', 'THE', 'AND', 'FOR', 'ARE', 'CAN', 'YOU', 'HAVE', 'ANY', 'SOME', 'ONE', 'TWO',
-  'OPTIONS', 'OPTION', 'EQUITY', 'EQUITIES', 'STOCKS', 'STOCK', 'SHARES', 'SHARE', 'CALLS', 'PUTS',
+  'OPTIONS', 'OPTION', 'EQUITY', 'EQUITIES', 'STOCKS', 'STOCK', 'SHARES', 'SHARE', 'CALLS', 'PUTS', 'CALL', 'PUT', 'CONTRACT', 'CONTRACTS',
+  'SHORT', 'SHORTS', 'LONG', 'LONGS',
   'BROKER', 'BROKERS', 'PORTFOLIO', 'SUMMARY', 'BALANCE', 'BALANCES', 'POSITION', 'POSITIONS', 'HOLDING', 'HOLDINGS',
   'HELP', 'INFO', 'STATUS', 'TRADE', 'TRADES', 'ALERT', 'ALERTS', 'TOTAL', 'NET', 'GROSS',
   'TASTYTRADE', 'TASTY', 'TRADING', 'IBKR', 'INTERACTIVE', 'CASH', 'VALUE', 'PROFIT', 'LOSS'
@@ -135,6 +139,9 @@ export function extractTickerCandidate(cleanText: string): string | null {
     /\$?([A-Za-z]{1,6})\s+(?:positions?|holdings?|shares?)\b/i,
     /(?:show|view|get|check|find)\s+(?:me\s+)?(?:positions?\s+(?:in|for|of|on)\s+)?\$?([A-Za-z]{1,6})\b/i,
     /(?:do\s+i\s+have|how\s+many|what\s+is\s+my)\s+(?:shares\s+of\s+)?\$?([A-Za-z]{1,6})\b/i,
+    /\$?([A-Za-z]{1,6})\s+(?:(?:short|long)\s+)?(?:options?|calls?|puts?|contracts?|shorts?|longs?)\b/i,
+    /(?:short|long)\s+(?:options?|calls?|puts?|contracts?)\s+(?:in|for|of|on)?\s*\$?([A-Za-z]{1,6})\b/i,
+    /(?:short|long)\s+\$?([A-Za-z]{1,6})\s+(?:options?|calls?|puts?|contracts?|positions?)?\b/i,
     /\$?([A-Za-z]{1,6})\s+(?:options?|calls?|puts?|contracts?)\b/i,
   ];
 
@@ -193,16 +200,41 @@ export function parsePositionQuery(rawText: string): ParsedPositionQuery {
     return { intent: 'HELP' };
   }
 
-  // 2. Specific Ticker lookup takes high precedence if query specifies a ticker
-  // e.g. "AAPL", "positions in NVDA", "NVDA options", "$PLTR"
-  const candidateTicker = extractTickerCandidate(clean);
-  if (candidateTicker) {
-    return { intent: 'TICKER', ticker: candidateTicker };
+  // Detect option side preference (Short vs Long)
+  let optionSide: OptionSideFilter | undefined;
+  const isHowLong = /\bhow\s+long\b/i.test(lower);
+  const isShort = /\b(shorts?)\b/i.test(lower);
+  const isLong = !isHowLong && /\b(longs?)\b/i.test(lower);
+
+  if (isShort && !isLong) {
+    optionSide = 'SHORT';
+  } else if (isLong && !isShort) {
+    optionSide = 'LONG';
   }
 
-  // 3. Options asset class in general
-  if (/\b(options?|contracts?|calls?|puts?|option\s+positions?)\b/i.test(lower) && !/\b(equit|stock|share)/i.test(lower)) {
-    return { intent: 'OPTIONS' };
+  // 2. Specific Ticker lookup takes high precedence if query specifies a ticker
+  // e.g. "AAPL", "positions in NVDA", "NVDA options", "$PLTR", "AAPL short options", "TSLA longs"
+  const candidateTicker = extractTickerCandidate(clean);
+  if (candidateTicker) {
+    return {
+      intent: 'TICKER',
+      ticker: candidateTicker,
+      ...(optionSide ? { optionSide } : {}),
+    };
+  }
+
+  // 3. Options asset class in general (including short/long options, shorts, longs)
+  if (
+    (
+      /\b(options?|contracts?|calls?|puts?|option\s+positions?)\b/i.test(lower) ||
+      /\b(shorts?|longs?)\b/i.test(lower)
+    ) &&
+    !/\b(equit|stock|share)/i.test(lower)
+  ) {
+    return {
+      intent: 'OPTIONS',
+      ...(optionSide ? { optionSide } : {}),
+    };
   }
 
   // 4. Equities / Stocks asset class in general
@@ -212,15 +244,15 @@ export function parsePositionQuery(rawText: string): ParsedPositionQuery {
 
   // 5. Specific Broker query
   if (/\b(tastytrade|tasty)\b/i.test(lower)) {
-    return { intent: 'SPECIFIC_BROKER', brokerName: 'Tastytrade' };
+    return { intent: 'SPECIFIC_BROKER', brokerName: 'Tastytrade', ...(optionSide ? { optionSide } : {}) };
   }
 
   if (/\b(trading\s*212|t212)\b/i.test(lower)) {
-    return { intent: 'SPECIFIC_BROKER', brokerName: 'Trading 212' };
+    return { intent: 'SPECIFIC_BROKER', brokerName: 'Trading 212', ...(optionSide ? { optionSide } : {}) };
   }
 
   if (/\b(ibkr|interactive\s+brokers?)\b/i.test(lower)) {
-    return { intent: 'SPECIFIC_BROKER', brokerName: 'Interactive Brokers' };
+    return { intent: 'SPECIFIC_BROKER', brokerName: 'Interactive Brokers', ...(optionSide ? { optionSide } : {}) };
   }
 
   // 6. Brokers summary or portfolio overview
@@ -277,7 +309,7 @@ export async function handlePositionsTopicMessage({
       const sym = parsed.ticker!.toUpperCase();
 
       // Match symbol, underlyingSymbol, or broker-specific ticker
-      const matchingHoldings = holdings.filter((h) => {
+      let matchingHoldings = holdings.filter((h) => {
         const hSym = h.symbol.toUpperCase();
         const uSym = h.underlyingSymbol?.toUpperCase();
         const extractedUnderlying = getUnderlyingFromSymbol(h.symbol, h.underlyingSymbol);
@@ -291,8 +323,19 @@ export async function handlePositionsTopicMessage({
         );
       });
 
+      if (parsed.optionSide) {
+        matchingHoldings = matchingHoldings.filter(
+          (h) => h.assetType === 'OPTION' && (parsed.optionSide === 'SHORT' ? h.quantity < 0 : h.quantity > 0)
+        );
+      }
+
       if (matchingHoldings.length === 0) {
-        replyText = `💼 *Positions for $${sym}*\n\n_No open positions found for $${sym} across any connected broker (Tastytrade, Trading 212, Interactive Brokers)._\n\n💡 _Send \`all\`, \`equities\`, \`options\`, or \`brokers\` to review your current portfolio._`;
+        if (parsed.optionSide) {
+          const sideName = parsed.optionSide === 'SHORT' ? 'short' : 'long';
+          replyText = `💼 *${parsed.optionSide === 'SHORT' ? 'Short' : 'Long'} Option Positions for $${sym}*\n\n_No open ${sideName} option positions found for $${sym} across any connected broker._\n\n💡 _Send \`$${sym}\` to view all positions for this ticker, or \`options\` to review all option contracts._`;
+        } else {
+          replyText = `💼 *Positions for $${sym}*\n\n_No open positions found for $${sym} across any connected broker (Tastytrade, Trading 212, Interactive Brokers)._\n\n💡 _Send \`all\`, \`equities\`, \`options\`, or \`brokers\` to review your current portfolio._`;
+        }
       } else {
         // Group by broker name
         const byBroker = new Map<string, typeof matchingHoldings>();
@@ -344,8 +387,9 @@ export async function handlePositionsTopicMessage({
 
         const pnlSignTotal = totalPnLUSD >= 0 ? '+' : '';
         const pnlIconTotal = totalPnLUSD >= 0 ? '🟢' : '🔴';
+        const sidePrefix = parsed.optionSide ? `${parsed.optionSide === 'SHORT' ? 'Short ' : 'Long '}Option ` : '';
 
-        replyText = `💼 *Positions for $${sym}* (${byBroker.size} broker${byBroker.size === 1 ? '' : 's'})\n\n${brokerBlocks.join('\n\n───────────────\n\n')}\n\n───────────────────────\n📊 *Aggregated Exposure:*\n${totalEquities > 0 ? `• Net Shares: *${totalEquities.toLocaleString()} shares*\n` : ''}${totalOptions > 0 ? `• Options: *${totalOptions} contract(s)*\n` : ''}• Total Market Value: *${formatMoney(totalValueUSD, 'USD')}*\n• Total Unrealized P&L: *${pnlSignTotal}${formatMoney(totalPnLUSD, 'USD')}* ${pnlIconTotal}`;
+        replyText = `💼 *${sidePrefix}Positions for $${sym}* (${byBroker.size} broker${byBroker.size === 1 ? '' : 's'})\n\n${brokerBlocks.join('\n\n───────────────\n\n')}\n\n───────────────────────\n📊 *Aggregated Exposure:*\n${totalEquities > 0 ? `• Net Shares: *${totalEquities.toLocaleString()} shares*\n` : ''}${totalOptions > 0 ? `• Options: *${totalOptions} contract(s)*\n` : ''}• Total Market Value: *${formatMoney(totalValueUSD, 'USD')}*\n• Total Unrealized P&L: *${pnlSignTotal}${formatMoney(totalPnLUSD, 'USD')}* ${pnlIconTotal}`;
       }
       break;
     }
@@ -354,10 +398,24 @@ export async function handlePositionsTopicMessage({
     // 2. OPTIONS ASSET CLASS
     // ==========================================
     case 'OPTIONS': {
-      const optionHoldings = holdings.filter((h) => h.assetType === 'OPTION');
+      let optionHoldings = holdings.filter((h) => h.assetType === 'OPTION');
+
+      if (parsed.optionSide === 'SHORT') {
+        optionHoldings = optionHoldings.filter((h) => h.quantity < 0);
+      } else if (parsed.optionSide === 'LONG') {
+        optionHoldings = optionHoldings.filter((h) => h.quantity > 0);
+      }
+
+      const sideLabel = parsed.optionSide === 'SHORT' ? 'Short ' : parsed.optionSide === 'LONG' ? 'Long ' : '';
 
       if (optionHoldings.length === 0) {
-        replyText = `⚡ *Active Options Positions*\n\n_You currently hold no open active option contracts across any broker._\n\n💡 _Send \`equities\` to check your stock positions, or send a ticker like \`AAPL\`._`;
+        if (parsed.optionSide === 'SHORT') {
+          replyText = `⚡ *Active Short Option Positions*\n\n_You currently hold no open short option contracts across any broker._\n\n💡 _Send \`options\` to review all options, or \`long options\` for long contracts._`;
+        } else if (parsed.optionSide === 'LONG') {
+          replyText = `⚡ *Active Long Option Positions*\n\n_You currently hold no open long option contracts across any broker._\n\n💡 _Send \`options\` to review all options, or \`short options\` for short contracts._`;
+        } else {
+          replyText = `⚡ *Active Options Positions*\n\n_You currently hold no open active option contracts across any broker._\n\n💡 _Send \`equities\` to check your stock positions, or send a ticker like \`AAPL\`._`;
+        }
       } else {
         let totalVal = 0;
         let totalPnL = 0;
@@ -392,7 +450,7 @@ export async function handlePositionsTopicMessage({
         const pnlSign = totalPnL >= 0 ? '+' : '';
         const pnlIcon = totalPnL >= 0 ? '🟢' : '🔴';
 
-        replyText = `⚡ *Active Option Positions* (${sortedOptions.length} contracts)\n\n${rows}\n\n───────────────────────\n📊 *Options Total:*\n• Total Value: *${formatMoney(totalVal, 'USD')}*\n• Total Unrealized P&L: *${pnlSign}${formatMoney(totalPnL, 'USD')}* ${pnlIcon}`;
+        replyText = `⚡ *Active ${sideLabel}Option Positions* (${sortedOptions.length} contract${sortedOptions.length === 1 ? '' : 's'})\n\n${rows}\n\n───────────────────────\n📊 *${sideLabel}Options Total:*\n• Total Value: *${formatMoney(totalVal, 'USD')}*\n• Total Unrealized P&L: *${pnlSign}${formatMoney(totalPnL, 'USD')}* ${pnlIcon}`;
       }
       break;
     }
@@ -482,12 +540,20 @@ export async function handlePositionsTopicMessage({
     // ==========================================
     case 'SPECIFIC_BROKER': {
       const targetBroker = parsed.brokerName!;
-      const brokerHoldings = holdings.filter((h) =>
+      let brokerHoldings = holdings.filter((h) =>
         h.broker?.name?.toLowerCase().includes(targetBroker.toLowerCase())
       );
 
+      if (parsed.optionSide) {
+        brokerHoldings = brokerHoldings.filter(
+          (h) => h.assetType === 'OPTION' && (parsed.optionSide === 'SHORT' ? h.quantity < 0 : h.quantity > 0)
+        );
+      }
+
+      const sidePrefix = parsed.optionSide ? `${parsed.optionSide === 'SHORT' ? 'Short ' : 'Long '}Option ` : '';
+
       if (brokerHoldings.length === 0) {
-        replyText = `🏛️ *${targetBroker} Positions*\n\n_No open positions recorded for ${targetBroker}._\n\n💡 _Send \`brokers\` to see all brokers with active positions._`;
+        replyText = `🏛️ *${targetBroker} ${sidePrefix}Holdings*\n\n_No open ${parsed.optionSide ? `${parsed.optionSide.toLowerCase()} option ` : ''}positions recorded for ${targetBroker}._\n\n💡 _Send \`brokers\` to see all brokers with active positions._`;
       } else {
         let bVal = 0;
         let bPnL = 0;
@@ -519,7 +585,7 @@ export async function handlePositionsTopicMessage({
         const pnlSign = bPnL >= 0 ? '+' : '';
         const pnlIcon = bPnL >= 0 ? '🟢' : '🔴';
 
-        replyText = `🏛️ *${targetBroker} Holdings* (${brokerHoldings.length} positions)\n\n${rows}\n\n───────────────────────\n📊 *Total Value:* *${formatMoney(bVal, 'USD')}* | P&L: *${pnlSign}${formatMoney(bPnL, 'USD')}* ${pnlIcon}`;
+        replyText = `🏛️ *${targetBroker} ${sidePrefix}Holdings* (${brokerHoldings.length} positions)\n\n${rows}\n\n───────────────────────\n📊 *Total Value:* *${formatMoney(bVal, 'USD')}* | P&L: *${pnlSign}${formatMoney(bPnL, 'USD')}* ${pnlIcon}`;
       }
       break;
     }

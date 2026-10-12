@@ -41,6 +41,11 @@ describe('Telegram Positions Query Service', () => {
       expect(parsePositionQuery('NVDA calls')).toEqual({ intent: 'TICKER', ticker: 'NVDA' });
       expect(parsePositionQuery('TSLA puts')).toEqual({ intent: 'TICKER', ticker: 'TSLA' });
       expect(parsePositionQuery('positions in MSFT contracts')).toEqual({ intent: 'TICKER', ticker: 'MSFT' });
+      expect(parsePositionQuery('AAPL short options')).toEqual({ intent: 'TICKER', ticker: 'AAPL', optionSide: 'SHORT' });
+      expect(parsePositionQuery('AAPL shorts')).toEqual({ intent: 'TICKER', ticker: 'AAPL', optionSide: 'SHORT' });
+      expect(parsePositionQuery('short AAPL options')).toEqual({ intent: 'TICKER', ticker: 'AAPL', optionSide: 'SHORT' });
+      expect(parsePositionQuery('NVDA long options')).toEqual({ intent: 'TICKER', ticker: 'NVDA', optionSide: 'LONG' });
+      expect(parsePositionQuery('TSLA longs')).toEqual({ intent: 'TICKER', ticker: 'TSLA', optionSide: 'LONG' });
     });
 
     it('should parse asset class queries for options', () => {
@@ -51,6 +56,24 @@ describe('Telegram Positions Query Service', () => {
       expect(parsePositionQuery('calls')).toEqual({ intent: 'OPTIONS' });
       expect(parsePositionQuery('puts')).toEqual({ intent: 'OPTIONS' });
       expect(parsePositionQuery('option positions')).toEqual({ intent: 'OPTIONS' });
+    });
+
+    it('should parse short and long option asset class queries', () => {
+      expect(parsePositionQuery('short options')).toEqual({ intent: 'OPTIONS', optionSide: 'SHORT' });
+      expect(parsePositionQuery('shorts')).toEqual({ intent: 'OPTIONS', optionSide: 'SHORT' });
+      expect(parsePositionQuery('short contracts')).toEqual({ intent: 'OPTIONS', optionSide: 'SHORT' });
+      expect(parsePositionQuery('short calls')).toEqual({ intent: 'OPTIONS', optionSide: 'SHORT' });
+      expect(parsePositionQuery('short puts')).toEqual({ intent: 'OPTIONS', optionSide: 'SHORT' });
+      expect(parsePositionQuery('all shorts')).toEqual({ intent: 'OPTIONS', optionSide: 'SHORT' });
+      expect(parsePositionQuery('my short options')).toEqual({ intent: 'OPTIONS', optionSide: 'SHORT' });
+
+      expect(parsePositionQuery('long options')).toEqual({ intent: 'OPTIONS', optionSide: 'LONG' });
+      expect(parsePositionQuery('longs')).toEqual({ intent: 'OPTIONS', optionSide: 'LONG' });
+      expect(parsePositionQuery('long contracts')).toEqual({ intent: 'OPTIONS', optionSide: 'LONG' });
+      expect(parsePositionQuery('long calls')).toEqual({ intent: 'OPTIONS', optionSide: 'LONG' });
+      expect(parsePositionQuery('long puts')).toEqual({ intent: 'OPTIONS', optionSide: 'LONG' });
+      expect(parsePositionQuery('all longs')).toEqual({ intent: 'OPTIONS', optionSide: 'LONG' });
+      expect(parsePositionQuery('my long options')).toEqual({ intent: 'OPTIONS', optionSide: 'LONG' });
     });
 
     it('should parse asset class queries for equities/stocks', () => {
@@ -284,6 +307,77 @@ describe('Telegram Positions Query Service', () => {
       // Expired RDW option must NOT be in the result!
       expect(result.replyText).not.toContain('$RDW');
       expect(result.replyText).toContain('Options Total');
+    });
+
+    it('should filter by short options when asking for "short options" or "shorts"', async () => {
+      const result = await handlePositionsTopicMessage({
+        text: 'short options',
+        chatId: 123456,
+        prisma: mockPrisma,
+      });
+
+      expect(result.handled).toBe(true);
+      expect(result.intent).toBe('OPTIONS');
+      expect(result.replyText).toContain('Active Short Option Positions');
+      // NVDA is a short put (-1 contract)
+      expect(result.replyText).toContain('$NVDA');
+      expect(result.replyText).toContain('Short');
+      expect(result.replyText).toContain('DTE');
+      // AAPL is a long call (+2 contracts) -> MUST NOT BE INCLUDED!
+      expect(result.replyText).not.toContain('$AAPL');
+      // Expired RDW option must NOT be in the result!
+      expect(result.replyText).not.toContain('$RDW');
+      expect(result.replyText).toContain('Short Options Total:');
+    });
+
+    it('should filter by long options when asking for "long options" or "longs"', async () => {
+      const result = await handlePositionsTopicMessage({
+        text: 'long options',
+        chatId: 123456,
+        prisma: mockPrisma,
+      });
+
+      expect(result.handled).toBe(true);
+      expect(result.intent).toBe('OPTIONS');
+      expect(result.replyText).toContain('Active Long Option Positions');
+      // AAPL is a long call (+2 contracts)
+      expect(result.replyText).toContain('$AAPL');
+      expect(result.replyText).toContain('Long');
+      expect(result.replyText).toContain('DTE');
+      // NVDA is a short put -> MUST NOT BE INCLUDED!
+      expect(result.replyText).not.toContain('$NVDA');
+      // Expired RDW option must NOT be in the result!
+      expect(result.replyText).not.toContain('$RDW');
+      expect(result.replyText).toContain('Long Options Total:');
+    });
+
+    it('should filter specific ticker by short options ("AAPL short options")', async () => {
+      const result = await handlePositionsTopicMessage({
+        text: 'AAPL short options',
+        chatId: 123456,
+        prisma: mockPrisma,
+      });
+
+      expect(result.handled).toBe(true);
+      expect(result.intent).toBe('TICKER');
+      expect(result.replyText).toContain('Short Option Positions for $AAPL');
+      expect(result.replyText).toContain('No open short option positions found for $AAPL');
+    });
+
+    it('should filter specific ticker by long options ("AAPL long options")', async () => {
+      const result = await handlePositionsTopicMessage({
+        text: 'AAPL long options',
+        chatId: 123456,
+        prisma: mockPrisma,
+      });
+
+      expect(result.handled).toBe(true);
+      expect(result.intent).toBe('TICKER');
+      expect(result.replyText).toContain('Long Option Positions for $AAPL');
+      expect(result.replyText).toContain('2 contract(s)');
+      expect(result.replyText).toContain('Long Call');
+      // Should NOT include AAPL equity shares when filtering by options!
+      expect(result.replyText).not.toContain('Net Shares:');
     });
 
     it('should return all equity positions when asking for "equities"', async () => {
