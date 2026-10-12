@@ -1,7 +1,12 @@
 import { PrismaClient } from '@prisma/client';
-import { sendTelegramMessage } from './telegramReportService';
+import {
+  sendTelegramMessage,
+  parseOptionExpiryDate,
+  formatOptionExpiryDate,
+} from './telegramReportService';
 import { extractSymbolsFromText } from './thoughtLogAgentService';
 import { getPositionsTopicHelp } from './telegramTopicHelpService';
+import { parseOccSymbol } from './shortOptionAlertService';
 
 const logToFile = (msg: string) => console.log(msg);
 
@@ -44,6 +49,61 @@ function formatMoney(amount: number, curr?: string | null): string {
   const sign = amount < 0 ? '-' : '';
   const abs = Math.abs(amount);
   return `${sign}${sym}${abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/**
+ * Resolves option expiry date, human-readable format, DTE, and expired status
+ */
+export function getOptionExpiryAndDte(h: {
+  expiryDate?: string | null;
+  symbol: string;
+  brokerSpecificId?: string;
+  description?: string | null;
+}): {
+  expiryDate: Date | null;
+  formattedExpiry: string;
+  dte: number | null;
+  isExpired: boolean;
+} {
+  let rawExpiry = h.expiryDate;
+
+  if (!rawExpiry) {
+    const parsed =
+      parseOccSymbol(h.symbol) ||
+      parseOccSymbol(h.brokerSpecificId || '') ||
+      (h.description ? parseOccSymbol(h.description) : null);
+    if (parsed?.expiryDate) {
+      rawExpiry = parsed.expiryDate;
+    }
+  }
+
+  const expDate = parseOptionExpiryDate(rawExpiry);
+  if (!expDate) {
+    return {
+      expiryDate: null,
+      formattedExpiry: 'N/A',
+      dte: null,
+      isExpired: false,
+    };
+  }
+
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).getTime();
+  const expEnd = new Date(expDate.getFullYear(), expDate.getMonth(), expDate.getDate(), 23, 59, 59, 999).getTime();
+  const isExpired = expEnd < todayStart;
+
+  const expStart = new Date(expDate.getFullYear(), expDate.getMonth(), expDate.getDate(), 0, 0, 0, 0).getTime();
+  const msPerDay = 1000 * 60 * 60 * 24;
+  const dte = Math.max(0, Math.round((expStart - todayStart) / msPerDay));
+
+  const formattedExpiry = formatOptionExpiryDate(rawExpiry);
+
+  return {
+    expiryDate: expDate,
+    formattedExpiry,
+    dte,
+    isExpired,
+  };
 }
 
 // Words that should not be interpreted as tickers
@@ -192,9 +252,19 @@ export async function handlePositionsTopicMessage({
   logToFile(`[TelegramPositionsQuery] Executing intent: ${parsed.intent} ${parsed.ticker ? `($${parsed.ticker})` : ''}`);
 
   // Load all holdings across all brokers
-  const holdings = await prisma.holding.findMany({
+  const rawHoldings = await prisma.holding.findMany({
     include: { broker: true },
     orderBy: { marketValue: 'desc' },
+  });
+
+  // Filter out zero-quantity holdings and expired options positions across all workflows
+  const holdings = rawHoldings.filter((h) => {
+    if (Math.abs(h.quantity) < 0.0001) return false;
+    if (h.assetType === 'OPTION') {
+      const { isExpired } = getOptionExpiryAndDte(h);
+      if (isExpired) return false;
+    }
+    return true;
   });
 
   let replyText = '';
@@ -258,10 +328,12 @@ export async function handlePositionsTopicMessage({
             if (isOption) {
               const optSide = h.quantity < 0 ? 'Short' : 'Long';
               const optType = h.optionType ? (h.optionType.toUpperCase().includes('C') ? 'Call' : 'Put') : 'Option';
-              const strikeStr = h.strikePrice ? `$${h.strikePrice.toFixed(2)}` : '';
-              const expStr = h.expiryDate ? `Exp: ${h.expiryDate}` : '';
+              const strikeStr = h.strikePrice ? `$${h.strikePrice % 1 === 0 ? h.strikePrice.toFixed(0) : h.strikePrice.toFixed(2)}` : '';
+              const { formattedExpiry, dte } = getOptionExpiryAndDte(h);
+              const dteStr = dte !== null ? `${dte} DTE` : '';
+              const expStr = formattedExpiry !== 'N/A' ? `🗓️ Exp: ${formattedExpiry}${dteStr ? ` (${dteStr})` : ''}` : '';
 
-              return `• *${h.quantity} contract(s)* — *${optSide} ${optType}* ${strikeStr}\n  ${expStr ? `🗓️ ${expStr} | ` : ''}Mark: ${formatMoney(h.currentPrice, curr)}\n  Value: *${formatMoney(h.marketValue, curr)}* | P&L: *${pnlSign}${formatMoney(pnlVal, curr)}*${pnlPct}`;
+              return `• *${h.quantity} contract(s)* — *${optSide} ${optType}* ${strikeStr}\n  ${expStr ? `${expStr} | ` : ''}Mark: ${formatMoney(h.currentPrice, curr)}\n  Value: *${formatMoney(h.marketValue, curr)}* | P&L: *${pnlSign}${formatMoney(pnlVal, curr)}*${pnlPct}`;
             } else {
               return `• *${h.quantity.toLocaleString()} share(s)* (Equity)\n  Avg: ${formatMoney(h.averageCost, curr)} | Spot: ${formatMoney(h.currentPrice, curr)}\n  Value: *${formatMoney(h.marketValue, curr)}* | P&L: *${pnlSign}${formatMoney(pnlVal, curr)}*${pnlPct}`;
             }
@@ -285,12 +357,19 @@ export async function handlePositionsTopicMessage({
       const optionHoldings = holdings.filter((h) => h.assetType === 'OPTION');
 
       if (optionHoldings.length === 0) {
-        replyText = `⚡ *Options Positions*\n\n_You currently hold no open option contracts across any broker._\n\n💡 _Send \`equities\` to check your stock positions, or send a ticker like \`AAPL\`._`;
+        replyText = `⚡ *Active Options Positions*\n\n_You currently hold no open active option contracts across any broker._\n\n💡 _Send \`equities\` to check your stock positions, or send a ticker like \`AAPL\`._`;
       } else {
         let totalVal = 0;
         let totalPnL = 0;
 
-        const rows = optionHoldings.map((h) => {
+        // Sort by DTE ascending (nearest expiration contracts first for optimal risk monitoring)
+        const sortedOptions = [...optionHoldings].sort((a, b) => {
+          const dteA = getOptionExpiryAndDte(a).dte ?? 9999;
+          const dteB = getOptionExpiryAndDte(b).dte ?? 9999;
+          return dteA - dteB;
+        });
+
+        const rows = sortedOptions.map((h) => {
           totalVal += h.marketValue || 0;
           totalPnL += h.unrealizedPnL || 0;
           const curr = h.currency || 'USD';
@@ -300,17 +379,20 @@ export async function handlePositionsTopicMessage({
           const pnlSign = isPos ? '+' : '';
           const optSide = h.quantity < 0 ? 'Short' : 'Long';
           const optType = h.optionType ? (h.optionType.toUpperCase().includes('C') ? 'Call' : 'Put') : 'Option';
-          const strikeStr = h.strikePrice ? `$${h.strikePrice.toFixed(0)}` : '';
+          const strikeStr = h.strikePrice ? `$${h.strikePrice % 1 === 0 ? h.strikePrice.toFixed(0) : h.strikePrice.toFixed(2)}` : '';
           const underlying = getUnderlyingFromSymbol(h.symbol, h.underlyingSymbol);
           const brokerName = h.broker?.name || 'Tastytrade';
+          const { formattedExpiry, dte } = getOptionExpiryAndDte(h);
+          const dteStr = dte !== null ? `${dte} DTE` : '';
+          const expStr = formattedExpiry !== 'N/A' ? `🗓️ ${formattedExpiry}${dteStr ? ` (${dteStr})` : ''}` : '';
 
-          return `• *$${underlying}* — *${h.quantity} ${optSide} ${strikeStr} ${optType}*\n  🏛️ ${brokerName} | Mark: ${formatMoney(h.currentPrice, curr)}\n  Value: *${formatMoney(h.marketValue, curr)}* | P&L: *${pnlSign}${formatMoney(pnlVal, curr)}* ${pnlIcon}`;
+          return `• *$${underlying}* — *${h.quantity} ${optSide} ${strikeStr} ${optType}*\n  🏛️ ${brokerName}${expStr ? ` | ${expStr}` : ''}\n  Mark: ${formatMoney(h.currentPrice, curr)} | Value: *${formatMoney(h.marketValue, curr)}* | P&L: *${pnlSign}${formatMoney(pnlVal, curr)}* ${pnlIcon}`;
         }).join('\n\n');
 
         const pnlSign = totalPnL >= 0 ? '+' : '';
         const pnlIcon = totalPnL >= 0 ? '🟢' : '🔴';
 
-        replyText = `⚡ *All Option Positions* (${optionHoldings.length} contracts)\n\n${rows}\n\n───────────────────────\n📊 *Options Total:*\n• Total Value: *${formatMoney(totalVal, 'USD')}*\n• Total Unrealized P&L: *${pnlSign}${formatMoney(totalPnL, 'USD')}* ${pnlIcon}`;
+        replyText = `⚡ *Active Option Positions* (${sortedOptions.length} contracts)\n\n${rows}\n\n───────────────────────\n📊 *Options Total:*\n• Total Value: *${formatMoney(totalVal, 'USD')}*\n• Total Unrealized P&L: *${pnlSign}${formatMoney(totalPnL, 'USD')}* ${pnlIcon}`;
       }
       break;
     }
@@ -423,8 +505,12 @@ export async function handlePositionsTopicMessage({
           if (isOption) {
             const optSide = h.quantity < 0 ? 'Short' : 'Long';
             const optType = h.optionType || 'Option';
-            const strikeStr = h.strikePrice ? `$${h.strikePrice}` : '';
-            return `• *$${getUnderlyingFromSymbol(h.symbol, h.underlyingSymbol)}* — *${h.quantity} ${optSide} ${strikeStr} ${optType}*\n  Mark: ${formatMoney(h.currentPrice, curr)} | Val: *${formatMoney(h.marketValue, curr)}* | P&L: *${pnlSign}${formatMoney(pnlVal, curr)}* ${pnlIcon}`;
+            const strikeStr = h.strikePrice ? `$${h.strikePrice % 1 === 0 ? h.strikePrice.toFixed(0) : h.strikePrice.toFixed(2)}` : '';
+            const { formattedExpiry, dte } = getOptionExpiryAndDte(h);
+            const dteStr = dte !== null ? `${dte} DTE` : '';
+            const expStr = formattedExpiry !== 'N/A' ? `🗓️ ${formattedExpiry}${dteStr ? ` (${dteStr})` : ''}` : '';
+
+            return `• *$${getUnderlyingFromSymbol(h.symbol, h.underlyingSymbol)}* — *${h.quantity} ${optSide} ${strikeStr} ${optType}*\n  ${expStr ? `${expStr} | ` : ''}Mark: ${formatMoney(h.currentPrice, curr)} | Val: *${formatMoney(h.marketValue, curr)}* | P&L: *${pnlSign}${formatMoney(pnlVal, curr)}* ${pnlIcon}`;
           } else {
             return `• *$${h.symbol}* — *${h.quantity} shares*\n  Avg: ${formatMoney(h.averageCost, curr)} | Spot: ${formatMoney(h.currentPrice, curr)}\n  Val: *${formatMoney(h.marketValue, curr)}* | P&L: *${pnlSign}${formatMoney(pnlVal, curr)}* ${pnlIcon}`;
           }

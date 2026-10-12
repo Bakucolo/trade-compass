@@ -6,10 +6,14 @@ import {
   handlePositionsTopicMessage,
 } from '../../server/services/telegramPositionsQueryService';
 
-vi.mock('../../server/services/telegramReportService', () => ({
-  sendTelegramMessage: vi.fn().mockResolvedValue({ ok: true }),
-  generateAndSendDailyReport: vi.fn().mockResolvedValue({ ok: true }),
-}));
+vi.mock('../../server/services/telegramReportService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../server/services/telegramReportService')>();
+  return {
+    ...actual,
+    sendTelegramMessage: vi.fn().mockResolvedValue({ ok: true }),
+    generateAndSendDailyReport: vi.fn().mockResolvedValue({ ok: true }),
+  };
+});
 
 describe('Telegram Positions Query Service', () => {
   describe('extractTickerCandidate & parsePositionQuery', () => {
@@ -147,12 +151,12 @@ describe('Telegram Positions Query Service', () => {
       },
       {
         id: 'h-3',
-        symbol: 'AAPL 250117C230',
+        symbol: 'AAPL 270115C230',
         underlyingSymbol: 'AAPL',
         assetType: 'OPTION',
         optionType: 'Call',
         strikePrice: 230,
-        expiryDate: '2025-01-17',
+        expiryDate: '2027-01-15',
         quantity: 2,
         averageCost: 4.5,
         currentPrice: 6.2,
@@ -178,12 +182,12 @@ describe('Telegram Positions Query Service', () => {
       },
       {
         id: 'h-5',
-        symbol: 'NVDA250321P00120000',
+        symbol: 'NVDA270319P00120000',
         underlyingSymbol: 'NVDA',
         assetType: 'OPTION',
         optionType: 'Put',
         strikePrice: 120,
-        expiryDate: '2025-03-21',
+        expiryDate: '2027-03-19',
         quantity: -1,
         averageCost: 5.0,
         currentPrice: 3.2,
@@ -192,6 +196,23 @@ describe('Telegram Positions Query Service', () => {
         unrealizedPnLPercent: 36.0,
         currency: 'USD',
         broker: { id: 'b-2', name: 'Tastytrade' },
+      },
+      {
+        id: 'h-expired',
+        symbol: 'RDW 260220C24',
+        underlyingSymbol: 'RDW',
+        assetType: 'OPTION',
+        optionType: 'Call',
+        strikePrice: 24,
+        expiryDate: '2026-02-20',
+        quantity: -1,
+        averageCost: 2.0,
+        currentPrice: 0.05,
+        marketValue: -5.0,
+        unrealizedPnL: 195.0,
+        unrealizedPnLPercent: 97.5,
+        currency: 'USD',
+        broker: { id: 'b-3', name: 'Interactive Brokers' },
       },
     ];
 
@@ -212,7 +233,7 @@ describe('Telegram Positions Query Service', () => {
       };
     });
 
-    it('should aggregate multi-broker positions for a specific ticker (AAPL)', async () => {
+    it('should aggregate multi-broker positions for a specific ticker (AAPL) with DTE and expiry', async () => {
       const result = await handlePositionsTopicMessage({
         text: 'AAPL',
         chatId: 123456,
@@ -227,6 +248,8 @@ describe('Telegram Positions Query Service', () => {
       expect(result.replyText).toContain('50 share(s)');
       expect(result.replyText).toContain('25 share(s)');
       expect(result.replyText).toContain('2 contract(s)');
+      expect(result.replyText).toContain('DTE');
+      expect(result.replyText).toContain('Jan 15, 2027');
       expect(result.replyText).toContain('Aggregated Exposure');
       expect(result.replyText).toContain('Net Shares: *75 shares*');
       expect(result.replyText).toContain('Options: *2 contract(s)*');
@@ -245,7 +268,7 @@ describe('Telegram Positions Query Service', () => {
       expect(result.replyText).toContain('Tastytrade, Trading 212, Interactive Brokers');
     });
 
-    it('should return all option positions when asking for "options"', async () => {
+    it('should return only active option positions with DTE and filter out expired options', async () => {
       const result = await handlePositionsTopicMessage({
         text: 'options',
         chatId: 123456,
@@ -254,9 +277,12 @@ describe('Telegram Positions Query Service', () => {
 
       expect(result.handled).toBe(true);
       expect(result.intent).toBe('OPTIONS');
-      expect(result.replyText).toContain('All Option Positions');
+      expect(result.replyText).toContain('Active Option Positions');
       expect(result.replyText).toContain('$AAPL');
       expect(result.replyText).toContain('$NVDA');
+      expect(result.replyText).toContain('DTE');
+      // Expired RDW option must NOT be in the result!
+      expect(result.replyText).not.toContain('$RDW');
       expect(result.replyText).toContain('Options Total');
     });
 
