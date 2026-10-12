@@ -1165,11 +1165,49 @@ export interface SendTelegramMessageOptions {
 }
 
 /**
+ * Safely splits a long text into multiple chunks that fit within Telegram's 4096 character limit.
+ * Splits cleanly on double newlines (paragraphs/cards), single newlines, or spaces.
+ */
+export function splitTelegramMessage(text: string, maxLen = 3800): string[] {
+  if (!text || text.length <= maxLen) return [text];
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLen) {
+      chunks.push(remaining);
+      break;
+    }
+
+    // Look for natural split boundaries backwards from maxLen
+    let splitIdx = remaining.lastIndexOf('\n\n', maxLen);
+    if (splitIdx === -1 || splitIdx < maxLen * 0.35) {
+      splitIdx = remaining.lastIndexOf('\n', maxLen);
+    }
+    if (splitIdx === -1 || splitIdx < maxLen * 0.35) {
+      splitIdx = remaining.lastIndexOf(' ', maxLen);
+    }
+    if (splitIdx === -1 || splitIdx < maxLen * 0.35) {
+      splitIdx = maxLen;
+    }
+
+    const chunk = remaining.slice(0, splitIdx).trim();
+    if (chunk) chunks.push(chunk);
+    remaining = remaining.slice(splitIdx).trim();
+  }
+
+  return chunks;
+}
+
+/**
  * Dispatches a text message to Telegram Bot API with dynamic topic routing:
  * - When an alert is triggered (isAlert === true):
  *   Uses chat_id: -1003872409872 and includes message_thread_id: 2 in the JSON payload.
  * - For standard reports (isAlert === false):
  *   Uses original chat_id without any message_thread_id parameter.
+ * - Automatically splits messages exceeding Telegram's 4096-character limit into ordered chunks.
+ * - Gracefully falls back to plain text if Markdown entity parsing fails.
  */
 export async function sendTelegramMessage(
   options: SendTelegramMessageOptions
@@ -1187,40 +1225,69 @@ export async function sendTelegramMessage(
   const targetChatId = options.chatId ?? (isAlert ? (process.env.TELEGRAM_ALERTS_CHAT_ID || '-1003872409872') : originalChatId);
   const targetThreadId = options.messageThreadId ?? (isAlert ? Number(process.env.TELEGRAM_ALERTS_THREAD_ID || 2) : undefined);
 
-  const payload: Record<string, any> = {
-    chat_id: targetChatId,
-    text: options.text,
-    parse_mode: options.parseMode || 'Markdown',
-  };
-
-  // Only include message_thread_id when routing to a specific topic (e.g. Alerts topic 2)
-  if (targetThreadId !== undefined) {
-    payload.message_thread_id = targetThreadId;
-  }
-
-  if (options.disableNotification !== undefined) {
-    payload.disable_notification = options.disableNotification;
-  }
-
   const telegramEndpoint = `https://api.telegram.org/bot${botToken}/sendMessage`;
+  const chunks = splitTelegramMessage(options.text, 3800);
 
-  const res = await fetch(telegramEndpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  let lastMessageId: number | undefined;
+  let lastResponseData: any;
 
-  const responseJson = (await res.json()) as any;
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkText = chunks[i];
+    const payload: Record<string, any> = {
+      chat_id: targetChatId,
+      text: chunkText,
+      parse_mode: options.parseMode || 'Markdown',
+    };
 
-  if (!res.ok || !responseJson.ok) {
-    const errMsg = responseJson.description || `HTTP ${res.status} error from Telegram API`;
-    throw new Error(errMsg);
+    // Only include message_thread_id when routing to a specific topic
+    if (targetThreadId !== undefined) {
+      payload.message_thread_id = targetThreadId;
+    }
+
+    if (options.disableNotification !== undefined) {
+      payload.disable_notification = options.disableNotification;
+    }
+
+    let res = await fetch(telegramEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    let responseJson = (await res.json()) as any;
+
+    // Fallback: If Telegram failed due to markdown formatting/entity error, retry without parse_mode
+    if (!res.ok || !responseJson.ok) {
+      const errMsg = responseJson.description || '';
+      if (/can't parse entities|character.*is reserved|formatting/i.test(errMsg)) {
+        delete payload.parse_mode;
+        res = await fetch(telegramEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        responseJson = (await res.json()) as any;
+      }
+    }
+
+    if (!res.ok || !responseJson.ok) {
+      const errMsg = responseJson.description || `HTTP ${res.status} error from Telegram API`;
+      throw new Error(errMsg);
+    }
+
+    lastMessageId = responseJson.result?.message_id;
+    lastResponseData = responseJson.result;
+
+    if (i < chunks.length - 1) {
+      // Pause briefly between chunks to guarantee message ordering in Telegram
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
   }
 
   return {
     success: true,
-    messageId: responseJson.result?.message_id,
-    responseData: responseJson.result,
+    messageId: lastMessageId,
+    responseData: lastResponseData,
   };
 }
 

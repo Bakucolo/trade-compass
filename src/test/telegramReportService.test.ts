@@ -4,6 +4,8 @@ import {
   fetchComprehensiveReportData,
   generateExecutivePdfBuffer,
   sendPdfReportToTelegram,
+  sendTelegramMessage,
+  splitTelegramMessage,
   ExecutiveReportData,
 } from '../../server/services/telegramReportService';
 
@@ -223,5 +225,63 @@ describe('Telegram PDF Executive Report & Dispatcher Service', () => {
       if (savedToken) process.env.TELEGRAM_BOT_TOKEN = savedToken;
       if (savedChat) process.env.TELEGRAM_CHAT_ID = savedChat;
     }
+  });
+
+  describe('splitTelegramMessage & multi-chunk sendTelegramMessage', () => {
+    it('should return a single chunk for messages under maxLen', () => {
+      const text = 'Short message within limits';
+      const chunks = splitTelegramMessage(text, 100);
+      expect(chunks).toEqual([text]);
+    });
+
+    it('should split messages longer than maxLen at paragraph boundaries', () => {
+      const p1 = 'Paragraph 1: '.repeat(5);
+      const p2 = 'Paragraph 2: '.repeat(5);
+      const full = `${p1}\n\n${p2}`;
+      const chunks = splitTelegramMessage(full, 80);
+      expect(chunks.length).toBeGreaterThan(1);
+      expect(chunks.join('\n\n')).toContain(p1.trim());
+      expect(chunks.join('\n\n')).toContain(p2.trim());
+      for (const c of chunks) {
+        expect(c.length).toBeLessThanOrEqual(80);
+      }
+    });
+
+    it('should handle sequential chunks in sendTelegramMessage without exceeding 4096 limit', async () => {
+      const originalFetch = global.fetch;
+      const sentChunks: string[] = [];
+
+      global.fetch = vi.fn().mockImplementation(async (url: string, opts: any) => {
+        const body = JSON.parse(opts.body);
+        sentChunks.push(body.text);
+        return {
+          ok: true,
+          json: async () => ({ ok: true, result: { message_id: 1000 + sentChunks.length } }),
+        };
+      });
+
+      try {
+        process.env.TELEGRAM_BOT_TOKEN = 'mock-bot-token';
+        process.env.TELEGRAM_CHAT_ID = '123456';
+
+        // 6,000 char text
+        const longText = Array.from({ length: 60 }, (_, i) => `• Position #${i + 1}: Long 10 AAPL Call | Mark: $5.00 | Value: $5,000 | P&L: +$500 🟢`).join('\n\n');
+        expect(longText.length).toBeGreaterThan(4500);
+
+        const res = await sendTelegramMessage({
+          text: longText,
+          chatId: 123456,
+          messageThreadId: 306,
+        });
+
+        expect(res.success).toBe(true);
+        expect(sentChunks.length).toBeGreaterThanOrEqual(2);
+        for (const chunk of sentChunks) {
+          expect(chunk.length).toBeLessThanOrEqual(3800);
+        }
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
   });
 });
