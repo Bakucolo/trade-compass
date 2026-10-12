@@ -1,6 +1,7 @@
 import { sendTelegramMessage } from './telegramReportService';
 
 export type TelegramTopicType =
+  | 'BALANCES'
   | 'POSITIONS'
   | 'WATCHLIST'
   | 'NOTES'
@@ -20,7 +21,7 @@ export function isTopicHelpRequest(rawText: string): boolean {
 
   const clean = trimmed
     .toLowerCase()
-    .replace(/^(?:💼|📋|📝|🎯|💡|🔔)\s*/, '')
+    .replace(/^(?:💼|📋|📝|🎯|💡|🔔|🏦|💰|💵|💳)\s*/, '')
     .replace(/^[/#]+/, '')
     .replace(/[?!.]+$/, '')
     .trim();
@@ -221,6 +222,31 @@ Submit feature requests, UI improvements, and bug reports directly into the deve
 }
 
 /**
+ * Returns formatted instructions for BALANCES topic
+ */
+export function getBalancesTopicHelp(): string {
+  return `🏦 *Balances Topic — Instructions & Commands*
+
+Query cash, buying power, margins, and account balances across all connected brokers (*Tastytrade*, *Trading 212*, *Interactive Brokers*):
+
+📊 *1. General Portfolio Overview*
+• \`balances\` (or \`all\`, \`summary\`, \`portfolio\`)
+  _Displays Net Liquidation Value, Cash, Option/Equity Buying Power, Maintenance Margin, and Margin Cushion across all brokers and combined grand totals._
+
+🏛️ *2. Broker Breakdowns*
+• \`tastytrade\` (or \`tasty\`) — Option & Equity Buying Power, Cash, Maintenance Margin Requirement, and Margin Cushion for Tastytrade.
+• \`ibkr\` (or \`interactive brokers\`) — Available Funds, Buying Power, Maintenance Margin, and Net Liq for Interactive Brokers.
+• \`trading 212\` (or \`t212\`) — Invested Capital, Free Cash (Buying Power), and Portfolio Value in GBP & USD.
+
+💵 *3. Specific Metric Inquiries*
+• \`cash\` (or \`free cash\`, \`available cash\`) — Cash balance breakdown per broker and total liquidity.
+• \`margins\` (or \`maintenance margin\`, \`cushion\`, \`utilization\`) — Margin requirement and risk safety cushion per broker and portfolio health.
+• \`buying power\` (or \`bp\`, \`purchasing power\`) — Total derivative & equity purchasing capacity.
+
+💡 _Data reflects real-time broker sync and exchange rates._`;
+}
+
+/**
  * Returns general overview directory across all topics
  */
 export function getGeneralTopicDirectoryHelp(): string {
@@ -228,6 +254,7 @@ export function getGeneralTopicDirectoryHelp(): string {
 
 This Telegram group has dedicated topics tailored to your trading workflows:
 
+• 🏦 *Balances*: Query cash, buying power, margins, and cushion by broker (\`tastytrade\`, \`ibkr\`, \`t212\`) or portfolio-wide (\`balances\`, \`cash\`, \`margins\`).
 • 💼 *Positions*: Ask for any ticker (\`AAPL\`, \`$NVDA\`), asset class (\`options\`, \`equities\`), or broker (\`tastytrade\`, \`brokers\`) to see live holdings across all accounts.
 • 📋 *Watchlist*: View watchlists (\`all watchlists\`), filter with criteria (\`Semiconductors PE < 30\`), add stocks (\`Tech AAPL NVDA\`), or let the AI Agent create one (\`Quantum Computing\`).
 • 📝 *Notes*: Save persistent stock DD (\`AAPL Note here\`) that displays whenever you look up the stock in Trade Compass.
@@ -244,6 +271,8 @@ This Telegram group has dedicated topics tailored to your trading workflows:
  */
 export function getHelpMessageForTopic(topic: TelegramTopicType): string {
   switch (topic) {
+    case 'BALANCES':
+      return getBalancesTopicHelp();
     case 'POSITIONS':
       return getPositionsTopicHelp();
     case 'WATCHLIST':
