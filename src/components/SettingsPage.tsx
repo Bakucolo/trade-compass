@@ -1,16 +1,18 @@
 import { useState, useEffect } from 'react';
-import { Bell, CreditCard, Lock, Moon, Palette, User, Sparkles, Key, Check, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Bell, CreditCard, Lock, Moon, Palette, User, Sparkles, Key, Check, Eye, EyeOff, Loader2, Send } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Switch } from './ui/switch';
 import { Badge } from './ui/badge';
 import { useTheme, THEME_PRESETS } from '@/services/themeService';
 import { ThemeStylingModal } from './ThemeStylingModal';
+import { TelegramTopicsModal } from './TelegramTopicsModal';
 import { cn } from '@/lib/utils';
 
 export function SettingsPage() {
   const { currentTheme, glowIntensity, radiusStyle, densityStyle, setTheme, setGlowIntensity, setRadiusStyle, setDensityStyle } = useTheme();
   const [isThemeModalOpen, setIsThemeModalOpen] = useState(false);
+  const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
   const [geminiApiKey, setGeminiApiKey] = useState('');
   const [openrouterApiKey, setOpenrouterApiKey] = useState('');
   const [showGeminiKey, setShowGeminiKey] = useState(false);
@@ -247,6 +249,61 @@ export function SettingsPage() {
         </div>
       </div>
 
+      {/* Telegram Topics Operations Hub */}
+      <div className="glass-card rounded-xl p-6 border border-sky-500/20 bg-sky-950/10 space-y-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400">
+              <Send className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-semibold text-foreground">Telegram Topics Operations Hub</h2>
+                <Badge className="bg-sky-500/15 text-sky-300 border-sky-500/30 text-[10px]">
+                  8 Topics Active
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Check live metrics, route thread IDs, test pings, and control your Telegram bot forum topics
+              </p>
+            </div>
+          </div>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIsTelegramModalOpen(true)}
+            className="text-xs font-semibold gap-1.5 border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20"
+          >
+            <Send className="w-3.5 h-3.5" />
+            <span>Manage Topics & Threads</span>
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-xs">
+          <div className="p-2.5 rounded-lg bg-card/60 border border-border/40">
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Balances</div>
+            <div className="text-xs font-mono font-medium text-emerald-400 mt-0.5">Margins & Cash</div>
+          </div>
+          <div className="p-2.5 rounded-lg bg-card/60 border border-border/40">
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Positions</div>
+            <div className="text-xs font-mono font-medium text-cyan-400 mt-0.5">Equities & Options</div>
+          </div>
+          <div className="p-2.5 rounded-lg bg-card/60 border border-border/40">
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Execution</div>
+            <div className="text-xs font-mono font-medium text-amber-400 mt-0.5">Pending Orders</div>
+          </div>
+          <div className="p-2.5 rounded-lg bg-card/60 border border-border/40">
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">Alerts & Notes</div>
+            <div className="text-xs font-mono font-medium text-purple-400 mt-0.5">Live Surveillance</div>
+          </div>
+        </div>
+
+        <div className="text-[11px] text-muted-foreground bg-card/40 rounded-lg p-2.5 border border-border/30 flex items-center justify-between">
+          <span>💡 Quick Telegram Command: Send <code className="text-foreground font-mono bg-muted px-1 rounded">topics</code> or <code className="text-foreground font-mono bg-muted px-1 rounded">status</code> in any Telegram topic for an instant report.</span>
+        </div>
+      </div>
+
       {/* Appearance & Website Stylings */}
       <div className="glass-card rounded-xl p-6 space-y-5">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -387,6 +444,9 @@ export function SettingsPage() {
 
       {/* Theme Styling Modal Dialog */}
       <ThemeStylingModal isOpen={isThemeModalOpen} onClose={() => setIsThemeModalOpen(false)} />
+
+      {/* Telegram Topics Operations Hub Modal */}
+      <TelegramTopicsModal isOpen={isTelegramModalOpen} onClose={() => setIsTelegramModalOpen(false)} />
 
       {/* Security */}
       <div className="glass-card rounded-xl p-6">

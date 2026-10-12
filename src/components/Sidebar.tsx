@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, 
   LineChart, 
@@ -21,6 +21,7 @@ import {
   Radar,
   Smartphone,
   Calendar,
+  Send,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAlerts } from '@/services/alertService';
@@ -29,6 +30,7 @@ import { useThoughtLogs, useTelegramBufferStatus } from '@/services/thoughtLogSe
 import { useEarningsData } from '@/services/earningsService';
 import { AgentActivityDrawer } from './AgentActivityDrawer';
 import { ThemeSwitcherButton } from './ThemeSwitcherButton';
+import { TelegramTopicsModal } from './TelegramTopicsModal';
 
 interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
@@ -64,6 +66,13 @@ interface SidebarProps {
 export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [isActivityDrawerOpen, setIsActivityDrawerOpen] = useState(false);
+  const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
+
+  useEffect(() => {
+    const handleOpenTelegram = () => setIsTelegramModalOpen(true);
+    window.addEventListener('open-telegram-topics', handleOpenTelegram);
+    return () => window.removeEventListener('open-telegram-topics', handleOpenTelegram);
+  }, []);
 
   const { data: alerts = [] } = useAlerts();
   const triggeredCount = alerts.filter((a) => a.status === 'TRIGGERED').length;
@@ -236,6 +245,30 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
           </button>
         </div>
 
+        {/* Telegram Topics Operations Hub Launcher */}
+        <div className="px-2 pb-1.5">
+          <button
+            onClick={() => setIsTelegramModalOpen(true)}
+            className={cn(
+              "w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all border",
+              "bg-gradient-to-r from-sky-950/40 to-blue-950/40 border-sky-500/30 text-sky-300 hover:border-sky-500/60 hover:text-white shadow-[0_0_10px_rgba(14,165,233,0.12)]"
+            )}
+            title="Open Telegram Topics Operations Hub"
+          >
+            <div className="relative shrink-0">
+              <Send className="w-4 h-4 text-sky-400" />
+            </div>
+            {!collapsed && (
+              <div className="flex items-center justify-between flex-1 min-w-0">
+                <span className="truncate">Telegram Topics</span>
+                <span className="text-[9px] bg-sky-500/20 text-sky-200 border border-sky-500/30 px-1.5 py-0.2 rounded-md font-mono">
+                  8 TOPICS
+                </span>
+              </div>
+            )}
+          </button>
+        </div>
+
         {/* Stylings & Theme Switcher Button */}
         <div className="px-2 pb-4">
           <ThemeSwitcherButton collapsed={collapsed} />
@@ -247,6 +280,14 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
         <AgentActivityDrawer
           isOpen={isActivityDrawerOpen}
           onClose={() => setIsActivityDrawerOpen(false)}
+        />
+      )}
+
+      {/* Telegram Topics Operations Hub Dialog */}
+      {isTelegramModalOpen && (
+        <TelegramTopicsModal
+          isOpen={isTelegramModalOpen}
+          onClose={() => setIsTelegramModalOpen(false)}
         />
       )}
     </>

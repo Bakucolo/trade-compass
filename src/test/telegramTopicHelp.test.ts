@@ -91,9 +91,9 @@ describe('Telegram Topic Help Service', () => {
     it('NOTES topic help provides complete instructions', () => {
       const msg = getNotesTopicHelp();
       expect(msg).toContain('Notes Topic');
-      expect(msg).toContain('How to Save a Note');
+      expect(msg).toContain('Save or Append a Note');
       expect(msg).toContain('Pinned in App');
-      expect(msg).toContain('Instant Lookup');
+      expect(msg).toContain('Check / Look Up Saved Notes');
       expect(msg).toContain('Sentiment Detection');
       expect(msg).toContain('History Preserved');
     });

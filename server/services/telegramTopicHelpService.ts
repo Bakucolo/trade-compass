@@ -116,23 +116,35 @@ Send just a sector or theme name, and the AI Research Agent will curate 5–8 hi
 /**
  * Returns formatted instructions for NOTES topic
  */
+/**
+ * Returns formatted instructions for NOTES topic
+ */
 export function getNotesTopicHelp(): string {
   return `📝 *Notes Topic — Instructions & Commands*
 
-Save persistent notes, investment theses, and DD on any stock:
+Check, manage, and save persistent notes and investment theses for any stock:
 
-✍️ *How to Save a Note*
-Start your message with the ticker symbol, followed by your note:
+🔍 *1. Check / Look Up Saved Notes*
+• \`AAPL\` or \`read AAPL\` — View full research note, sentiment, and timestamp for $AAPL.
+• \`notes for NVDA\` or \`show PLTR\`
+
+📋 *2. List All Saved Notes*
+• \`all notes\` (or \`list\`, \`recent\`, \`notes\`)
+  _Displays a directory of all stocks that currently have pinned research notes in Trade Compass._
+
+✍️ *3. Save or Append a Note*
+Start your message with the ticker symbol, followed by your thesis:
 • \`AAPL Great earnings beat, services revenue up 14%. Holding core position.\`
 • \`$NVDA Blackwell ramp accelerated, data center demand unbroken. Target $160.\`
 • \`PLTR Government pipeline solid, watching support at $55.\`
-• \`TSLA FSD v13 rollout catalysts, risk reward favorable here.\`
+
+🗑️ *4. Delete a Note*
+• \`delete note AAPL\` or \`clear note NVDA\` — Removes the saved note from Trade Compass.
 
 ✨ *What Happens When You Save:*
-1. 📌 *Pinned in App*: The note is saved to the stock's profile in Trade Compass.
-2. 🔍 *Instant Lookup*: Whenever you search or view the ticker in Trade Compass (Research, Quotes, Dashboard), your notes appear automatically.
-3. 🚥 *Sentiment Detection*: Automatically tags sentiment (🟢 Bullish, 🔴 Bearish, 🟡 Caution, ⚪ Neutral).
-4. ⏳ *History Preserved*: Subsequent notes append with timestamps, creating a running trade journal for each stock.`;
+1. 📌 *Pinned in App*: Note appears automatically in Trade Compass (Research, Quotes, Dashboard).
+2. 🚥 *Sentiment Detection*: Automatically tags sentiment (🟢 Bullish, 🔴 Bearish, 🟡 Caution, ⚪ Neutral).
+3. ⏳ *History Preserved*: Subsequent notes append with timestamps, creating a running trade journal.`;
 }
 
 /**
@@ -141,14 +153,22 @@ Start your message with the ticker symbol, followed by your note:
 export function getExecutionTopicHelp(): string {
   return `🎯 *Execution Topic — Tactical Queue Instructions*
 
-Queue tactical trade ideas, orders, and option structures directly into Trade Compass:
+Check, manage, and queue tactical trade ideas, orders, and option structures directly into Trade Compass:
 
-📈 *1. Equity Orders*
+📋 *1. Check Tactical Execution Queue*
+• \`queue\` (or \`orders\`, \`pending\`, \`list\`, \`status\`)
+  _Displays every active order in the tactical execution queue with entry price, stop loss, take profit, and status._
+• \`status AAPL\` or \`order NVDA\` — Check orders specifically for that ticker.
+
+🗑️ *2. Cancel / Remove an Order*
+• \`cancel AAPL\` or \`remove NVDA\` — Cancels and removes pending orders from the tactical queue.
+
+📈 *3. Queue Equity Orders*
 • \`BUY 100 AAPL @ 220 SL 210 TP 245\`
 • \`SELL 50 NVDA @ 140\`
 • \`BUY 200 PLTR MKT SL 52\`
 
-⚡ *2. Options & Multi-Leg Strategies*
+⚡ *4. Queue Options & Multi-Leg Strategies*
 • \`BTO 2 AAPL 230C 01/17 @ 5.50\`
 • \`STO 1 NVDA 120P 03/21 @ 3.20\`
 • \`Covered Call AAPL 230C Jan 17\`
@@ -171,9 +191,14 @@ _All orders are parsed and queued into the Tactical Execution Queue in Trade Com
 export function getIdeasTopicHelp(): string {
   return `💡 *Ideas Topic — Market Theses & DD Instructions*
 
-Log market thoughts, earnings catalysts, macro theses, and watch opportunities:
+Check and log market thoughts, earnings catalysts, macro theses, and watch opportunities:
 
-🧠 *What to Share:*
+📋 *1. Check Recent Ideas*
+• \`ideas\` (or \`recent ideas\`, \`list\`, \`recent\`)
+  _Displays the latest market theses, catalysts, and tracked stocks logged in Trade Compass._
+• \`ideas AAPL\` or \`ideas NVDA\` — Filter logged theses for a specific ticker.
+
+🧠 *2. Log New Market Ideas*
 • *Earnings Catalysts*: \`Bullish into AMD earnings given datacenter GPU upside.\`
 • *Macro Theses*: \`Watching crude oil $USO curve backwardation, energy supply shock potential.\`
 • *Trade Ideas*: \`Long $CCJ uranium pure-play on nuclear utility contract renewals.\`
@@ -191,9 +216,17 @@ Log market thoughts, earnings catalysts, macro theses, and watch opportunities:
 export function getAlertsTopicHelp(): string {
   return `🔔 *Alerts Topic — Price Alerts Instructions*
 
-Arm instant real-time price alerts monitored 24/7 by the system:
+Check, arm, and manage instant real-time price alerts monitored 24/7 by the system:
 
-🎯 *How to Set Alerts:*
+📋 *1. Check Active Alerts*
+• \`alerts\` (or \`list\`, \`active\`, \`my alerts\`, \`show alerts\`)
+  _Lists every armed price alert with trigger condition (▲ above / ▼ below), spot price, and distance._
+
+🗑️ *2. Cancel / Disarm an Alert*
+• \`delete alert NVDA\` or \`cancel alert AAPL\` (or \`clear TSLA\`)
+  _Disarms and removes the alert monitor for that stock._
+
+🎯 *3. Arm New Price Alerts*
 • \`Alert NVDA above $145\`
 • \`Alert AAPL below $215\`
 • \`Notify me when PLTR hits $60\`
@@ -212,9 +245,13 @@ Arm instant real-time price alerts monitored 24/7 by the system:
 export function getAppTopicHelp(): string {
   return `💡 *App Topic — Feature Requests & Feedback Instructions*
 
-Submit feature requests, UI improvements, and bug reports directly into the development roadmap:
+Check the roadmap and submit feature requests, UI improvements, and bug reports directly into development:
 
-🛠️ *Categories & Syntax:*
+📋 *1. Check Open Roadmap & Backlog*
+• \`roadmap\` (or \`ideas\`, \`backlog\`, \`list\`, \`status\`)
+  _Displays all open feature requests, UI improvements, and bugs currently queued in the Trade Compass backlog._
+
+🛠️ *2. Submit New Ideas or Bugs*
 • \`[UI] Add a dark mode toggle button in header\`
 • \`[Portfolio] Show beta-weighted delta across all brokers\`
 • \`[Bug] Yahoo finance quote timeout on weekend\`
@@ -260,15 +297,18 @@ export function getGeneralTopicDirectoryHelp(): string {
 This Telegram group has dedicated topics tailored to your trading workflows:
 
 • 🏦 *Balances*: Query cash, buying power, margins, and cushion by broker (\`tastytrade\`, \`ibkr\`, \`t212\`) or portfolio-wide (\`balances\`, \`cash\`, \`margins\`).
-• 💼 *Positions*: Ask for any ticker (\`AAPL\`, \`$NVDA\`), asset class (\`options\`, \`equities\`), or broker (\`tastytrade\`, \`brokers\`) to see live holdings across all accounts.
+• 💼 *Positions*: Ask for any ticker (\`AAPL\`, \`$NVDA\`), asset class (\`options\`, \`short options\`, \`long options\`, \`equities\`), or broker (\`tastytrade\`, \`brokers\`) to see live holdings.
 • 📋 *Watchlist*: View watchlists (\`all watchlists\`), filter with criteria (\`Semiconductors PE < 30\`), add stocks (\`Tech AAPL NVDA\`), or let the AI Agent create one (\`Quantum Computing\`).
-• 📝 *Notes*: Save persistent stock DD (\`AAPL Note here\`) that displays whenever you look up the stock in Trade Compass.
-• 🎯 *Execution*: Queue tactical orders (\`BUY 100 AAPL @ 220 SL 210\`) into your execution queue.
-• 💡 *Ideas*: Log market theses and catalysts with automatic ticker tracking and telemetry.
-• 🔔 *Alerts*: Arm price alerts (\`Alert NVDA above $145\`).
-• 💡 *App*: Submit feature ideas and bug reports (\`[UI] Add dark mode\`).
+• 📝 *Notes*: Check notes (\`AAPL\`, \`all notes\`), save persistent DD (\`AAPL Note here\`), or clear notes (\`delete note AAPL\`).
+• 🎯 *Execution*: Check queue (\`queue\`, \`orders\`), queue tactical trades (\`BUY 100 AAPL @ 220 SL 210\`), or cancel orders (\`cancel AAPL\`).
+• 🔔 *Alerts*: Check active alerts (\`alerts\`), arm new price monitors (\`Alert NVDA above $145\`), or cancel alerts (\`delete alert NVDA\`).
+• 💡 *Ideas*: Check recent market theses (\`ideas\`, \`ideas NVDA\`) and log catalysts with automatic ticker telemetry.
+• 💡 *App*: Check backlog (\`roadmap\`, \`ideas\`) and submit feature ideas and bug reports (\`[UI] Add dark mode\`).
 
-💡 _Type \`help\` inside any topic to get the full detailed instruction manual for that topic!_`;
+⚙️ *Topics Operations:*
+• Send \`topics\` in any topic for the full Live Topic Dashboard & Status Control Center!
+• Send \`set topic [name] [threadId]\` to map or update topic thread routing!
+• Type \`help\` inside any topic to get the full detailed instruction manual for that topic.`;
 }
 
 /**

@@ -157,8 +157,12 @@ import {
   setTelegramNotesThreadId,
   setTelegramPositionsThreadId,
   setTelegramBalancesThreadId,
+  setTelegramAlertsThreadId,
+  setTelegramAppThreadId,
+  setTelegramIdeasThreadId,
   isTelegramBriefingRequest,
 } from './services/telegramBufferConsumerService';
+import { getTopicsSummaryMetrics } from './services/telegramTopicsManagementService';
 import { getAiRatingForStock } from './services/aiRatingService';
 import { calculatePortfolioDividendIncome } from './services/portfolioDividendIncomeService';
 import { createAppIdeaRouter } from './routes/appIdeaRoutes';
@@ -8239,6 +8243,84 @@ app.post('/api/telegram/config-balances-thread', (req, res) => {
     }
     const success = setTelegramBalancesThreadId(threadId);
     res.json({ success, threadId: String(threadId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/telegram/config-alerts-thread - Update Telegram alerts topic thread ID
+app.post('/api/telegram/config-alerts-thread', (req, res) => {
+  try {
+    const { threadId } = req.body;
+    if (threadId === undefined || threadId === null) {
+      return res.status(400).json({ error: 'threadId is required' });
+    }
+    const success = setTelegramAlertsThreadId(threadId);
+    res.json({ success, threadId: String(threadId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/telegram/config-app-thread - Update Telegram app topic thread ID
+app.post('/api/telegram/config-app-thread', (req, res) => {
+  try {
+    const { threadId } = req.body;
+    if (threadId === undefined || threadId === null) {
+      return res.status(400).json({ error: 'threadId is required' });
+    }
+    const success = setTelegramAppThreadId(threadId);
+    res.json({ success, threadId: String(threadId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/telegram/config-ideas-thread - Update Telegram ideas topic thread ID
+app.post('/api/telegram/config-ideas-thread', (req, res) => {
+  try {
+    const { threadId } = req.body;
+    if (threadId === undefined || threadId === null) {
+      return res.status(400).json({ error: 'threadId is required' });
+    }
+    const success = setTelegramIdeasThreadId(threadId);
+    res.json({ success, threadId: String(threadId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/telegram/topics-summary - Get live metrics and configuration status across all topics
+app.get('/api/telegram/topics-summary', async (req, res) => {
+  try {
+    const status = getTelegramBufferStatus();
+    const metrics = await getTopicsSummaryMetrics(prisma);
+    res.json({ status, metrics });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/telegram/test-topic - Dispatch a verification ping to a specific topic
+app.post('/api/telegram/test-topic', async (req, res) => {
+  try {
+    const { topicName, threadId, customMessage } = req.body || {};
+    const targetChatId = process.env.TELEGRAM_ALERTS_CHAT_ID || process.env.TELEGRAM_CHAT_ID;
+    if (!process.env.TELEGRAM_BOT_TOKEN || !targetChatId) {
+      return res.status(400).json({ error: 'TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not configured' });
+    }
+
+    const tName = (topicName || 'General').toUpperCase();
+    const textToSend = customMessage || `🔔 *Trade Compass Verification Ping*\n\n✅ Successfully delivered test message to *${tName}* topic.\n\n_Real-time topic routing is operational._`;
+
+    const sendRes = await sendTelegramMessage({
+      text: textToSend,
+      chatId: targetChatId,
+      messageThreadId: threadId ? Number(threadId) : undefined,
+      parseMode: 'Markdown',
+    });
+
+    res.json({ ok: true, result: sendRes });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
