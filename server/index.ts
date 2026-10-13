@@ -157,6 +157,7 @@ import {
   setTelegramNotesThreadId,
   setTelegramPositionsThreadId,
   setTelegramBalancesThreadId,
+  setTelegramMacroThreadId,
   setTelegramAlertsThreadId,
   setTelegramAppThreadId,
   setTelegramIdeasThreadId,
@@ -8419,6 +8420,20 @@ app.post('/api/telegram/config-balances-thread', (req, res) => {
       return res.status(400).json({ error: 'threadId is required' });
     }
     const success = setTelegramBalancesThreadId(threadId);
+    res.json({ success, threadId: String(threadId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/telegram/config-macro-thread - Update Telegram macro topic thread ID
+app.post('/api/telegram/config-macro-thread', (req, res) => {
+  try {
+    const { threadId } = req.body;
+    if (threadId === undefined || threadId === null) {
+      return res.status(400).json({ error: 'threadId is required' });
+    }
+    const success = setTelegramMacroThreadId(threadId);
     res.json({ success, threadId: String(threadId) });
   } catch (error: any) {
     res.status(500).json({ error: error.message });

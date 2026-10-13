@@ -28,6 +28,7 @@ import {
   HelpCircle,
   Layers,
   ChevronRight,
+  Globe,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from '@/components/ui/use-toast';
@@ -146,6 +147,18 @@ const TOPICS_CONFIG: TopicConfigItem[] = [
     borderColor: 'border-indigo-500/30',
     commands: ['roadmap', 'ideas', '[UI] Add dark mode', '[Bug] Fix timeout'],
     metricsKey: 'app',
+  },
+  {
+    id: 'MACRO',
+    name: 'Macro Intelligence',
+    description: 'Query 7 pillars, sovereign curves, volatility, scenarios, allocations & PDF dossiers',
+    icon: Globe,
+    threadKey: 'macroThreadId',
+    configEndpoint: '/api/telegram/config-macro-thread',
+    color: 'text-sky-400 bg-sky-500/10',
+    borderColor: 'border-sky-500/30',
+    commands: ['macro', 'regime', 'yields', 'volatility', 'pillars', 'scenarios', 'allocations', 'pdf'],
+    metricsKey: 'macro',
   },
 ];
 
@@ -287,6 +300,8 @@ export function TelegramTopicsModal({ isOpen, onClose }: TelegramTopicsModalProp
         return `${metrics.ideas?.ideasCount || 0} Logged Theses`;
       case 'APP':
         return `${metrics.app?.appIdeasCount || 0} Open Items`;
+      case 'MACRO':
+        return 'Institutional Dossier & 7 Pillars Active';
       default:
         return 'Active';
     }
@@ -305,7 +320,7 @@ export function TelegramTopicsModal({ isOpen, onClose }: TelegramTopicsModalProp
                 <DialogTitle className="text-xl font-bold flex items-center gap-2">
                   Telegram Topics Operations Hub
                   <Badge variant="outline" className="border-sky-500/40 text-sky-300 bg-sky-500/10 text-xs">
-                    8 Topics Integrated
+                    9 Topics Integrated
                   </Badge>
                 </DialogTitle>
                 <DialogDescription className="text-xs text-muted-foreground">

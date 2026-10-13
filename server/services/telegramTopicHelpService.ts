@@ -9,6 +9,7 @@ export type TelegramTopicType =
   | 'IDEAS'
   | 'ALERTS'
   | 'APP'
+  | 'MACRO'
   | 'GENERAL';
 
 /**
@@ -304,6 +305,35 @@ Query cash, buying power, margins, and account balances across all connected bro
 }
 
 /**
+ * Returns formatted instructions for MACRO topic
+ */
+export function getMacroTopicHelp(): string {
+  return `🌐 *Macro Topic — Instructions & Commands*
+
+Query the complete institutional macro dossier or specific items from the Trade Compass app:
+
+🔍 *1. Specific Macro Items & Sections*
+• \`regime\` or \`score\` — Macro stability score (0-100), growth, inflation & policy stances.
+• \`yields\` or \`rates\` — 10Y yield, 2Y yield, 2s10s curve spread, fed funds rate & inversion status.
+• \`volatility\` or \`vix\` — Spot VIX, VVIX, term structure, skew & volatility risk premium (VRP).
+• \`pillars\` or \`7 pillars\` — The 7 Deep-Dive Pillars breakdown (yields, labor, inflation, liquidity, corporate, volatility, commodities).
+• \`labor pillar\` / \`inflation pillar\` — Single pillar detailed focus.
+• \`scenarios\` — 3 Probabilistic Scenarios (Base, Bull Reflation, Bear Shock) with %, triggers, winners, losers & actions.
+• \`allocations\` — Cross-asset tactical allocations (Equities, Fixed Income, Commodities, Currencies/Cash, Derivatives & Hedging).
+• \`catalysts\` or \`radar\` — Upcoming high-impact events (FOMC, CPI, NFP) & critical pivot levels.
+• \`gold\` or \`commodities\` — Gold regime, crude oil, DXY & commodity forward structures.
+• \`sectors\` or \`trends\` — 11 sector momentums, leading vs lagging asset rotation.
+
+📑 *2. Whole Report*
+• \`report\`, \`macro\`, \`dossier\`, \`all\`, or \`overview\` — Complete executive briefing across all indicators.
+
+📄 *3. Nicely Styled PDF Document*
+• Include the word \`pdf\` in any message (e.g. \`pdf\`, \`macro pdf\`, \`scenarios pdf\`, \`allocations pdf\`, \`regime pdf\`) to receive a styled 2-page institutional PDF document directly here in Telegram!
+
+💡 _Data synthesizes live FRED data, sovereign yield curves, options skew, and autonomous AI analysis._`;
+}
+
+/**
  * Returns general overview directory across all topics
  */
 export function getGeneralTopicDirectoryHelp(): string {
@@ -319,6 +349,7 @@ This Telegram group has dedicated topics tailored to your trading workflows:
 • 🔔 *Alerts*: Check active alerts (\`alerts\`), arm new price monitors (\`Alert NVDA above $145\`), or cancel alerts (\`delete alert NVDA\`).
 • 💡 *Ideas*: Check recent market theses (\`ideas\`, \`ideas NVDA\`) and log catalysts with automatic ticker telemetry.
 • 💡 *App*: Check backlog (\`roadmap\`, \`ideas\`) and submit feature ideas and bug reports (\`[UI] Add dark mode\`).
+• 🌐 *Macro*: Query the full institutional dossier (\`macro\`, \`report\`), specific items (\`regime\`, \`yields\`, \`volatility\`, \`pillars\`, \`scenarios\`, \`allocations\`, \`catalysts\`, \`gold\`), or write \`pdf\` for a styled PDF document!
 
 ⚙️ *Topics Operations:*
 • Send \`topics\` in any topic for the full Live Topic Dashboard & Status Control Center!
@@ -347,6 +378,8 @@ export function getHelpMessageForTopic(topic: TelegramTopicType): string {
       return getAlertsTopicHelp();
     case 'APP':
       return getAppTopicHelp();
+    case 'MACRO':
+      return getMacroTopicHelp();
     case 'GENERAL':
     default:
       return getGeneralTopicDirectoryHelp();

@@ -9,6 +9,7 @@ import {
   setTelegramNotesThreadId,
   setTelegramPositionsThreadId,
   setTelegramBalancesThreadId,
+  setTelegramMacroThreadId,
 } from './telegramBufferConsumerService';
 
 const logToFile = (msg: string) => console.log(msg);
@@ -75,6 +76,8 @@ export function setGenericTopicThreadId(topicName: string, threadId: string | nu
   switch (tName) {
     case 'BALANCES':
       return setTelegramBalancesThreadId(threadIdStr);
+    case 'MACRO':
+      return setTelegramMacroThreadId(threadIdStr);
     case 'POSITIONS':
       return setTelegramPositionsThreadId(threadIdStr);
     case 'WATCHLIST':
@@ -217,7 +220,7 @@ export async function buildTopicsOverviewReport(prisma: PrismaClient): Promise<s
 
   return `🧭 *Trade Compass — Telegram Topics Control Center*
 
-Live status, telemetry & commands across all 8 integrated topics:
+Live status, telemetry & commands across all 9 integrated topics:
 
 🏦 *1. Balances*
 • Status: ${formatThread(status.balancesThreadId)}
@@ -269,6 +272,11 @@ Live status, telemetry & commands across all 8 integrated topics:
 • Backlog: *${metrics.app.appIdeasCount} open feature ideas & bug reports*
 • Commands: \`roadmap\`, \`ideas\`, or submit \`[UI] ...\`, \`[Bug] ...\`
 
+🌐 *9. Macro Intelligence*
+• Status: ${formatThread(status.macroThreadId)}
+• Intelligence: *7 Pillars, Sovereign Yield Curves, Volatility Complex, Scenarios & Allocations*
+• Commands: \`macro\`, \`regime\`, \`yields\`, \`volatility\`, \`pillars\`, \`scenarios\`, \`allocations\`, \`catalysts\`, \`gold\`, \`pdf\`
+
 ───────────────────────
 ⚙️ *Management Shortcuts:*
 • Update Topic Thread: \`set topic [name] [threadId]\` (e.g. \`set topic balances 307\`)
@@ -301,7 +309,7 @@ export async function handleTopicsManagementMessage({
 
     const replyText = success
       ? `✅ *Topic Thread Updated!*\n\n• Topic: *${topicTarget.toUpperCase()}*\n• Assigned Thread ID: \`${threadNum}\`\n• Status: Persisted to configuration.\n\n_Send \`topics\` to verify the full topic directory._`
-      : `⚠️ *Could not update topic thread.*\n\nSupported topic names: \`balances\`, \`positions\`, \`watchlist\`, \`notes\`, \`execution\`, \`alerts\`, \`ideas\`, \`app\`.\nExample: \`set topic balances 307\``;
+      : `⚠️ *Could not update topic thread.*\n\nSupported topic names: \`balances\`, \`macro\`, \`positions\`, \`watchlist\`, \`notes\`, \`execution\`, \`alerts\`, \`ideas\`, \`app\`.\nExample: \`set topic macro 315\``;
 
     if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
       await sendTelegramMessage({
@@ -333,6 +341,7 @@ export async function handleTopicsManagementMessage({
     else if (topicTarget === 'EXECUTION' || topicTarget === 'QUEUE') targetThread = status.executionThreadId ? Number(status.executionThreadId) : undefined;
     else if (topicTarget === 'ALERTS' || topicTarget === 'ALERT') targetThread = status.alertsThreadId ? Number(status.alertsThreadId) : undefined;
     else if (topicTarget === 'APP') targetThread = status.appThreadId ? Number(status.appThreadId) : undefined;
+    else if (topicTarget === 'MACRO') targetThread = status.macroThreadId ? Number(status.macroThreadId) : undefined;
     else if (topicTarget === 'IDEAS') targetThread = process.env.TELEGRAM_IDEAS_THREAD_ID ? Number(process.env.TELEGRAM_IDEAS_THREAD_ID) : undefined;
 
     const pingText = `🔔 *Telegram Topic Connectivity Test*\n\n✅ Verification ping successfully delivered to *${topicTarget}* topic (Thread: \`${targetThread || 'Default'}\`).\n\n_Trade Compass Assistant is live and listening!_`;
