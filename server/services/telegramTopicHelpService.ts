@@ -277,15 +277,30 @@ Query cash, buying power, margins, and account balances across all connected bro
 
 🏛️ *2. Broker Breakdowns*
 • \`tastytrade\` (or \`tasty\`) — Option & Equity Buying Power, Cash, Maintenance Margin Requirement, and Margin Cushion for Tastytrade.
-• \`ibkr\` (or \`interactive brokers\`) — Available Funds, Buying Power, Maintenance Margin, and Net Liq for Interactive Brokers.
+• \`ibkr\` (or \`interactive brokers\`) — Complete dual-account overview of both ISA and GIA accounts with partitioned metrics.
+• \`isa\` (or \`ibkr isa\`) — Stocks & Shares ISA (\`U14522424\`) cash, net liq, and cash buying power.
+• \`gia\` (or \`ibkr gia\`) — Margin GIA (\`U15491236\`) cash, margin buying power, and maintenance requirements.
 • \`trading 212\` (or \`t212\`) — Invested Capital, Free Cash (Buying Power), and Portfolio Value in GBP & USD.
 
 💵 *3. Specific Metric Inquiries*
-• \`cash\` (or \`free cash\`, \`available cash\`) — Cash balance breakdown per broker and total liquidity.
+• \`cash\` (or \`free cash\`, \`available cash\`) — Cash balance breakdown per broker and account (including ISA vs GIA).
 • \`margins\` (or \`maintenance margin\`, \`cushion\`, \`utilization\`) — Margin requirement and risk safety cushion per broker and portfolio health.
 • \`buying power\` (or \`bp\`, \`purchasing power\`) — Total derivative & equity purchasing capacity.
 
-💡 _Data reflects real-time broker sync and exchange rates._`;
+💳 *4. Fees & Commissions Inquiries*
+• \`fees\` (or \`fee\`, \`commissions\`) — Multi-timeframe comparison (Today, 7D, 30D, YTD, All-Time) across all broker accounts.
+• \`fees 7d\` (or \`fees today\`, \`fees 30d\`, \`fees ytd\`) — Fees and commissions for a specific timeframe.
+• \`fees ibkr\` (or \`fees isa\`, \`fees gia\`, \`fees tasty\`) — Fees and commissions for a specific broker or account across all periods.
+
+📈 *5. Dividends & Capital Gains Reports*
+• \`dividends\` (or \`capital gains\`, \`gains\`, \`pnl\`, \`dividends and gains\`) — Comprehensive report of cash dividends received, realized capital gains, open unrealized P&L, and net return across all brokers and timeframes.
+• \`dividends 30d\` (or \`gains ytd\`, \`pnl 7d\`, \`dividends all\`) — Focus on a specific timeframe.
+• \`dividends isa\` (or \`gains gia\`, \`tastytrade pnl\`, \`t212 gains\`) — Performance breakdown for a specific broker or account.
+
+📄 *6. Nicely Styled PDF Briefing Document*
+• Include the word \`pdf\` in any inquiry (e.g. \`pdf\`, \`dividend pdf\`, \`gains pdf\`, \`pnl pdf\`, \`balances pdf\`, \`30d pdf\`) to receive an executive institutional PDF document sent directly to this topic!
+
+💡 _Data reflects real-time broker sync, transaction ledgers, and live exchange rates._`;
 }
 
 /**
@@ -296,7 +311,7 @@ export function getGeneralTopicDirectoryHelp(): string {
 
 This Telegram group has dedicated topics tailored to your trading workflows:
 
-• 🏦 *Balances*: Query cash, buying power, margins, and cushion by broker (\`tastytrade\`, \`ibkr\`, \`t212\`) or portfolio-wide (\`balances\`, \`cash\`, \`margins\`).
+• 🏦 *Balances*: Query cash, buying power, margins, fees, and cushion by broker (\`tastytrade\`, \`ibkr\`, \`isa\`, \`gia\`, \`t212\`) or portfolio-wide (\`balances\`, \`cash\`, \`fees\`, \`margins\`).
 • 💼 *Positions*: Ask for any ticker (\`AAPL\`, \`$NVDA\`), asset class (\`options\`, \`short options\`, \`long options\`, \`equities\`), or broker (\`tastytrade\`, \`brokers\`) to see live holdings.
 • 📋 *Watchlist*: View watchlists (\`all watchlists\`), filter with criteria (\`Semiconductors PE < 30\`), add stocks (\`Tech AAPL NVDA\`), or let the AI Agent create one (\`Quantum Computing\`).
 • 📝 *Notes*: Check notes (\`AAPL\`, \`all notes\`), save persistent DD (\`AAPL Note here\`), or clear notes (\`delete note AAPL\`).

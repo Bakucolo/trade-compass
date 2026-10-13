@@ -269,7 +269,253 @@ const IB_PORTS = [7497, 7496, 4001, 4002];
 
 let ib: IBApi;
 let isConnected = false;
-// positions array removed in favor of DB
+
+// Real-Time & Fallback FX Rates to USD
+export const fxRatesToUSD: Record<string, number> = {
+  USD: 1.0,
+  CAD: 0.738, // 1 CAD ≈ $0.738 USD
+  EUR: 1.085, // 1 EUR ≈ $1.085 USD
+  GBP: 1.302, // 1 GBP ≈ $1.302 USD
+  AUD: 0.655, // 1 AUD ≈ $0.655 USD
+};
+
+export interface AccountCurrencyData {
+  currency: string;
+  cash: number;
+  netLiq: number;
+  unrealizedPnL: number;
+  realizedPnL: number;
+  stockMarketValue: number;
+  optionMarketValue: number;
+  exchangeRate: number;
+}
+
+export interface IBKRAccountData {
+  accountName: string;
+  accountType: string;
+  currency: string;
+  netLiq: number;
+  cash: number;
+  buyingPower: number;
+  excessLiquidity: number;
+  maintMargin: number;
+  initMargin: number;
+  availableFunds: number;
+  equityWithLoanValue: number;
+  grossPositionValue: number;
+  regTEquity: number;
+  regTMargin: number;
+  sma: number;
+  cushion: number;
+  leverage: number;
+  unrealizedPnL: number;
+  realizedPnL: number;
+  stockMarketValue: number;
+  optionMarketValue: number;
+  futureOptionMarketValue: number;
+  futuresPnL: number;
+  dayTradesRemaining: number;
+  dayTradesRemainingT1: number;
+  dayTradesRemainingT2: number;
+  dayTradesRemainingT3: number;
+  dayTradesRemainingT4: number;
+  accruedCash: number;
+  accruedDividend: number;
+  rawMetrics: Record<string, string>;
+  currencyBreakdowns?: Record<string, AccountCurrencyData>;
+}
+
+export const ibkrAccountValues = new Map<string, IBKRAccountData>();
+
+export const applyIbkrAccountMetric = (accountName: string, key: string, val: string, currency: string) => {
+  if (!accountName) return;
+  let acct = ibkrAccountValues.get(accountName);
+  if (!acct) {
+    acct = {
+      accountName: accountName,
+      accountType: '',
+      currency: currency || 'GBP',
+      netLiq: 0,
+      cash: 0,
+      buyingPower: 0,
+      excessLiquidity: 0,
+      maintMargin: 0,
+      initMargin: 0,
+      availableFunds: 0,
+      equityWithLoanValue: 0,
+      grossPositionValue: 0,
+      regTEquity: 0,
+      regTMargin: 0,
+      sma: 0,
+      cushion: 0,
+      leverage: 0,
+      unrealizedPnL: 0,
+      realizedPnL: 0,
+      stockMarketValue: 0,
+      optionMarketValue: 0,
+      futureOptionMarketValue: 0,
+      futuresPnL: 0,
+      dayTradesRemaining: -1,
+      dayTradesRemainingT1: -1,
+      dayTradesRemainingT2: -1,
+      dayTradesRemainingT3: -1,
+      dayTradesRemainingT4: -1,
+      accruedCash: 0,
+      accruedDividend: 0,
+      rawMetrics: {},
+      currencyBreakdowns: {}
+    };
+    ibkrAccountValues.set(accountName, acct);
+  }
+  acct.rawMetrics[key] = val;
+  const numVal = parseFloat(val) || 0;
+  const curr = (currency || acct.currency || 'GBP').toUpperCase();
+
+  if (currency && !acct.currency) acct.currency = currency;
+
+  if (!acct.currencyBreakdowns) acct.currencyBreakdowns = {};
+  if (!acct.currencyBreakdowns[curr]) {
+    acct.currencyBreakdowns[curr] = {
+      currency: curr,
+      cash: 0,
+      netLiq: 0,
+      unrealizedPnL: 0,
+      realizedPnL: 0,
+      stockMarketValue: 0,
+      optionMarketValue: 0,
+      exchangeRate: curr === 'USD' ? 1 : (fxRatesToUSD[curr] || 1),
+    };
+  }
+  const currData = acct.currencyBreakdowns[curr];
+
+  if (key === 'ExchangeRate') {
+    currData.exchangeRate = numVal;
+    fxRatesToUSD[curr] = numVal;
+  } else if (key === 'TotalCashValue' || key === 'TotalCashBalance' || key === 'CashBalance' || key === 'SettledCash') {
+    currData.cash = numVal;
+    if (currency === acct.currency || currency === 'BASE' || !currency) acct.cash = numVal;
+  } else if (key === 'NetLiquidation' || key === 'NetLiquidationByCurrency') {
+    currData.netLiq = numVal;
+    if (currency === acct.currency || currency === 'BASE' || !currency) acct.netLiq = numVal;
+  } else if (key === 'BuyingPower') {
+    acct.buyingPower = numVal;
+  } else if (key === 'ExcessLiquidity' || key === 'FullExcessLiquidity') {
+    acct.excessLiquidity = numVal;
+  } else if (key === 'MaintMarginReq' || key === 'FullMaintMarginReq') {
+    acct.maintMargin = numVal;
+  } else if (key === 'InitMarginReq' || key === 'FullInitMarginReq') {
+    acct.initMargin = numVal;
+  } else if (key === 'AvailableFunds' || key === 'FullAvailableFunds') {
+    acct.availableFunds = numVal;
+  } else if (key === 'EquityWithLoanValue') {
+    acct.equityWithLoanValue = numVal;
+  } else if (key === 'GrossPositionValue') {
+    acct.grossPositionValue = numVal;
+  } else if (key === 'RegTEquity') {
+    acct.regTEquity = numVal;
+  } else if (key === 'RegTMargin') {
+    acct.regTMargin = numVal;
+  } else if (key === 'SMA') {
+    acct.sma = numVal;
+  } else if (key === 'Cushion') {
+    acct.cushion = numVal;
+  } else if (key === 'Leverage-S' || key === 'Leverage') {
+    acct.leverage = numVal;
+  } else if (key === 'UnrealizedPnL') {
+    currData.unrealizedPnL = numVal;
+    if (currency === acct.currency || currency === 'BASE' || !currency) acct.unrealizedPnL = numVal;
+  } else if (key === 'RealizedPnL') {
+    currData.realizedPnL = numVal;
+    if (currency === acct.currency || currency === 'BASE' || !currency) acct.realizedPnL = numVal;
+  } else if (key === 'StockMarketValue') {
+    currData.stockMarketValue = numVal;
+    if (currency === acct.currency || currency === 'BASE' || !currency) acct.stockMarketValue = numVal;
+  } else if (key === 'OptionMarketValue') {
+    currData.optionMarketValue = numVal;
+    if (currency === acct.currency || currency === 'BASE' || !currency) acct.optionMarketValue = numVal;
+  } else if (key === 'FutureOptionMarketValue') {
+    acct.futureOptionMarketValue = numVal;
+  } else if (key === 'FuturesPNL') {
+    acct.futuresPnL = numVal;
+  } else if (key === 'DayTradesRemaining') {
+    acct.dayTradesRemaining = parseInt(val, 10);
+  } else if (key === 'DayTradesRemainingT+1') {
+    acct.dayTradesRemainingT1 = parseInt(val, 10);
+  } else if (key === 'DayTradesRemainingT+2') {
+    acct.dayTradesRemainingT2 = parseInt(val, 10);
+  } else if (key === 'DayTradesRemainingT+3') {
+    acct.dayTradesRemainingT3 = parseInt(val, 10);
+  } else if (key === 'DayTradesRemainingT+4') {
+    acct.dayTradesRemainingT4 = parseInt(val, 10);
+  } else if (key === 'AccruedCash') {
+    acct.accruedCash = numVal;
+  } else if (key === 'AccruedDividend') {
+    acct.accruedDividend = numVal;
+  } else if (key === 'AccountType') {
+    acct.accountType = val;
+  }
+};
+
+export const syncIbkrLiveRegistry = () => {
+  const giaLiveAcct = ibkrAccountValues.get(IBKR_GIA_ACCOUNT) || Array.from(ibkrAccountValues.values()).find(a => a.accountName === IBKR_GIA_ACCOUNT || a.accountName?.toLowerCase().includes('gia')) || Array.from(ibkrAccountValues.values())[0];
+  if (!giaLiveAcct) return;
+
+  const gbpFx = fxRatesToUSD.GBP || 1.302;
+  const isGbp = (giaLiveAcct.currency || 'GBP').toUpperCase() === 'GBP';
+  const fx = isGbp ? gbpFx : 1;
+
+  const netLiqUSD = giaLiveAcct.netLiq * fx;
+  const cashUSD = giaLiveAcct.cash * fx;
+  const bpUSD = giaLiveAcct.buyingPower * fx;
+  const availUSD = (giaLiveAcct.availableFunds || giaLiveAcct.cash) * fx;
+  const maintUSD = giaLiveAcct.maintMargin * fx;
+  const initUSD = (giaLiveAcct.initMargin || giaLiveAcct.buyingPower) * fx;
+
+  registerLiveIbkrAccountData(IBKR_GIA_ACCOUNT, {
+    accountId: IBKR_GIA_ACCOUNT,
+    netLiquidation: netLiqUSD,
+    netLiquidationValue: netLiqUSD,
+    cashBalance: cashUSD,
+    buyingPower: bpUSD,
+    availableFunds: availUSD,
+    maintenanceMargin: maintUSD,
+    initialMargin: initUSD,
+    currency: 'USD',
+    unrealizedPnL: giaLiveAcct.unrealizedPnL * fx,
+    realizedPnL: giaLiveAcct.realizedPnL * fx,
+    cashGBP: giaLiveAcct.cash,
+    buyingPowerGBP: giaLiveAcct.buyingPower,
+    netLiquidatingValueGBP: giaLiveAcct.netLiq,
+    maintMarginGBP: giaLiveAcct.maintMargin
+  });
+};
+
+let lastAccountSummaryReqTime = 0;
+export const requestIbkrAccountData = (ibInstance: IBApi) => {
+  if (!ibInstance) return;
+  try {
+    ibInstance.reqPositions();
+    ibInstance.reqAllOpenOrders();
+    ibInstance.reqManagedAccts();
+
+    const now = Date.now();
+    if (now - lastAccountSummaryReqTime > 10000) {
+      lastAccountSummaryReqTime = now;
+      try {
+        ibInstance.cancelAccountSummary(9001);
+      } catch (e) {
+        // Ignored if not currently active
+      }
+      ibInstance.reqAccountSummary(
+        9001,
+        'All',
+        'AccountType,NetLiquidation,TotalCashValue,SettledCash,AccruedCash,BuyingPower,EquityWithLoanValue,InitMarginReq,MaintMarginReq,AvailableFunds,ExcessLiquidity,Cushion,Leverage'
+      );
+    }
+  } catch (err: any) {
+    console.error('Error requesting IBKR account data:', err?.message || err);
+  }
+};
 
 const connectToIBKR = async () => {
   // Ensure Broker record exists
@@ -289,23 +535,23 @@ const connectToIBKR = async () => {
     });
 
     try {
+      setupEventListeners(tempIB);
       tempIB.connect();
+
       // Give it a moment to emit 'connected' or 'error'
       await new Promise(resolve => setTimeout(resolve, 2000));
 
       if (tempIB.isConnected) {
         console.log(`Successfully connected on port ${port}`);
         ib = tempIB;
-        setupEventListeners(ib);
-        isConnected = true; // Manually set since we might have missed the event
+        isConnected = true;
 
         await prisma.broker.update({
           where: { name: 'Interactive Brokers' },
           data: { status: 'connected', lastSyncTime: new Date() }
         });
 
-        ib.reqPositions();
-        ib.reqAllOpenOrders();
+        requestIbkrAccountData(ib);
         return;
       } else {
         tempIB.disconnect();
@@ -325,20 +571,25 @@ const connectToIBKR = async () => {
   }
 };
 
+// Periodic IBKR telemetry refresh every 60 seconds
+setInterval(() => {
+  if (isConnected && ib) {
+    requestIbkrAccountData(ib);
+  }
+}, 60000);
+
 const pnlReqConIdMap = new Map<number, string>();
 
 const setupEventListeners = (ibInstance: IBApi) => {
   ibInstance.on(EventName.connected, async () => {
     console.log('Connected to IBKR');
     isConnected = true;
+    ib = ibInstance;
     await prisma.broker.update({
       where: { name: 'Interactive Brokers' },
       data: { status: 'connected', lastSyncTime: new Date() }
     });
-    ibInstance.reqPositions();
-    ibInstance.reqAllOpenOrders();
-    ibInstance.reqManagedAccts();
-    ibInstance.reqExecutions(Math.floor(Math.random() * 900000) + 100000, {});
+    requestIbkrAccountData(ibInstance);
   });
 
   ibInstance.on(EventName.managedAccounts, (accountsList: string) => {
@@ -348,8 +599,16 @@ const setupEventListeners = (ibInstance: IBApi) => {
       console.log(`Subscribing to account updates for IBKR account: ${acct}`);
       ibInstance.reqAccountUpdates(true, acct);
     }
-    // Also request executions across accounts
+    // Also request executions and account summary across accounts
     ibInstance.reqExecutions(Math.floor(Math.random() * 900000) + 100000, {});
+    try {
+      ibInstance.cancelAccountSummary(9001);
+    } catch (e) {}
+    ibInstance.reqAccountSummary(
+      9001,
+      'All',
+      'AccountType,NetLiquidation,TotalCashValue,SettledCash,AccruedCash,BuyingPower,EquityWithLoanValue,InitMarginReq,MaintMarginReq,AvailableFunds,ExcessLiquidity,Cushion,Leverage'
+    );
   });
 
   ibInstance.on(EventName.disconnected, async () => {
@@ -574,109 +833,19 @@ ibInstance.on(EventName.updatePortfolio, (contract: Contract, position: number, 
       }
     });
   });
-  // 4. Real-time Account Balance & Buying Power feed
+  // 4a. Real-time Account Summary feed (Official multi-account feed for ISA & GIA)
+  ibInstance.on(EventName.accountSummary, (reqId: number, account: string, tag: string, value: string, currency: string) => {
+    applyIbkrAccountMetric(account, tag, value, currency);
+  });
+
+  ibInstance.on(EventName.accountSummaryEnd, (reqId: number) => {
+    console.log(`[IBKR Summary] Completed account summary ingestion (reqId: ${reqId}). Accounts: ${Array.from(ibkrAccountValues.keys()).join(', ')}`);
+    syncIbkrLiveRegistry();
+  });
+
+  // 4b. Real-time Account Balance & Buying Power feed
   ibInstance.on(EventName.updateAccountValue, (key: string, val: string, currency: string, accountName: string) => {
-    let acct = ibkrAccountValues.get(accountName);
-    if (!acct) {
-      acct = {
-        accountName: accountName || 'Interactive Brokers',
-        accountType: '',
-        currency: currency || 'USD',
-        netLiq: 0,
-        cash: 0,
-        buyingPower: 0,
-        excessLiquidity: 0,
-        maintMargin: 0,
-        initMargin: 0,
-        availableFunds: 0,
-        equityWithLoanValue: 0,
-        grossPositionValue: 0,
-        regTEquity: 0,
-        regTMargin: 0,
-        sma: 0,
-        cushion: 0,
-        leverage: 0,
-        unrealizedPnL: 0,
-        realizedPnL: 0,
-        stockMarketValue: 0,
-        optionMarketValue: 0,
-        futureOptionMarketValue: 0,
-        futuresPnL: 0,
-        dayTradesRemaining: -1,
-        dayTradesRemainingT1: -1,
-        dayTradesRemainingT2: -1,
-        dayTradesRemainingT3: -1,
-        dayTradesRemainingT4: -1,
-        accruedCash: 0,
-        accruedDividend: 0,
-        rawMetrics: {}
-      };
-      ibkrAccountValues.set(accountName, acct);
-    }
-    acct.rawMetrics[key] = val;
-    const numVal = parseFloat(val) || 0;
-    const curr = (currency || 'USD').toUpperCase();
-
-    if (currency && !acct.currency) acct.currency = currency;
-
-    if (!acct.currencyBreakdowns) acct.currencyBreakdowns = {};
-    if (!acct.currencyBreakdowns[curr]) {
-      acct.currencyBreakdowns[curr] = {
-        currency: curr,
-        cash: 0,
-        netLiq: 0,
-        unrealizedPnL: 0,
-        realizedPnL: 0,
-        stockMarketValue: 0,
-        optionMarketValue: 0,
-        exchangeRate: curr === 'USD' ? 1 : 1,
-      };
-    }
-    const currData = acct.currencyBreakdowns[curr];
-
-    if (key === 'ExchangeRate') {
-      currData.exchangeRate = numVal;
-      fxRatesToUSD[curr] = numVal;
-    } else if (key === 'TotalCashValue' || key === 'TotalCashBalance' || key === 'CashBalance') {
-      currData.cash = numVal;
-      if (currency === acct.currency || currency === 'BASE') acct.cash = numVal;
-    } else if (key === 'NetLiquidation' || key === 'NetLiquidationByCurrency') {
-      currData.netLiq = numVal;
-      if (currency === acct.currency || currency === 'BASE') acct.netLiq = numVal;
-    } else if (key === 'BuyingPower') acct.buyingPower = numVal;
-    else if (key === 'ExcessLiquidity' || key === 'FullExcessLiquidity') acct.excessLiquidity = numVal;
-    else if (key === 'MaintMarginReq' || key === 'FullMaintMarginReq') acct.maintMargin = numVal;
-    else if (key === 'InitMarginReq' || key === 'FullInitMarginReq') acct.initMargin = numVal;
-    else if (key === 'AvailableFunds' || key === 'FullAvailableFunds') acct.availableFunds = numVal;
-    else if (key === 'EquityWithLoanValue') acct.equityWithLoanValue = numVal;
-    else if (key === 'GrossPositionValue') acct.grossPositionValue = numVal;
-    else if (key === 'RegTEquity') acct.regTEquity = numVal;
-    else if (key === 'RegTMargin') acct.regTMargin = numVal;
-    else if (key === 'SMA') acct.sma = numVal;
-    else if (key === 'Cushion') acct.cushion = numVal;
-    else if (key === 'Leverage-S' || key === 'Leverage') acct.leverage = numVal;
-    else if (key === 'UnrealizedPnL') {
-      currData.unrealizedPnL = numVal;
-      if (currency === acct.currency || currency === 'BASE') acct.unrealizedPnL = numVal;
-    } else if (key === 'RealizedPnL') {
-      currData.realizedPnL = numVal;
-      if (currency === acct.currency || currency === 'BASE') acct.realizedPnL = numVal;
-    } else if (key === 'StockMarketValue') {
-      currData.stockMarketValue = numVal;
-      if (currency === acct.currency || currency === 'BASE') acct.stockMarketValue = numVal;
-    } else if (key === 'OptionMarketValue') {
-      currData.optionMarketValue = numVal;
-      if (currency === acct.currency || currency === 'BASE') acct.optionMarketValue = numVal;
-    } else if (key === 'FutureOptionMarketValue') acct.futureOptionMarketValue = numVal;
-    else if (key === 'FuturesPNL') acct.futuresPnL = numVal;
-    else if (key === 'DayTradesRemaining') acct.dayTradesRemaining = parseInt(val, 10);
-    else if (key === 'DayTradesRemainingT+1') acct.dayTradesRemainingT1 = parseInt(val, 10);
-    else if (key === 'DayTradesRemainingT+2') acct.dayTradesRemainingT2 = parseInt(val, 10);
-    else if (key === 'DayTradesRemainingT+3') acct.dayTradesRemainingT3 = parseInt(val, 10);
-    else if (key === 'DayTradesRemainingT+4') acct.dayTradesRemainingT4 = parseInt(val, 10);
-    else if (key === 'AccruedCash') acct.accruedCash = numVal;
-    else if (key === 'AccruedDividend') acct.accruedDividend = numVal;
-    else if (key === 'AccountType') acct.accountType = val;
+    applyIbkrAccountMetric(accountName, key, val, currency);
   });
 
   // 5. Execution Details feed (live trade fills from TWS / Gateway)
@@ -709,63 +878,6 @@ ibInstance.on(EventName.updatePortfolio, (contract: Contract, position: number, 
       console.error('Error updating IBKR commissionReport:', err?.message || err);
     }
   });
-};
-
-export interface AccountCurrencyData {
-  currency: string;
-  cash: number;
-  netLiq: number;
-  unrealizedPnL: number;
-  realizedPnL: number;
-  stockMarketValue: number;
-  optionMarketValue: number;
-  exchangeRate: number;
-}
-
-export interface IBKRAccountData {
-  accountName: string;
-  accountType: string;
-  currency: string;
-  netLiq: number;
-  cash: number;
-  buyingPower: number;
-  excessLiquidity: number;
-  maintMargin: number;
-  initMargin: number;
-  availableFunds: number;
-  equityWithLoanValue: number;
-  grossPositionValue: number;
-  regTEquity: number;
-  regTMargin: number;
-  sma: number;
-  cushion: number;
-  leverage: number;
-  unrealizedPnL: number;
-  realizedPnL: number;
-  stockMarketValue: number;
-  optionMarketValue: number;
-  futureOptionMarketValue: number;
-  futuresPnL: number;
-  dayTradesRemaining: number;
-  dayTradesRemainingT1: number;
-  dayTradesRemainingT2: number;
-  dayTradesRemainingT3: number;
-  dayTradesRemainingT4: number;
-  accruedCash: number;
-  accruedDividend: number;
-  rawMetrics: Record<string, string>;
-  currencyBreakdowns?: Record<string, AccountCurrencyData>;
-}
-
-const ibkrAccountValues = new Map<string, IBKRAccountData>();
-
-// Real-Time & Fallback FX Rates to USD
-export const fxRatesToUSD: Record<string, number> = {
-  USD: 1.0,
-  CAD: 0.738, // 1 CAD ≈ $0.738 USD
-  EUR: 1.085, // 1 EUR ≈ $1.085 USD
-  GBP: 1.302, // 1 GBP ≈ $1.302 USD
-  AUD: 0.655, // 1 AUD ≈ $0.655 USD
 };
 
 export const updateLiveFxRates = async () => {
@@ -923,6 +1035,9 @@ const fetchWithTimeout = async <T>(promise: Promise<T>, ms: number, fallback: T)
 // Comprehensive Multi-Account Broker Balances & Multi-Currency Endpoint
 app.get('/api/portfolio/balances', async (req, res) => {
   try {
+    if (req.query.force === 'true' && isConnected && ib) {
+      requestIbkrAccountData(ib);
+    }
     if (req.query.force !== 'true' && cachedPortfolioBalancesResponse && (Date.now() - lastBalancesCacheTime < BALANCES_CACHE_TTL_MS)) {
       return res.json(cachedPortfolioBalancesResponse);
     }
@@ -945,13 +1060,20 @@ app.get('/api/portfolio/balances', async (req, res) => {
     const isaLiveAcct = ibkrAccountValues.get(IBKR_ISA_ACCOUNT) || Array.from(ibkrAccountValues.values()).find(a => a.accountName === IBKR_ISA_ACCOUNT || a.accountName?.toLowerCase().includes('isa'));
     const giaLiveAcct = ibkrAccountValues.get(IBKR_GIA_ACCOUNT) || Array.from(ibkrAccountValues.values()).find(a => a.accountName === IBKR_GIA_ACCOUNT || a.accountName?.toLowerCase().includes('gia')) || Array.from(ibkrAccountValues.values())[0];
 
+    const gbpFxRate = getFxRateToUSD('GBP') || 1.302;
+
     // --- ACCOUNT 1: IBKR ISA (U14522424) ---
     const acctISACurrencies = buildCurrencyBreakdown(ibkrIsaHoldings);
     const isaPosValUSD = Object.values(acctISACurrencies).reduce((s, c: any) => s + c.positionsMarketValueUSD, 0);
     const isaUnPnLUSD = Object.values(acctISACurrencies).reduce((s, c: any) => s + c.unrealizedPnLUSD, 0);
     const isaDayPnLUSD = ibkrIsaHoldings.reduce((s, h) => s + (h.dayPnL || 0) * getFxRateToUSD(h.currency), 0);
-    const isaNetLiqUSD = isaLiveAcct?.netLiq && isaLiveAcct.netLiq > 0 ? isaLiveAcct.netLiq : isaPosValUSD;
-    const isaBP = isaLiveAcct?.buyingPower && isaLiveAcct.buyingPower > 0 ? isaLiveAcct.buyingPower : Math.max(0, isaNetLiqUSD * 0.5);
+
+    const isaNetLiqGBP = isaLiveAcct?.netLiq && isaLiveAcct.netLiq > 0 ? isaLiveAcct.netLiq : (isaPosValUSD / gbpFxRate);
+    const isaNetLiqUSD = isaNetLiqGBP * gbpFxRate;
+    const isaCashGBP = isaLiveAcct?.cash && isaLiveAcct.cash > 0 ? isaLiveAcct.cash : 0;
+    const isaCashUSD = isaCashGBP * gbpFxRate;
+    const isaBPGBP = isaLiveAcct?.buyingPower && isaLiveAcct.buyingPower > 0 ? isaLiveAcct.buyingPower : isaCashGBP;
+    const isaBPUSD = isaBPGBP * gbpFxRate;
 
     const acctISA: any = {
       name: 'Interactive Brokers (ISA)',
@@ -963,11 +1085,15 @@ app.get('/api/portfolio/balances', async (req, res) => {
       currency: 'GBP',
       baseCurrency: 'GBP',
       netLiquidatingValue: isaNetLiqUSD,
-      cash: isaLiveAcct?.cash || 0,
-      buyingPower: isaBP,
+      netLiquidatingValueGBP: isaNetLiqGBP,
+      cash: isaCashUSD,
+      cashGBP: isaCashGBP,
+      buyingPower: isaBPUSD,
+      buyingPowerGBP: isaBPGBP,
       derivativeBuyingPower: 0,
-      equityBuyingPower: isaBP,
-      availableFunds: isaBP,
+      equityBuyingPower: isaBPUSD,
+      availableFunds: isaBPUSD,
+      availableFundsGBP: isaBPGBP,
       excessLiquidity: isaNetLiqUSD,
       maintMargin: 0,
       initMargin: 0,
@@ -981,7 +1107,7 @@ app.get('/api/portfolio/balances', async (req, res) => {
       leverage: 1.0,
       unrealizedPnL: isaUnPnLUSD,
       dayPnL: isaDayPnLUSD,
-      realizedPnL: isaLiveAcct?.realizedPnL || 0,
+      realizedPnL: (isaLiveAcct?.realizedPnL || 0) * gbpFxRate,
       optionsCount: 0,
       optionsValue: 0,
       equitiesCount: ibkrIsaHoldings.filter(h => h.assetType !== 'OPTION').length,
@@ -994,8 +1120,8 @@ app.get('/api/portfolio/balances', async (req, res) => {
         dayTradesRemainingT3: 3,
         dayTradesRemainingT4: 3,
       },
-      accruedCash: isaLiveAcct?.accruedCash || 0,
-      accruedDividend: isaLiveAcct?.accruedDividend || 0,
+      accruedCash: (isaLiveAcct?.accruedCash || 0) * gbpFxRate,
+      accruedDividend: (isaLiveAcct?.accruedDividend || 0) * gbpFxRate,
       rawMetrics: isaLiveAcct?.rawMetrics || {}
     };
 
@@ -1004,8 +1130,27 @@ app.get('/api/portfolio/balances', async (req, res) => {
     const giaPosValUSD = Object.values(acctGIACurrencies).reduce((s, c: any) => s + c.positionsMarketValueUSD, 0);
     const giaUnPnLUSD = Object.values(acctGIACurrencies).reduce((s, c: any) => s + c.unrealizedPnLUSD, 0);
     const giaDayPnLUSD = ibkrGiaHoldings.reduce((s, h) => s + (h.dayPnL || 0) * getFxRateToUSD(h.currency), 0);
-    const giaNetLiqUSD = giaLiveAcct?.netLiq && giaLiveAcct.netLiq > 0 ? giaLiveAcct.netLiq : giaPosValUSD;
-    const giaBP = giaLiveAcct?.buyingPower && giaLiveAcct.buyingPower > 0 ? giaLiveAcct.buyingPower : Math.max(0, giaNetLiqUSD * 0.55);
+
+    const giaNetLiqGBP = giaLiveAcct?.netLiq && giaLiveAcct.netLiq > 0 ? giaLiveAcct.netLiq : (giaPosValUSD / gbpFxRate);
+    const giaNetLiqUSD = giaNetLiqGBP * gbpFxRate;
+    const giaCashGBP = giaLiveAcct?.cash && giaLiveAcct.cash > 0 ? giaLiveAcct.cash : 0;
+    const giaCashUSD = giaCashGBP * gbpFxRate;
+    const giaBPGBP = giaLiveAcct?.buyingPower && giaLiveAcct.buyingPower > 0 ? giaLiveAcct.buyingPower : Math.max(0, giaNetLiqGBP * 0.55);
+    const giaBPUSD = giaBPGBP * gbpFxRate;
+    const giaAvailableFundsGBP = giaLiveAcct?.availableFunds && giaLiveAcct.availableFunds > 0 ? giaLiveAcct.availableFunds : giaCashGBP;
+    const giaAvailableFundsUSD = giaAvailableFundsGBP * gbpFxRate;
+    const giaMaintGBP = giaLiveAcct?.maintMargin && giaLiveAcct.maintMargin > 0 ? giaLiveAcct.maintMargin : 0;
+    const giaMaintUSD = giaMaintGBP * gbpFxRate;
+    const giaInitMarginGBP = giaLiveAcct?.initMargin && giaLiveAcct.initMargin > 0 ? giaLiveAcct.initMargin : giaBPGBP;
+    const giaInitMarginUSD = giaInitMarginGBP * gbpFxRate;
+    const giaExcessLiquidityGBP = giaLiveAcct?.excessLiquidity && giaLiveAcct.excessLiquidity > 0 ? giaLiveAcct.excessLiquidity : Math.max(0, giaNetLiqGBP - giaMaintGBP);
+    const giaExcessLiquidityUSD = giaExcessLiquidityGBP * gbpFxRate;
+    const giaCushion = (giaLiveAcct?.cushion && giaLiveAcct.cushion > 0)
+      ? (giaLiveAcct.cushion <= 1 ? giaLiveAcct.cushion * 100 : giaLiveAcct.cushion)
+      : (giaNetLiqGBP > 0 && giaMaintGBP > 0 ? Math.max(0, 100 - (giaMaintGBP / giaNetLiqGBP) * 100) : 55.4);
+    const giaMarginUtilization = (giaNetLiqGBP > 0 && giaMaintGBP > 0)
+      ? (giaMaintGBP / giaNetLiqGBP) * 100
+      : Math.max(0, 100 - giaCushion);
 
     const acctGIA: any = {
       name: 'Interactive Brokers (GIA)',
@@ -1014,28 +1159,34 @@ app.get('/api/portfolio/balances', async (req, res) => {
       accountNumber: IBKR_GIA_ACCOUNT,
       accountType: 'General Investment Account (Margin)',
       nickname: 'IBKR GIA (Margin & Global)',
-      currency: 'USD',
-      baseCurrency: 'USD',
+      currency: 'GBP',
+      baseCurrency: 'GBP',
       netLiquidatingValue: giaNetLiqUSD,
-      cash: giaLiveAcct?.cash || 0,
-      buyingPower: giaBP,
-      derivativeBuyingPower: giaBP,
-      equityBuyingPower: giaBP * 2,
-      availableFunds: giaBP,
-      excessLiquidity: giaLiveAcct?.excessLiquidity || Math.max(0, giaNetLiqUSD * 0.35),
-      maintMargin: giaLiveAcct?.maintMargin || Math.max(0, giaNetLiqUSD * 0.28),
-      initMargin: giaLiveAcct?.initMargin || giaBP,
-      equityWithLoanValue: giaLiveAcct?.equityWithLoanValue || giaNetLiqUSD,
+      netLiquidatingValueGBP: giaNetLiqGBP,
+      cash: giaCashUSD,
+      cashGBP: giaCashGBP,
+      buyingPower: giaBPUSD,
+      buyingPowerGBP: giaBPGBP,
+      derivativeBuyingPower: giaBPUSD,
+      equityBuyingPower: giaBPUSD * 2,
+      availableFunds: giaAvailableFundsUSD,
+      availableFundsGBP: giaAvailableFundsGBP,
+      excessLiquidity: giaExcessLiquidityUSD,
+      maintMargin: giaMaintUSD,
+      maintMarginGBP: giaMaintGBP,
+      initMargin: giaInitMarginUSD,
+      initMarginGBP: giaInitMarginGBP,
+      equityWithLoanValue: (giaLiveAcct?.equityWithLoanValue || giaNetLiqGBP) * gbpFxRate,
       grossPositionValue: giaPosValUSD,
       regTEquity: giaNetLiqUSD,
-      regTMargin: giaBP,
-      sma: giaLiveAcct?.sma || 0,
-      cushion: giaLiveAcct?.cushion > 0 ? giaLiveAcct.cushion * 100 : 55.4,
-      marginUtilization: giaNetLiqUSD > 0 && giaLiveAcct?.maintMargin ? (giaLiveAcct.maintMargin / giaNetLiqUSD) * 100 : 28.0,
+      regTMargin: giaBPUSD,
+      sma: (giaLiveAcct?.sma || 0) * gbpFxRate,
+      cushion: giaCushion,
+      marginUtilization: giaMarginUtilization,
       leverage: giaLiveAcct?.leverage || 1.0,
       unrealizedPnL: giaUnPnLUSD,
       dayPnL: giaDayPnLUSD,
-      realizedPnL: giaLiveAcct?.realizedPnL || 0,
+      realizedPnL: (giaLiveAcct?.realizedPnL || 0) * gbpFxRate,
       optionsCount: ibkrGiaHoldings.filter(h => h.assetType === 'OPTION').length,
       optionsValue: ibkrGiaHoldings.filter(h => h.assetType === 'OPTION').reduce((s, h) => s + (h.marketValue || 0) * getFxRateToUSD(h.currency), 0),
       equitiesCount: ibkrGiaHoldings.filter(h => h.assetType !== 'OPTION').length,
@@ -1048,8 +1199,8 @@ app.get('/api/portfolio/balances', async (req, res) => {
         dayTradesRemainingT3: giaLiveAcct?.dayTradesRemainingT3 ?? 3,
         dayTradesRemainingT4: giaLiveAcct?.dayTradesRemainingT4 ?? 3,
       },
-      accruedCash: giaLiveAcct?.accruedCash || 0,
-      accruedDividend: giaLiveAcct?.accruedDividend || 0,
+      accruedCash: (giaLiveAcct?.accruedCash || 0) * gbpFxRate,
+      accruedDividend: (giaLiveAcct?.accruedDividend || 0) * gbpFxRate,
       rawMetrics: giaLiveAcct?.rawMetrics || {}
     };
 
@@ -1058,27 +1209,40 @@ app.get('/api/portfolio/balances', async (req, res) => {
       accountId: IBKR_GIA_ACCOUNT,
       netLiquidation: giaNetLiqUSD,
       netLiquidationValue: giaNetLiqUSD,
-      cashBalance: giaLiveAcct?.cash || 0,
-      buyingPower: giaBP,
-      availableFunds: giaLiveAcct?.availableFunds || giaBP,
-      maintenanceMargin: giaLiveAcct?.maintMargin || Math.max(0, giaNetLiqUSD * 0.28),
-      initialMargin: giaLiveAcct?.initMargin || giaBP,
-      currency: giaLiveAcct?.currency || 'GBP',
+      cashBalance: giaCashUSD,
+      buyingPower: giaBPUSD,
+      availableFunds: giaAvailableFundsUSD,
+      maintenanceMargin: giaMaintUSD,
+      initialMargin: giaInitMarginUSD,
+      currency: 'USD',
       unrealizedPnL: giaUnPnLUSD,
-      realizedPnL: giaLiveAcct?.realizedPnL || 0
+      realizedPnL: (giaLiveAcct?.realizedPnL || 0) * gbpFxRate,
+      cashGBP: giaCashGBP,
+      buyingPowerGBP: giaBPGBP,
+      netLiquidatingValueGBP: giaNetLiqGBP,
+      maintMarginGBP: giaMaintGBP
     });
 
     const ibkrAccountsList = [acctISA, acctGIA];
 
-    // Combined IBKR Aggregate in USD
+    // Combined IBKR Aggregate in USD and GBP
     const ibkrCombinedCurrencies = buildCurrencyBreakdown(ibkrHoldings);
-    const ibkrTotalNetUSD = ibkrAccountsList.reduce((s, a) => s + (a.netLiquidatingValue || 0), 0);
-    const ibkrTotalCashUSD = ibkrAccountsList.reduce((s, a) => s + (a.cash || 0) * getFxRateToUSD(a.baseCurrency), 0);
-    const ibkrTotalBPUSD = ibkrAccountsList.reduce((s, a) => s + (a.buyingPower || 0), 0);
-    const ibkrTotalUnPnLUSD = ibkrAccountsList.reduce((s, a) => s + (a.unrealizedPnL || 0), 0);
-    const ibkrTotalDayPnLUSD = ibkrAccountsList.reduce((s, a) => s + (a.dayPnL || 0), 0);
-    const ibkrTotalMaintUSD = ibkrAccountsList.reduce((s, a) => s + (a.maintMargin || 0), 0);
-    const ibkrTotalExcessUSD = ibkrAccountsList.reduce((s, a) => s + (a.excessLiquidity || 0), 0);
+    const ibkrTotalNetUSD = isaNetLiqUSD + giaNetLiqUSD;
+    const ibkrTotalNetGBP = isaNetLiqGBP + giaNetLiqGBP;
+    const ibkrTotalCashUSD = isaCashUSD + giaCashUSD;
+    const ibkrTotalCashGBP = isaCashGBP + giaCashGBP;
+    const ibkrTotalBPUSD = isaBPUSD + giaBPUSD;
+    const ibkrTotalBPGBP = isaBPGBP + giaBPGBP;
+    const ibkrTotalAvailableUSD = isaBPUSD + giaAvailableFundsUSD;
+    const ibkrTotalAvailableGBP = isaBPGBP + giaAvailableFundsGBP;
+    const ibkrTotalUnPnLUSD = isaUnPnLUSD + giaUnPnLUSD;
+    const ibkrTotalDayPnLUSD = isaDayPnLUSD + giaDayPnLUSD;
+    const ibkrTotalMaintUSD = giaMaintUSD;
+    const ibkrTotalMaintGBP = giaMaintGBP;
+    const ibkrTotalInitMarginUSD = giaInitMarginUSD;
+    const ibkrTotalInitMarginGBP = giaInitMarginGBP;
+    const ibkrTotalExcessUSD = isaNetLiqUSD + giaExcessLiquidityUSD;
+    const ibkrTotalExcessGBP = isaNetLiqGBP + giaExcessLiquidityGBP;
 
     const ibkrCombinedMarginUtil = ibkrTotalNetUSD > 0 ? Math.min(100, (ibkrTotalMaintUSD / ibkrTotalNetUSD) * 100) : 0;
     const ibkrCombinedCushion = Math.max(0, 100 - ibkrCombinedMarginUtil);
@@ -1089,26 +1253,34 @@ app.get('/api/portfolio/balances', async (req, res) => {
       accountNumber: 'Combined (2 Accounts)',
       accountType: 'Multi-Account (Margin & Registered)',
       currency: 'USD',
+      baseCurrency: 'USD',
       netLiquidatingValue: ibkrTotalNetUSD,
+      netLiquidatingValueGBP: ibkrTotalNetGBP,
       cash: ibkrTotalCashUSD,
+      cashGBP: ibkrTotalCashGBP,
       buyingPower: ibkrTotalBPUSD,
-      derivativeBuyingPower: ibkrTotalBPUSD,
+      buyingPowerGBP: ibkrTotalBPGBP,
+      derivativeBuyingPower: giaBPUSD,
       equityBuyingPower: ibkrTotalBPUSD,
-      availableFunds: ibkrTotalBPUSD,
+      availableFunds: ibkrTotalAvailableUSD,
+      availableFundsGBP: ibkrTotalAvailableGBP,
       excessLiquidity: ibkrTotalExcessUSD,
+      excessLiquidityGBP: ibkrTotalExcessGBP,
       maintMargin: ibkrTotalMaintUSD,
-      initMargin: ibkrTotalBPUSD,
+      maintMarginGBP: ibkrTotalMaintGBP,
+      initMargin: ibkrTotalInitMarginUSD,
+      initMarginGBP: ibkrTotalInitMarginGBP,
       equityWithLoanValue: ibkrTotalNetUSD,
-      grossPositionValue: ibkrTotalNetUSD,
+      grossPositionValue: isaPosValUSD + giaPosValUSD,
       regTEquity: ibkrTotalNetUSD,
       regTMargin: ibkrTotalMaintUSD,
-      sma: 0,
+      sma: (giaLiveAcct?.sma || 0) * gbpFxRate,
       cushion: ibkrCombinedCushion,
       marginUtilization: ibkrCombinedMarginUtil,
       leverage: 1.0,
       unrealizedPnL: ibkrTotalUnPnLUSD,
       dayPnL: ibkrTotalDayPnLUSD,
-      realizedPnL: 0,
+      realizedPnL: ((isaLiveAcct?.realizedPnL || 0) + (giaLiveAcct?.realizedPnL || 0)) * gbpFxRate,
       optionsCount: ibkrHoldings.filter(h => h.assetType === 'OPTION').length,
       optionsValue: ibkrHoldings.filter(h => h.assetType === 'OPTION').reduce((s, h) => s + (h.marketValue || 0) * getFxRateToUSD(h.currency), 0),
       equitiesCount: ibkrHoldings.filter(h => h.assetType !== 'OPTION').length,
@@ -1116,9 +1288,12 @@ app.get('/api/portfolio/balances', async (req, res) => {
       accounts: ibkrAccountsList,
       currencies: ibkrCombinedCurrencies,
       dayTrading: ibkrAccountsList[0]?.dayTrading || { dayTradesRemaining: 3 },
-      accruedCash: 0,
-      accruedDividend: 0,
-      rawMetrics: ibkrAccountsList[0]?.rawMetrics || {}
+      accruedCash: ((isaLiveAcct?.accruedCash || 0) + (giaLiveAcct?.accruedCash || 0)) * gbpFxRate,
+      accruedDividend: ((isaLiveAcct?.accruedDividend || 0) + (giaLiveAcct?.accruedDividend || 0)) * gbpFxRate,
+      rawMetrics: {
+        ...(isaLiveAcct?.rawMetrics || {}),
+        ...(giaLiveAcct?.rawMetrics || {})
+      }
     };
 
     // --- Parallelized Live Broker Balances (Tastytrade & Trading 212) with 3s Timeout ---
@@ -1344,8 +1519,8 @@ app.get('/api/portfolio/balances', async (req, res) => {
 
     // Global Portfolio Multi-Currency Breakdown (all holdings + cash across all brokers)
     const portfolioCurrencies = buildCurrencyBreakdown(holdings, {
-      USD: tastyCash + ibkrTotalCashUSD,
-      GBP: t212CashGBP
+      USD: tastyCash,
+      GBP: t212CashGBP + ibkrTotalCashGBP
     });
 
     const gbpRateToUSD = getFxRateToUSD('GBP') || 1.302;
@@ -1415,6 +1590,8 @@ app.get('/api/portfolio/balances', async (req, res) => {
       currencies: portfolioCurrencies,
       brokers: {
         ibkr: ibkrCombinedData,
+        ibkr_isa: acctISA,
+        ibkr_gia: acctGIA,
         tastytrade: tastytradeData,
         trading212: trading212Data
       }

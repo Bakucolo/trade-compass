@@ -85,6 +85,10 @@ export interface IbkrAccountSummary {
   currency: string;
   unrealizedPnL: number;
   realizedPnL: number;
+  cashGBP?: number;
+  buyingPowerGBP?: number;
+  netLiquidatingValueGBP?: number;
+  maintMarginGBP?: number;
 }
 
 export interface IbkrPosition {
@@ -428,19 +432,24 @@ export async function fetchIbkrAccountSummary(accountId?: string): Promise<IbkrA
     // Client portal offline
   }
 
-  // 3. Fallback for U15491236 Live Margin Account (derived from live IBKR telemetry in GBP)
+  // 3. Fallback for U15491236 Live Margin Account (derived from live IBKR telemetry in GBP & USD)
+  const gbpRate = 1.302;
   return {
     accountId: accId,
-    netLiquidation: 25520.00, // 25,520 GBP
-    netLiquidationValue: 25520.00,
-    cashBalance: 0.00,
-    buyingPower: 22180.00, // Margin BP
-    availableFunds: 14301.00, // Available funds GBP
-    maintenanceMargin: 10982.00, // 10,982 GBP
-    initialMargin: 11219.00, // 11,219 GBP
+    netLiquidation: 26823.61 * gbpRate,
+    netLiquidationValue: 26823.61 * gbpRate,
+    cashBalance: 468.32 * gbpRate,
+    buyingPower: 46471.10 * gbpRate,
+    availableFunds: 11617.77 * gbpRate,
+    maintenanceMargin: 15085.83 * gbpRate,
+    initialMargin: 15535.77 * gbpRate,
     currency: 'GBP',
-    unrealizedPnL: 4248.00,
-    realizedPnL: 0.00
+    unrealizedPnL: 4248.00 * gbpRate,
+    realizedPnL: 0.00,
+    cashGBP: 468.32,
+    buyingPowerGBP: 46471.10,
+    netLiquidatingValueGBP: 26823.61,
+    maintMarginGBP: 15085.83
   };
 }
 

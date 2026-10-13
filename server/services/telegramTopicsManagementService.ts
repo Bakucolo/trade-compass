@@ -222,7 +222,7 @@ Live status, telemetry & commands across all 8 integrated topics:
 🏦 *1. Balances*
 • Status: ${formatThread(status.balancesThreadId)}
 • Overview: *${metrics.balances.brokersCount} connected brokers* | Portfolio: *${money(metrics.balances.totalPortfolioValue)}*
-• Commands: \`balances\`, \`cash\`, \`margins\`, \`tastytrade\`, \`ibkr\`, \`t212\`
+• Commands: \`balances\`, \`cash\`, \`margins\`, \`fees\`, \`dividends\`, \`gains\`, \`pdf\`, \`ibkr\`, \`isa\`, \`gia\`, \`tastytrade\`, \`t212\`
 
 💼 *2. Positions*
 • Status: ${formatThread(status.positionsThreadId)}
