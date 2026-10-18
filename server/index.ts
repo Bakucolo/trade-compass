@@ -8830,10 +8830,22 @@ app.get('/api/management/planned-trades/preview-pdf', async (req, res) => {
   }
 });
 
-// Root Route: Redirect browser traffic to Vite frontend on port 8080
-app.get('/', (req, res) => {
-  res.redirect('http://localhost:8080/');
-});
+// Static frontend asset serving in production (when dist/ exists)
+const distPath = path.join(process.cwd(), 'dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  app.use((req, res, next) => {
+    if (req.method === 'GET' && !req.path.startsWith('/api')) {
+      return res.sendFile(path.join(distPath, 'index.html'));
+    }
+    next();
+  });
+} else {
+  // In development: redirect root browser traffic to Vite on port 8080
+  app.get('/', (req, res) => {
+    res.redirect('http://localhost:8080/');
+  });
+}
 
 async function cleanupStaleHoldingsInDB() {
   try {
@@ -8878,17 +8890,6 @@ async function cleanupStaleHoldingsInDB() {
   }
 }
 
-// Static frontend asset serving in production (when dist/ exists)
-const distPath = path.join(process.cwd(), 'dist');
-if (fs.existsSync(distPath)) {
-  app.use(express.static(distPath));
-  app.use((req, res, next) => {
-    if (req.method === 'GET' && !req.path.startsWith('/api')) {
-      return res.sendFile(path.join(distPath, 'index.html'));
-    }
-    next();
-  });
-}
 
 // Global centralized Express error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
