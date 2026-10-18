@@ -226,7 +226,7 @@ export function BulkSaveDipsToWatchlistModal({
             {dips.map((item) => {
               const sym = item.symbol.toUpperCase();
               const isChecked = selectedSymbols.includes(sym);
-              const oppScore = item.savedReportInfo?.opportunityScore ?? item.heuristicSignal.preliminaryOpportunityScore;
+              const oppScore = item.savedReportInfo?.opportunityScore ?? item.heuristicSignal?.preliminaryOpportunityScore ?? 50;
 
               return (
                 <div

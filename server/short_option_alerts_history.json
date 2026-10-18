@@ -1015,6 +1015,125 @@
       "pct": 5,
       "provisionedAt": "2026-10-10T08:10:48.835Z",
       "dismissedAt": null
+    },
+    "FSLY_20_PUT_2026-11-20T21:00:00.000Z_10": {
+      "key": "FSLY_20_PUT_2026-11-20T21:00:00.000Z_10",
+      "underlyingSymbol": "FSLY",
+      "strikePrice": 20,
+      "optionType": "PUT",
+      "expiryDate": "2026-11-20T21:00:00.000Z",
+      "pct": 10,
+      "provisionedAt": "2026-10-15T19:18:05.798Z",
+      "dismissedAt": null
+    },
+    "FSLY_20_PUT_2026-11-20T21:00:00.000Z_5": {
+      "key": "FSLY_20_PUT_2026-11-20T21:00:00.000Z_5",
+      "underlyingSymbol": "FSLY",
+      "strikePrice": 20,
+      "optionType": "PUT",
+      "expiryDate": "2026-11-20T21:00:00.000Z",
+      "pct": 5,
+      "provisionedAt": "2026-10-15T19:20:44.897Z",
+      "dismissedAt": null
+    },
+    "HSAI_12.5_PUT_2026-11-20T21:00:00.000Z_10": {
+      "key": "HSAI_12.5_PUT_2026-11-20T21:00:00.000Z_10",
+      "underlyingSymbol": "HSAI",
+      "strikePrice": 0,
+      "optionType": "PUT",
+      "pct": 10,
+      "provisionedAt": "2026-10-15T19:20:44.904Z",
+      "dismissedAt": null
+    },
+    "HSAI_12.5_PUT_2026-11-20T21:00:00.000Z_5": {
+      "key": "HSAI_12.5_PUT_2026-11-20T21:00:00.000Z_5",
+      "underlyingSymbol": "HSAI",
+      "strikePrice": 12.5,
+      "optionType": "PUT",
+      "expiryDate": "2026-11-20T21:00:00.000Z",
+      "pct": 5,
+      "provisionedAt": "2026-10-15T19:24:29.659Z",
+      "dismissedAt": null
+    },
+    "ZETA_45_CALL_2026-11-20T21:00:00.000Z_10": {
+      "key": "ZETA_45_CALL_2026-11-20T21:00:00.000Z_10",
+      "underlyingSymbol": "ZETA",
+      "strikePrice": 45,
+      "optionType": "CALL",
+      "expiryDate": "2026-11-20T21:00:00.000Z",
+      "pct": 10,
+      "provisionedAt": "2026-10-16T18:40:25.496Z",
+      "dismissedAt": null
+    },
+    "ZETA_45_CALL_2026-11-20T21:00:00.000Z_5": {
+      "key": "ZETA_45_CALL_2026-11-20T21:00:00.000Z_5",
+      "underlyingSymbol": "ZETA",
+      "strikePrice": 45,
+      "optionType": "CALL",
+      "expiryDate": "2026-11-20T21:00:00.000Z",
+      "pct": 5,
+      "provisionedAt": "2026-10-16T18:40:25.506Z",
+      "dismissedAt": null
+    },
+    "OUST_26_PUT_2027-02-19T21:00:00.000Z_10": {
+      "key": "OUST_26_PUT_2027-02-19T21:00:00.000Z_10",
+      "underlyingSymbol": "OUST",
+      "strikePrice": 26,
+      "optionType": "PUT",
+      "expiryDate": "2027-02-19T21:00:00.000Z",
+      "pct": 10,
+      "provisionedAt": "2026-10-17T11:59:43.370Z",
+      "dismissedAt": null
+    },
+    "OUST_26_PUT_2027-02-19T21:00:00.000Z_5": {
+      "key": "OUST_26_PUT_2027-02-19T21:00:00.000Z_5",
+      "underlyingSymbol": "OUST",
+      "strikePrice": 26,
+      "optionType": "PUT",
+      "expiryDate": "2027-02-19T21:00:00.000Z",
+      "pct": 5,
+      "provisionedAt": "2026-10-17T11:59:43.380Z",
+      "dismissedAt": null
+    },
+    "OUST_16_PUT_2027-02-19T21:00:00.000Z_10": {
+      "key": "OUST_16_PUT_2027-02-19T21:00:00.000Z_10",
+      "underlyingSymbol": "OUST",
+      "strikePrice": 16,
+      "optionType": "PUT",
+      "expiryDate": "2027-02-19T21:00:00.000Z",
+      "pct": 10,
+      "provisionedAt": "2026-10-17T11:59:43.389Z",
+      "dismissedAt": null
+    },
+    "OUST_16_PUT_2027-02-19T21:00:00.000Z_5": {
+      "key": "OUST_16_PUT_2027-02-19T21:00:00.000Z_5",
+      "underlyingSymbol": "OUST",
+      "strikePrice": 16,
+      "optionType": "PUT",
+      "expiryDate": "2027-02-19T21:00:00.000Z",
+      "pct": 5,
+      "provisionedAt": "2026-10-17T11:59:43.395Z",
+      "dismissedAt": null
+    },
+    "P_180_CALL_20261120_10": {
+      "key": "P_180_CALL_20261120_10",
+      "underlyingSymbol": "P",
+      "strikePrice": 180,
+      "optionType": "CALL",
+      "expiryDate": "20261120",
+      "pct": 10,
+      "provisionedAt": "2026-10-17T12:40:53.733Z",
+      "dismissedAt": null
+    },
+    "P_180_CALL_20261120_5": {
+      "key": "P_180_CALL_20261120_5",
+      "underlyingSymbol": "P",
+      "strikePrice": 180,
+      "optionType": "CALL",
+      "expiryDate": "20261120",
+      "pct": 5,
+      "provisionedAt": "2026-10-17T12:40:53.744Z",
+      "dismissedAt": null
     }
   }
 }

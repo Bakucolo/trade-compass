@@ -26,6 +26,7 @@ import { handleAlertsTopicMessage } from './telegramAlertsTopicService';
 import { handleAppTopicMessage } from './telegramAppTopicService';
 import { handleIdeasTopicMessage } from './telegramIdeasTopicService';
 import { handleMacroTopicMessage } from './telegramMacroQueryService';
+import { handleTradeTopicMessage } from './telegramTradeTopicService';
 
 const logToFile = (msg: string) => console.log(msg);
 
@@ -77,6 +78,99 @@ let lastSyncCount: number = 0;
 let isConsuming = false;
 let lastDirectTelegramUpdateId = 0;
 
+// Set/Map of recently processed telegram message keys with timestamp to prevent duplicate responses
+// across polling cycles, between Cloudflare KV buffer and direct getUpdates, and across server restarts.
+const RECENT_DEDUP_TTL_MS = 30 * 60 * 1000; // 30 minutes TTL
+const DEDUP_FILE = path.join(process.cwd(), 'server', 'telegram_dedup.json');
+
+function loadPersistedDedupKeys(): Map<string, number> {
+  const map = new Map<string, number>();
+  try {
+    if (fs.existsSync(DEDUP_FILE)) {
+      const data = JSON.parse(fs.readFileSync(DEDUP_FILE, 'utf8'));
+      const now = Date.now();
+      if (Array.isArray(data)) {
+        for (const item of data) {
+          if (Array.isArray(item) && item.length === 2) {
+            const [k, ts] = item;
+            if (typeof ts === 'number' && now - ts < RECENT_DEDUP_TTL_MS) {
+              map.set(k, ts);
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+  return map;
+}
+
+function savePersistedDedupKeys(map: Map<string, number>) {
+  try {
+    const now = Date.now();
+    for (const [k, ts] of map.entries()) {
+      if (now - ts > RECENT_DEDUP_TTL_MS) {
+        map.delete(k);
+      }
+    }
+    const arr = Array.from(map.entries()).slice(-500);
+    fs.writeFileSync(DEDUP_FILE, JSON.stringify(arr), 'utf8');
+  } catch {}
+}
+
+const recentlyProcessedMessageKeys = loadPersistedDedupKeys();
+
+export function getTelegramMessageDedupKey(msg: BufferedTelegramMessage): string {
+  const chatId = msg.chat?.id ? String(msg.chat.id) : '';
+  const msgId = msg.messageId ? String(msg.messageId) : '';
+  if (chatId && msgId) {
+    return `${chatId}:${msgId}`;
+  }
+  if (msg.id) {
+    return `${chatId}:${msg.id}`;
+  }
+  // Fallback
+  return `${chatId}:${msg.date}:${(msg.text || '').trim().slice(0, 50)}`;
+}
+
+export function isMessageAlreadyProcessed(msg: BufferedTelegramMessage): boolean {
+  const key = getTelegramMessageDedupKey(msg);
+  const now = Date.now();
+
+  // 1. Check in-memory map
+  if (recentlyProcessedMessageKeys.has(key)) {
+    const ts = recentlyProcessedMessageKeys.get(key) || 0;
+    if (now - ts < RECENT_DEDUP_TTL_MS) {
+      return true;
+    }
+  }
+
+  // 2. Cross-check disk cache (in case another process or previous restart processed it)
+  try {
+    if (fs.existsSync(DEDUP_FILE)) {
+      const fileData = JSON.parse(fs.readFileSync(DEDUP_FILE, 'utf8'));
+      if (Array.isArray(fileData)) {
+        for (const item of fileData) {
+          if (Array.isArray(item) && item.length === 2) {
+            const [k, ts] = item;
+            if (k === key && typeof ts === 'number' && now - ts < RECENT_DEDUP_TTL_MS) {
+              recentlyProcessedMessageKeys.set(k, ts);
+              return true;
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+
+  return false;
+}
+
+export function markMessageAsProcessed(msg: BufferedTelegramMessage): void {
+  const key = getTelegramMessageDedupKey(msg);
+  recentlyProcessedMessageKeys.set(key, Date.now());
+  savePersistedDedupKeys(recentlyProcessedMessageKeys);
+}
+
 /**
  * Determine sentiment from raw text
  */
@@ -126,9 +220,14 @@ export function createVoiceTitleFromText(text: string, dateStr?: string | number
 export const topicNameByThreadId = new Map<number, string>([
   [2, 'Alerts'],
   [10, 'App'],
+  [95, 'Ideas'],
   [100, 'Execution'],
   [293, 'Watchlist'],
   [294, 'Notes'],
+  [306, 'Positions'],
+  [331, 'Balances'],
+  [391, 'Macro'],
+  [406, 'Trade'],
 ]);
 
 /**
@@ -167,7 +266,8 @@ export function isTelegramBriefingRequest(text: string): boolean {
 export async function fetchDirectTelegramUpdates(botToken: string): Promise<BufferedTelegramMessage[]> {
   try {
     const url = `https://api.telegram.org/bot${botToken}/getUpdates?offset=${lastDirectTelegramUpdateId + 1}&limit=20&timeout=2`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(6000) : undefined;
+    const res = await fetch(url, signal ? { signal } : {});
     if (!res.ok) return [];
     const data: any = await res.json();
     if (!data.ok || !data.result || !Array.isArray(data.result)) return [];
@@ -1028,6 +1128,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
     // 1. Fetch from Cloudflare KV buffer if configured
     if (targetUrl) {
       try {
+        const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(4000) : undefined;
         const response = await fetch(targetUrl, {
           method: 'GET',
           headers: {
@@ -1035,7 +1136,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
             'X-Consume-Secret': bufferSecret,
             'Authorization': `Bearer ${bufferSecret}`,
           },
-          signal: AbortSignal.timeout(4000),
+          ...(signal ? { signal } : {}),
         });
 
         if (response.ok) {
@@ -1061,11 +1162,32 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       }
     }
 
-    lastSyncTimestamp = new Date().toISOString();
-    lastSyncCount = messages.length;
+    // Deduplicate incoming messages within the current batch and against the recently-processed window
+    const uniqueMessages: BufferedTelegramMessage[] = [];
+    const seenBatchKeys = new Set<string>();
 
-    if (messages.length === 0) {
-      logToFile('[TelegramBuffer] Buffer is empty. No new mobile notes to consume.');
+    for (const msg of messages) {
+      const key = getTelegramMessageDedupKey(msg);
+      if (seenBatchKeys.has(key)) {
+        logToFile(`[TelegramBuffer] Skipping duplicate message in same batch (key: ${key}): "${(msg.text || '').slice(0, 40)}"`);
+        continue;
+      }
+      seenBatchKeys.add(key);
+
+      if (isMessageAlreadyProcessed(msg)) {
+        logToFile(`[TelegramBuffer] Skipping already processed message from recent window (key: ${key}): "${(msg.text || '').slice(0, 40)}"`);
+        continue;
+      }
+
+      markMessageAsProcessed(msg);
+      uniqueMessages.push(msg);
+    }
+
+    lastSyncTimestamp = new Date().toISOString();
+    lastSyncCount = uniqueMessages.length;
+
+    if (uniqueMessages.length === 0) {
+      logToFile('[TelegramBuffer] Buffer is empty (or all messages were already processed duplicates).');
       return {
         success: true,
         consumedCount: 0,
@@ -1075,17 +1197,17 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       };
     }
 
-    logToFile(`[TelegramBuffer] Consumed ${messages.length} messages from Telegram buffer/queue. Ingesting into database...`);
+    logToFile(`[TelegramBuffer] Consumed ${uniqueMessages.length} unique messages from Telegram buffer/queue. Ingesting into database...`);
 
     const task = agentActivityTracker.startTask({
       agentName: 'Telegram Mobile Buffer Ingestion Agent',
       agentType: 'RESEARCH',
-      taskDescription: `Ingesting ${messages.length} mobile thoughts from Cloudflare Worker buffer`,
+      taskDescription: `Ingesting ${uniqueMessages.length} mobile thoughts from Cloudflare Worker buffer`,
     });
 
     const createdLogs: Array<{ id: string; title: string; symbols: string | null }> = [];
 
-    for (const msg of messages) {
+    for (const msg of uniqueMessages) {
       let contentText = (msg.text || '').trim();
       const isVoice = msg.type === 'voice' || Boolean(msg.fileId);
 
@@ -1125,6 +1247,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       const configuredPositionsThreadId = process.env.TELEGRAM_POSITIONS_THREAD_ID ? Number(process.env.TELEGRAM_POSITIONS_THREAD_ID) : undefined;
       const configuredBalancesThreadId = process.env.TELEGRAM_BALANCES_THREAD_ID ? Number(process.env.TELEGRAM_BALANCES_THREAD_ID) : undefined;
       const configuredMacroThreadId = process.env.TELEGRAM_MACRO_THREAD_ID ? Number(process.env.TELEGRAM_MACRO_THREAD_ID) : undefined;
+      const configuredTradeThreadId = process.env.TELEGRAM_TRADE_THREAD_ID ? Number(process.env.TELEGRAM_TRADE_THREAD_ID) : 406;
 
       const msgThreadNum = msg.messageThreadId !== undefined ? Number(msg.messageThreadId) : undefined;
       const isExplicitAppThread = msgThreadNum !== undefined && msgThreadNum === configuredAppThreadId;
@@ -1136,6 +1259,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       const isExplicitPositionsThread = configuredPositionsThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredPositionsThreadId;
       const isExplicitBalancesThread = configuredBalancesThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredBalancesThreadId;
       const isExplicitMacroThread = configuredMacroThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredMacroThreadId;
+      const isExplicitTradeThread = configuredTradeThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredTradeThreadId;
 
       const resolvedTopicName = msg.topicName || (msgThreadNum !== undefined ? topicNameByThreadId.get(msgThreadNum) : undefined);
 
@@ -1143,14 +1267,14 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         topicNameByThreadId.set(msgThreadNum, resolvedTopicName);
       }
 
-      // Auto-discover and persist Watchlist, Notes, Positions & Balances thread IDs if not yet configured
+      // Auto-discover and persist Watchlist, Notes, Positions, Balances, Macro & Trade thread IDs if not yet configured
       if (resolvedTopicName && /watchlist/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_WATCHLIST_THREAD_ID) {
         setTelegramWatchlistThreadId(msgThreadNum);
       }
       if (resolvedTopicName && /notes?/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_NOTES_THREAD_ID) {
         setTelegramNotesThreadId(msgThreadNum);
       }
-      if (resolvedTopicName && /positions?/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_POSITIONS_THREAD_ID) {
+      if (resolvedTopicName && /(?:positions?|portfolio)/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_POSITIONS_THREAD_ID) {
         setTelegramPositionsThreadId(msgThreadNum);
       }
       if (resolvedTopicName && /balances?/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_BALANCES_THREAD_ID) {
@@ -1158,6 +1282,9 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       }
       if (resolvedTopicName && /macro/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_MACRO_THREAD_ID) {
         setTelegramMacroThreadId(msgThreadNum);
+      }
+      if (resolvedTopicName && /^trades?$/i.test(resolvedTopicName.trim()) && msgThreadNum !== undefined && !process.env.TELEGRAM_TRADE_THREAD_ID) {
+        setTelegramTradeThreadId(msgThreadNum);
       }
 
       // Topic created status message handling
@@ -1310,28 +1437,36 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       ));
 
       const isPositionsTopic = isExplicitPositionsThread || (!isExplicitAppThread && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isExplicitWatchlistThread && !isExplicitNotesThread && !isBalancesTopic && !isMacroTopic && Boolean(
-        (resolvedTopicName && /positions?/i.test(resolvedTopicName)) ||
+        (resolvedTopicName && /(?:positions?|portfolio)/i.test(resolvedTopicName)) ||
         contentText.toLowerCase().startsWith('#position') ||
         contentText.toLowerCase().startsWith('#positions') ||
-        contentText.match(/#(?:topic:)?positions?\b/i) ||
+        contentText.toLowerCase().startsWith('#portfolio') ||
+        contentText.match(/#(?:topic:)?(?:positions?|portfolio)\b/i) ||
         (msg.chat?.id === -1003872409872 && configuredPositionsThreadId !== undefined && msgThreadNum === configuredPositionsThreadId)
       ));
 
-      const isWatchlistTopic = isExplicitWatchlistThread || (!isExplicitAppThread && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isExplicitNotesThread && !isPositionsTopic && !isBalancesTopic && !isMacroTopic && Boolean(
+      const isTradeTopic = isExplicitTradeThread || (!isExplicitAppThread && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isExplicitWatchlistThread && !isExplicitNotesThread && !isExplicitPositionsThread && !isBalancesTopic && !isMacroTopic && Boolean(
+        (resolvedTopicName && /^trades?$/i.test(resolvedTopicName.trim())) ||
+        contentText.toLowerCase().startsWith('#trade') ||
+        contentText.match(/#(?:topic:)?trades?\b/i) ||
+        (msg.chat?.id === -1003872409872 && configuredTradeThreadId !== undefined && msgThreadNum === configuredTradeThreadId)
+      ));
+
+      const isWatchlistTopic = isExplicitWatchlistThread || (!isExplicitAppThread && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isExplicitNotesThread && !isPositionsTopic && !isBalancesTopic && !isMacroTopic && !isTradeTopic && Boolean(
         (resolvedTopicName && /watchlist/i.test(resolvedTopicName)) ||
         contentText.toLowerCase().startsWith('#watchlist') ||
         contentText.match(/#(?:topic:)?watchlist\b/i) ||
         (msg.chat?.id === -1003872409872 && msgThreadNum === configuredWatchlistThreadId)
       ));
 
-      const isNotesTopic = isExplicitNotesThread || (!isExplicitAppThread && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isPositionsTopic && !isBalancesTopic && !isMacroTopic && Boolean(
+      const isNotesTopic = isExplicitNotesThread || (!isExplicitAppThread && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isPositionsTopic && !isBalancesTopic && !isMacroTopic && !isTradeTopic && Boolean(
         (resolvedTopicName && /notes?/i.test(resolvedTopicName)) ||
         contentText.toLowerCase().startsWith('#note') ||
         contentText.match(/#(?:topic:)?notes?\b/i) ||
         (msg.chat?.id === -1003872409872 && msgThreadNum === configuredNotesThreadId)
       ));
 
-      const isAppTopic = isExplicitAppThread || (!isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isNotesTopic && !isPositionsTopic && !isBalancesTopic && !isMacroTopic && Boolean(
+      const isAppTopic = isExplicitAppThread || (!isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isNotesTopic && !isPositionsTopic && !isBalancesTopic && !isMacroTopic && !isTradeTopic && Boolean(
         (resolvedTopicName && resolvedTopicName.toLowerCase().includes('app')) ||
         contentText.toLowerCase().startsWith('#app') ||
         contentText.toLowerCase().includes('#app-idea') ||
@@ -1378,6 +1513,10 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
           topicType = 'IDEAS';
           topicFolder = 'Ideas';
           targetThreadId = msgThreadNum || configuredIdeasThreadId;
+        } else if (isTradeTopic) {
+          topicType = 'TRADE';
+          topicFolder = 'Execution';
+          targetThreadId = msgThreadNum || configuredTradeThreadId;
         } else if (isAlertsTopic) {
           topicType = 'ALERTS';
           topicFolder = 'Alerts';
@@ -1446,6 +1585,41 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
           },
         });
         createdLogs.push({ id: savedLog.id, title: savedLog.title, symbols: null });
+        continue;
+      }
+
+      // ==========================================
+      // TRADE TOPIC HANDLER (Live Options Quotes & AI Analysis)
+      // ==========================================
+      if (isTradeTopic) {
+        const targetThreadId = msgThreadNum || configuredTradeThreadId || 406;
+        logToFile(`[TelegramBuffer] 🎯 Processing Trade query in thread ${targetThreadId}: "${contentText}"`);
+
+        const tradeResult = await handleTradeTopicMessage({
+          text: contentText,
+          chatId: targetChatId,
+          messageThreadId: targetThreadId,
+          prisma,
+          senderLabel,
+        });
+
+        const savedLog = await (prisma as any).thoughtLog.create({
+          data: {
+            title: `🎯 Telegram Trade Analysis: ${tradeResult.query.symbol || 'Option'} ${tradeResult.query.side} ${tradeResult.query.optionType}${tradeResult.query.targetStrike ? ` $${tradeResult.query.targetStrike}` : ''}`,
+            content: `User query: "${contentText}"\n\n${tradeResult.replyText || ''}`,
+            folder: 'Execution',
+            tags: `Telegram, Trade, Options, ${tradeResult.query.symbol || 'Setup'}, ${senderLabel}${tradeResult.hasAiAnalysis ? ', AI' : ''}`,
+            symbols: tradeResult.query.symbol || null,
+            sentiment: tradeResult.query.side === 'SELL' ? 'BULLISH' : 'NEUTRAL',
+            isPinned: false,
+            isFulfilled: tradeResult.handled,
+            agentOutput: tradeResult.replyText,
+            agentActionType: 'ADD_CONTEXT',
+            marketDataJson: null,
+            createdAt: new Date(msg.timestamp),
+          },
+        });
+        createdLogs.push({ id: savedLog.id, title: savedLog.title, symbols: savedLog.symbols });
         continue;
       }
 
@@ -1849,17 +2023,24 @@ Output strictly valid JSON matching this schema:
 
         if (execResult.handled) {
           logToFile(`[TelegramBuffer] 🎯 Execution topic action (${execResult.actionTaken}) handled for ${senderLabel}`);
+          const tradeSummaries = execResult.tradesCreated && execResult.tradesCreated.length > 0
+            ? execResult.tradesCreated.map((t: any) => `${t.action} ${t.quantity} ${t.symbol}${t.targetPrice ? ` @ $${t.targetPrice}` : ''}`).join(', ')
+            : `Telegram Execution: ${execResult.actionTaken}`;
+
+          const primaryTimeframe = execResult.tradesCreated?.[0]?.timeframe || 'DAY';
+          const agentOutputText = `🎯 **Daily & Weekly Trade Execution Queue**\n\nStatus: PENDING (${primaryTimeframe})\n\n${execResult.replyText}`;
+
           const savedLog = await (prisma as any).thoughtLog.create({
             data: {
-              title: `🎯 Telegram Execution: ${execResult.actionTaken}`,
+              title: `🎯 ${tradeSummaries}`,
               content: contentText.trim(),
               folder: 'Execution',
-              tags: `Telegram, Execution, ${execResult.actionTaken}, ${senderLabel}`,
+              tags: `Telegram, Execution, Queue, ${execResult.actionTaken}, ${senderLabel}`,
               symbols: execResult.tradesCreated?.map((t: any) => t.symbol).join(', ') || null,
               sentiment: 'NEUTRAL',
               isPinned: false,
               isFulfilled: true,
-              agentOutput: execResult.replyText,
+              agentOutput: agentOutputText,
               agentActionType: 'ADD_CONTEXT',
               marketDataJson: null,
               createdAt: new Date(msg.timestamp),
@@ -1955,6 +2136,12 @@ Output strictly valid JSON matching this schema:
           continue;
         }
       }
+
+      const detectedSymbols = extractSymbolsFromText(contentText);
+      const sentiment = detectSentimentFromText(contentText);
+      const autoCreatedAlerts = await autoCreateAlertsFromText(contentText, prisma);
+      const parsedTrades = parseTradeExecutionCandidates(contentText);
+      const autoCreatedPlannedTrades: any[] = [];
 
       // Check if message requests saving directly to a watchlist via directive
       const hasWatchlistDirective = Boolean(
@@ -2224,9 +2411,31 @@ export function getTelegramBufferStatus() {
     positionsThreadId: process.env.TELEGRAM_POSITIONS_THREAD_ID || null,
     balancesThreadId: process.env.TELEGRAM_BALANCES_THREAD_ID || null,
     macroThreadId: process.env.TELEGRAM_MACRO_THREAD_ID || null,
+    tradeThreadId: process.env.TELEGRAM_TRADE_THREAD_ID || null,
     lastSyncTimestamp,
     lastSyncCount,
   };
+}
+
+function persistThreadIdToEnv(key: string, val: string): void {
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
+    return;
+  }
+  try {
+    const envPath = path.resolve(process.cwd(), '.env.local');
+    if (fs.existsSync(envPath)) {
+      let envContent = fs.readFileSync(envPath, 'utf8');
+      const regex = new RegExp(`${key}=.*`, 'i');
+      if (regex.test(envContent)) {
+        envContent = envContent.replace(regex, `${key}=${val}`);
+      } else {
+        envContent += `\n${key}=${val}\n`;
+      }
+      fs.writeFileSync(envPath, envContent, 'utf8');
+    }
+  } catch (e: any) {
+    logToFile(`[TelegramBuffer] Failed to persist ${key} to .env.local: ${e.message}`);
+  }
 }
 
 /**
@@ -2237,16 +2446,7 @@ export function setTelegramExecutionThreadId(threadId: string | number): boolean
     const threadIdStr = String(threadId).trim();
     process.env.TELEGRAM_EXECUTION_THREAD_ID = threadIdStr;
     logToFile(`[TelegramBuffer] Updated TELEGRAM_EXECUTION_THREAD_ID=${threadIdStr}`);
-    const envPath = path.resolve(process.cwd(), '.env.local');
-    if (fs.existsSync(envPath)) {
-      let envContent = fs.readFileSync(envPath, 'utf8');
-      if (/TELEGRAM_EXECUTION_THREAD_ID=/i.test(envContent)) {
-        envContent = envContent.replace(/TELEGRAM_EXECUTION_THREAD_ID=.*/g, `TELEGRAM_EXECUTION_THREAD_ID=${threadIdStr}`);
-      } else {
-        envContent += `\nTELEGRAM_EXECUTION_THREAD_ID=${threadIdStr}\n`;
-      }
-      fs.writeFileSync(envPath, envContent, 'utf8');
-    }
+    persistThreadIdToEnv('TELEGRAM_EXECUTION_THREAD_ID', threadIdStr);
     return true;
   } catch (e: any) {
     logToFile(`[TelegramBuffer] Error setting execution thread ID: ${e.message}`);
@@ -2261,18 +2461,11 @@ export function setTelegramWatchlistThreadId(threadId: string | number): boolean
   try {
     const threadIdStr = String(threadId).trim();
     process.env.TELEGRAM_WATCHLIST_THREAD_ID = threadIdStr;
-    topicNameByThreadId.set(Number(threadIdStr), 'Watchlist');
-    logToFile(`[TelegramBuffer] Updated TELEGRAM_WATCHLIST_THREAD_ID=${threadIdStr}`);
-    const envPath = path.resolve(process.cwd(), '.env.local');
-    if (fs.existsSync(envPath)) {
-      let envContent = fs.readFileSync(envPath, 'utf8');
-      if (/TELEGRAM_WATCHLIST_THREAD_ID=/i.test(envContent)) {
-        envContent = envContent.replace(/TELEGRAM_WATCHLIST_THREAD_ID=.*/g, `TELEGRAM_WATCHLIST_THREAD_ID=${threadIdStr}`);
-      } else {
-        envContent += `\nTELEGRAM_WATCHLIST_THREAD_ID=${threadIdStr}\n`;
-      }
-      fs.writeFileSync(envPath, envContent, 'utf8');
+    if (threadIdStr) {
+      topicNameByThreadId.set(Number(threadIdStr), 'Watchlist');
     }
+    logToFile(`[TelegramBuffer] Updated TELEGRAM_WATCHLIST_THREAD_ID=${threadIdStr}`);
+    persistThreadIdToEnv('TELEGRAM_WATCHLIST_THREAD_ID', threadIdStr);
     return true;
   } catch (e: any) {
     logToFile(`[TelegramBuffer] Error setting watchlist thread ID: ${e.message}`);
@@ -2287,18 +2480,11 @@ export function setTelegramNotesThreadId(threadId: string | number): boolean {
   try {
     const threadIdStr = String(threadId).trim();
     process.env.TELEGRAM_NOTES_THREAD_ID = threadIdStr;
-    topicNameByThreadId.set(Number(threadIdStr), 'Notes');
-    logToFile(`[TelegramBuffer] Updated TELEGRAM_NOTES_THREAD_ID=${threadIdStr}`);
-    const envPath = path.resolve(process.cwd(), '.env.local');
-    if (fs.existsSync(envPath)) {
-      let envContent = fs.readFileSync(envPath, 'utf8');
-      if (/TELEGRAM_NOTES_THREAD_ID=/i.test(envContent)) {
-        envContent = envContent.replace(/TELEGRAM_NOTES_THREAD_ID=.*/g, `TELEGRAM_NOTES_THREAD_ID=${threadIdStr}`);
-      } else {
-        envContent += `\nTELEGRAM_NOTES_THREAD_ID=${threadIdStr}\n`;
-      }
-      fs.writeFileSync(envPath, envContent, 'utf8');
+    if (threadIdStr) {
+      topicNameByThreadId.set(Number(threadIdStr), 'Notes');
     }
+    logToFile(`[TelegramBuffer] Updated TELEGRAM_NOTES_THREAD_ID=${threadIdStr}`);
+    persistThreadIdToEnv('TELEGRAM_NOTES_THREAD_ID', threadIdStr);
     return true;
   } catch (e: any) {
     logToFile(`[TelegramBuffer] Error setting notes thread ID: ${e.message}`);
@@ -2313,18 +2499,11 @@ export function setTelegramPositionsThreadId(threadId: string | number): boolean
   try {
     const threadIdStr = String(threadId).trim();
     process.env.TELEGRAM_POSITIONS_THREAD_ID = threadIdStr;
-    topicNameByThreadId.set(Number(threadIdStr), 'Positions');
-    logToFile(`[TelegramBuffer] Updated TELEGRAM_POSITIONS_THREAD_ID=${threadIdStr}`);
-    const envPath = path.resolve(process.cwd(), '.env.local');
-    if (fs.existsSync(envPath)) {
-      let envContent = fs.readFileSync(envPath, 'utf8');
-      if (/TELEGRAM_POSITIONS_THREAD_ID=/i.test(envContent)) {
-        envContent = envContent.replace(/TELEGRAM_POSITIONS_THREAD_ID=.*/g, `TELEGRAM_POSITIONS_THREAD_ID=${threadIdStr}`);
-      } else {
-        envContent += `\nTELEGRAM_POSITIONS_THREAD_ID=${threadIdStr}\n`;
-      }
-      fs.writeFileSync(envPath, envContent, 'utf8');
+    if (threadIdStr) {
+      topicNameByThreadId.set(Number(threadIdStr), 'Positions');
     }
+    logToFile(`[TelegramBuffer] Updated TELEGRAM_POSITIONS_THREAD_ID=${threadIdStr}`);
+    persistThreadIdToEnv('TELEGRAM_POSITIONS_THREAD_ID', threadIdStr);
     return true;
   } catch (e: any) {
     logToFile(`[TelegramBuffer] Error setting positions thread ID: ${e.message}`);
@@ -2339,18 +2518,11 @@ export function setTelegramBalancesThreadId(threadId: string | number): boolean 
   try {
     const threadIdStr = String(threadId).trim();
     process.env.TELEGRAM_BALANCES_THREAD_ID = threadIdStr;
-    topicNameByThreadId.set(Number(threadIdStr), 'Balances');
-    logToFile(`[TelegramBuffer] Updated TELEGRAM_BALANCES_THREAD_ID=${threadIdStr}`);
-    const envPath = path.resolve(process.cwd(), '.env.local');
-    if (fs.existsSync(envPath)) {
-      let envContent = fs.readFileSync(envPath, 'utf8');
-      if (/TELEGRAM_BALANCES_THREAD_ID=/i.test(envContent)) {
-        envContent = envContent.replace(/TELEGRAM_BALANCES_THREAD_ID=.*/g, `TELEGRAM_BALANCES_THREAD_ID=${threadIdStr}`);
-      } else {
-        envContent += `\nTELEGRAM_BALANCES_THREAD_ID=${threadIdStr}\n`;
-      }
-      fs.writeFileSync(envPath, envContent, 'utf8');
+    if (threadIdStr) {
+      topicNameByThreadId.set(Number(threadIdStr), 'Balances');
     }
+    logToFile(`[TelegramBuffer] Updated TELEGRAM_BALANCES_THREAD_ID=${threadIdStr}`);
+    persistThreadIdToEnv('TELEGRAM_BALANCES_THREAD_ID', threadIdStr);
     return true;
   } catch (e: any) {
     logToFile(`[TelegramBuffer] Error setting balances thread ID: ${e.message}`);
@@ -2365,18 +2537,11 @@ export function setTelegramAlertsThreadId(threadId: string | number): boolean {
   try {
     const threadIdStr = String(threadId).trim();
     process.env.TELEGRAM_ALERTS_THREAD_ID = threadIdStr;
-    topicNameByThreadId.set(Number(threadIdStr), 'Alerts');
-    logToFile(`[TelegramBuffer] Updated TELEGRAM_ALERTS_THREAD_ID=${threadIdStr}`);
-    const envPath = path.resolve(process.cwd(), '.env.local');
-    if (fs.existsSync(envPath)) {
-      let envContent = fs.readFileSync(envPath, 'utf8');
-      if (/TELEGRAM_ALERTS_THREAD_ID=/i.test(envContent)) {
-        envContent = envContent.replace(/TELEGRAM_ALERTS_THREAD_ID=.*/g, `TELEGRAM_ALERTS_THREAD_ID=${threadIdStr}`);
-      } else {
-        envContent += `\nTELEGRAM_ALERTS_THREAD_ID=${threadIdStr}\n`;
-      }
-      fs.writeFileSync(envPath, envContent, 'utf8');
+    if (threadIdStr) {
+      topicNameByThreadId.set(Number(threadIdStr), 'Alerts');
     }
+    logToFile(`[TelegramBuffer] Updated TELEGRAM_ALERTS_THREAD_ID=${threadIdStr}`);
+    persistThreadIdToEnv('TELEGRAM_ALERTS_THREAD_ID', threadIdStr);
     return true;
   } catch (e: any) {
     logToFile(`[TelegramBuffer] Error setting alerts thread ID: ${e.message}`);
@@ -2391,18 +2556,11 @@ export function setTelegramAppThreadId(threadId: string | number): boolean {
   try {
     const threadIdStr = String(threadId).trim();
     process.env.TELEGRAM_APP_THREAD_ID = threadIdStr;
-    topicNameByThreadId.set(Number(threadIdStr), 'App');
-    logToFile(`[TelegramBuffer] Updated TELEGRAM_APP_THREAD_ID=${threadIdStr}`);
-    const envPath = path.resolve(process.cwd(), '.env.local');
-    if (fs.existsSync(envPath)) {
-      let envContent = fs.readFileSync(envPath, 'utf8');
-      if (/TELEGRAM_APP_THREAD_ID=/i.test(envContent)) {
-        envContent = envContent.replace(/TELEGRAM_APP_THREAD_ID=.*/g, `TELEGRAM_APP_THREAD_ID=${threadIdStr}`);
-      } else {
-        envContent += `\nTELEGRAM_APP_THREAD_ID=${threadIdStr}\n`;
-      }
-      fs.writeFileSync(envPath, envContent, 'utf8');
+    if (threadIdStr) {
+      topicNameByThreadId.set(Number(threadIdStr), 'App');
     }
+    logToFile(`[TelegramBuffer] Updated TELEGRAM_APP_THREAD_ID=${threadIdStr}`);
+    persistThreadIdToEnv('TELEGRAM_APP_THREAD_ID', threadIdStr);
     return true;
   } catch (e: any) {
     logToFile(`[TelegramBuffer] Error setting app thread ID: ${e.message}`);
@@ -2417,18 +2575,11 @@ export function setTelegramIdeasThreadId(threadId: string | number): boolean {
   try {
     const threadIdStr = String(threadId).trim();
     process.env.TELEGRAM_IDEAS_THREAD_ID = threadIdStr;
-    topicNameByThreadId.set(Number(threadIdStr), 'Ideas');
-    logToFile(`[TelegramBuffer] Updated TELEGRAM_IDEAS_THREAD_ID=${threadIdStr}`);
-    const envPath = path.resolve(process.cwd(), '.env.local');
-    if (fs.existsSync(envPath)) {
-      let envContent = fs.readFileSync(envPath, 'utf8');
-      if (/TELEGRAM_IDEAS_THREAD_ID=/i.test(envContent)) {
-        envContent = envContent.replace(/TELEGRAM_IDEAS_THREAD_ID=.*/g, `TELEGRAM_IDEAS_THREAD_ID=${threadIdStr}`);
-      } else {
-        envContent += `\nTELEGRAM_IDEAS_THREAD_ID=${threadIdStr}\n`;
-      }
-      fs.writeFileSync(envPath, envContent, 'utf8');
+    if (threadIdStr) {
+      topicNameByThreadId.set(Number(threadIdStr), 'Ideas');
     }
+    logToFile(`[TelegramBuffer] Updated TELEGRAM_IDEAS_THREAD_ID=${threadIdStr}`);
+    persistThreadIdToEnv('TELEGRAM_IDEAS_THREAD_ID', threadIdStr);
     return true;
   } catch (e: any) {
     logToFile(`[TelegramBuffer] Error setting ideas thread ID: ${e.message}`);
@@ -2443,21 +2594,33 @@ export function setTelegramMacroThreadId(threadId: string | number): boolean {
   try {
     const threadIdStr = String(threadId).trim();
     process.env.TELEGRAM_MACRO_THREAD_ID = threadIdStr;
-    topicNameByThreadId.set(Number(threadIdStr), 'Macro');
-    logToFile(`[TelegramBuffer] Updated TELEGRAM_MACRO_THREAD_ID=${threadIdStr}`);
-    const envPath = path.resolve(process.cwd(), '.env.local');
-    if (fs.existsSync(envPath)) {
-      let envContent = fs.readFileSync(envPath, 'utf8');
-      if (/TELEGRAM_MACRO_THREAD_ID=/i.test(envContent)) {
-        envContent = envContent.replace(/TELEGRAM_MACRO_THREAD_ID=.*/g, `TELEGRAM_MACRO_THREAD_ID=${threadIdStr}`);
-      } else {
-        envContent += `\nTELEGRAM_MACRO_THREAD_ID=${threadIdStr}\n`;
-      }
-      fs.writeFileSync(envPath, envContent, 'utf8');
+    if (threadIdStr) {
+      topicNameByThreadId.set(Number(threadIdStr), 'Macro');
     }
+    logToFile(`[TelegramBuffer] Updated TELEGRAM_MACRO_THREAD_ID=${threadIdStr}`);
+    persistThreadIdToEnv('TELEGRAM_MACRO_THREAD_ID', threadIdStr);
     return true;
   } catch (e: any) {
     logToFile(`[TelegramBuffer] Error setting macro thread ID: ${e.message}`);
+    return false;
+  }
+}
+
+/**
+ * Explicitly update and persist TELEGRAM_TRADE_THREAD_ID to environment & .env.local
+ */
+export function setTelegramTradeThreadId(threadId: string | number): boolean {
+  try {
+    const threadIdStr = String(threadId).trim();
+    process.env.TELEGRAM_TRADE_THREAD_ID = threadIdStr;
+    if (threadIdStr) {
+      topicNameByThreadId.set(Number(threadIdStr), 'Trade');
+    }
+    logToFile(`[TelegramBuffer] Updated TELEGRAM_TRADE_THREAD_ID=${threadIdStr}`);
+    persistThreadIdToEnv('TELEGRAM_TRADE_THREAD_ID', threadIdStr);
+    return true;
+  } catch (e: any) {
+    logToFile(`[TelegramBuffer] Error setting trade thread ID: ${e.message}`);
     return false;
   }
 }

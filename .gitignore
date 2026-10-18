@@ -26,3 +26,5 @@ cloudflare-telegram-buffer/.wrangler/
 .venv/
 venv/
 .cache/
+server/*.pid
+server/telegram_dedup.json

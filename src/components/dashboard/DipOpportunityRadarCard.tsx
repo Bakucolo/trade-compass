@@ -199,7 +199,7 @@ export function DipOpportunityRadarCard({
         if (isHidden) return false;
       }
 
-      const oppScore = item.savedReportInfo?.opportunityScore ?? item.heuristicSignal.preliminaryOpportunityScore;
+      const oppScore = item.savedReportInfo?.opportunityScore ?? item.heuristicSignal?.preliminaryOpportunityScore ?? 50;
 
       // Tab filter
       if (activeTab === 'SAVED' && !item.savedReportInfo) return false;
@@ -223,8 +223,8 @@ export function DipOpportunityRadarCard({
     });
 
     return list.sort((a, b) => {
-      const scoreA = a.savedReportInfo?.opportunityScore ?? a.heuristicSignal.preliminaryOpportunityScore;
-      const scoreB = b.savedReportInfo?.opportunityScore ?? b.heuristicSignal.preliminaryOpportunityScore;
+      const scoreA = a.savedReportInfo?.opportunityScore ?? a.heuristicSignal?.preliminaryOpportunityScore ?? 50;
+      const scoreB = b.savedReportInfo?.opportunityScore ?? b.heuristicSignal?.preliminaryOpportunityScore ?? 50;
 
       if (sortBy === 'BUY_SCORE') {
         if (scoreB !== scoreA) return scoreB - scoreA;
@@ -247,7 +247,7 @@ export function DipOpportunityRadarCard({
   const watchlistDipCount = useMemo(() => activeDips.filter((d) => d.source === 'WATCHLIST').length, [activeDips]);
   const highScoreCount = useMemo(() => {
     return activeDips.filter((d) => {
-      const score = d.savedReportInfo?.opportunityScore ?? d.heuristicSignal.preliminaryOpportunityScore;
+      const score = d.savedReportInfo?.opportunityScore ?? d.heuristicSignal?.preliminaryOpportunityScore ?? 50;
       return score >= 70;
     }).length;
   }, [activeDips]);
@@ -492,8 +492,8 @@ export function DipOpportunityRadarCard({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 max-h-[520px] overflow-y-auto pr-1">
               {filteredDips.slice(0, 16).map((item) => {
-                const isVolatility = item.heuristicSignal.potentialDriver === 'LIKELY_VOLATILITY' || item.heuristicSignal.potentialDriver === 'MARKET_WIDE_CORRECTION';
-                const oppScore = item.savedReportInfo?.opportunityScore ?? item.heuristicSignal.preliminaryOpportunityScore;
+                const isVolatility = item.heuristicSignal?.potentialDriver === 'LIKELY_VOLATILITY' || item.heuristicSignal?.potentialDriver === 'MARKET_WIDE_CORRECTION';
+                const oppScore = item.savedReportInfo?.opportunityScore ?? item.heuristicSignal?.preliminaryOpportunityScore ?? 50;
                 const hasSavedReport = Boolean(item.savedReportInfo);
                 const scoreTier = getBuyScoreDetails(oppScore);
                 const breakdown = item.scoreBreakdown;

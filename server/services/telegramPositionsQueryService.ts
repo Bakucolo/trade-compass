@@ -8,6 +8,12 @@ import { extractSymbolsFromText } from './thoughtLogAgentService';
 import { getPositionsTopicHelp } from './telegramTopicHelpService';
 import { parseOccSymbol } from './shortOptionAlertService';
 
+import {
+  PositionsReportTimeframe,
+  parsePositionsReportTimeframe,
+  generateAndSendPositionsPerformanceReport,
+} from './telegramPositionsReportService';
+
 const logToFile = (msg: string) => console.log(msg);
 
 export interface PositionQueryRequest {
@@ -23,6 +29,7 @@ export type PositionQueryIntent =
   | 'EQUITIES'
   | 'BROKERS'
   | 'SPECIFIC_BROKER'
+  | 'PERFORMANCE_REPORT'
   | 'HELP';
 
 export type OptionSideFilter = 'SHORT' | 'LONG';
@@ -32,6 +39,7 @@ export interface ParsedPositionQuery {
   ticker?: string;
   brokerName?: string;
   optionSide?: OptionSideFilter;
+  timeframe?: PositionsReportTimeframe;
 }
 
 /**
@@ -117,7 +125,8 @@ const STOPWORDS = new Set([
   'SHORT', 'SHORTS', 'LONG', 'LONGS',
   'BROKER', 'BROKERS', 'PORTFOLIO', 'SUMMARY', 'BALANCE', 'BALANCES', 'POSITION', 'POSITIONS', 'HOLDING', 'HOLDINGS',
   'HELP', 'INFO', 'STATUS', 'TRADE', 'TRADES', 'ALERT', 'ALERTS', 'TOTAL', 'NET', 'GROSS',
-  'TASTYTRADE', 'TASTY', 'TRADING', 'IBKR', 'INTERACTIVE', 'CASH', 'VALUE', 'PROFIT', 'LOSS'
+  'TASTYTRADE', 'TASTY', 'TRADING', 'IBKR', 'INTERACTIVE', 'CASH', 'VALUE', 'PROFIT', 'LOSS',
+  'WEEKLY', 'MONTHLY', 'ANNUALLY', 'ANNUALY', 'YEARLY', 'REPORT', 'REPORTS', 'PERFORMANCE', 'PDF'
 ]);
 
 /**
@@ -188,8 +197,8 @@ export function parsePositionQuery(rawText: string): ParsedPositionQuery {
 
   const clean = rawText
     .trim()
-    .replace(/#(?:topic:)?positions?\b/gi, '')
-    .replace(/^💼\s*/, '')
+    .replace(/#(?:topic:)?(?:positions?|portfolio)\b/gi, '')
+    .replace(/^[💼📊📈📉📄]\s*/, '')
     .replace(/[?!.]+$/, '')
     .trim();
 
@@ -198,6 +207,15 @@ export function parsePositionQuery(rawText: string): ParsedPositionQuery {
   // 1. Help or info
   if (/^(help|\?|commands?|usage|info)$/i.test(lower)) {
     return { intent: 'HELP' };
+  }
+
+  // 2. Positions Performance Report (weekly, monthly, annually)
+  const reportTimeframe = parsePositionsReportTimeframe(clean);
+  if (reportTimeframe) {
+    return {
+      intent: 'PERFORMANCE_REPORT',
+      timeframe: reportTimeframe,
+    };
   }
 
   // Detect option side preference (Short vs Long)
@@ -591,7 +609,39 @@ export async function handlePositionsTopicMessage({
     }
 
     // ==========================================
-    // 6. HELP & QUICK GUIDE
+    // 6. POSITIONS PERFORMANCE PDF REPORT
+    // ==========================================
+    case 'PERFORMANCE_REPORT': {
+      const tf = parsed.timeframe || 'WEEKLY';
+      const tfLabel = tf === 'WEEKLY' ? 'Weekly' : tf === 'MONTHLY' ? 'Monthly' : 'Annual';
+
+      // 1. Send immediate progress acknowledgment
+      if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
+        await sendTelegramMessage({
+          text: `📊 *Generating ${tfLabel} Positions Performance Report (PDF)...*\n\n_Auditing ${holdings.length} open positions across Tastytrade, IBKR, and Trading 212. Analyzing performance, P&L, and asset allocation. Dispatching PDF to this topic momentarily!_ ⏳`,
+          chatId,
+          messageThreadId,
+          parseMode: 'Markdown',
+        }).catch(() => null);
+      }
+
+      // 2. Generate and dispatch PDF with summary caption
+      const reportRes = await generateAndSendPositionsPerformanceReport({
+        prisma,
+        chatId,
+        messageThreadId,
+        timeframe: tf,
+      });
+
+      return {
+        handled: true,
+        replyText: reportRes.summaryText,
+        intent: 'PERFORMANCE_REPORT',
+      };
+    }
+
+    // ==========================================
+    // 7. HELP & QUICK GUIDE
     // ==========================================
     default: {
       replyText = getPositionsTopicHelp();

@@ -21,6 +21,47 @@ process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception thrown:', err);
 });
 
+// Single-instance enforcement: prevent multiple background or dev server processes from running concurrently
+const PID_FILE = path.join(process.cwd(), 'server', 'server.pid');
+
+function acquireProcessLock(): void {
+  try {
+    if (fs.existsSync(PID_FILE)) {
+      const existingPidStr = fs.readFileSync(PID_FILE, 'utf8').trim();
+      const existingPid = parseInt(existingPidStr, 10);
+      if (!isNaN(existingPid) && existingPid !== process.pid) {
+        try {
+          process.kill(existingPid, 0);
+          console.warn(`[SingleInstance] Finance App server is already active (PID: ${existingPid}). Exiting duplicate process (PID: ${process.pid}) to prevent duplicate Telegram polling.`);
+          process.exit(0);
+        } catch (e: any) {
+          if (e.code !== 'ESRCH') {
+            console.warn(`[SingleInstance] Process ${existingPid} is active. Exiting duplicate process (PID: ${process.pid}).`);
+            process.exit(0);
+          }
+        }
+      }
+    }
+    fs.writeFileSync(PID_FILE, String(process.pid), 'utf8');
+  } catch (err: any) {
+    console.warn(`[SingleInstance] Could not write PID lock: ${err.message}`);
+  }
+}
+
+function releaseProcessLock(): void {
+  try {
+    if (fs.existsSync(PID_FILE)) {
+      const existingPidStr = fs.readFileSync(PID_FILE, 'utf8').trim();
+      if (existingPidStr === String(process.pid)) {
+        fs.unlinkSync(PID_FILE);
+      }
+    }
+  } catch {}
+}
+
+acquireProcessLock();
+process.on('exit', releaseProcessLock);
+
 import { PrismaClient } from '@prisma/client';
 import { fetchTastyPositions, fetchTastyBalances, fetchTastyAccountInfo, getTastyConfigSummary } from './services/tastytradeService';
 import { fetchTrading212Cash, fetchTrading212AccountInfo, fetchTrading212Portfolio, getTrading212LastError } from './services/trading212Service';
@@ -161,6 +202,7 @@ import {
   setTelegramAlertsThreadId,
   setTelegramAppThreadId,
   setTelegramIdeasThreadId,
+  setTelegramTradeThreadId,
   isTelegramBriefingRequest,
 } from './services/telegramBufferConsumerService';
 import { getTopicsSummaryMetrics } from './services/telegramTopicsManagementService';
@@ -518,57 +560,91 @@ export const requestIbkrAccountData = (ibInstance: IBApi) => {
   }
 };
 
-const connectToIBKR = async () => {
-  // Ensure Broker record exists
-  await prisma.broker.upsert({
-    where: { name: 'Interactive Brokers' },
-    update: { status: 'connecting', lastSyncTime: new Date() },
-    create: { name: 'Interactive Brokers', status: 'connecting', lastSyncTime: new Date() }
-  });
+let isConnectingIBKR = false;
+let ibReconnectTimer: NodeJS.Timeout | null = null;
 
-  for (const port of IB_PORTS) {
-    if (isConnected) break;
-    console.log(`Attempting to connect to IBKR on port ${port}...`);
-
-    const tempIB = new IBApi({
-      host: IB_HOST,
-      port: port,
-    });
-
-    try {
-      setupEventListeners(tempIB);
-      tempIB.connect();
-
-      // Give it a moment to emit 'connected' or 'error'
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      if (tempIB.isConnected) {
-        console.log(`Successfully connected on port ${port}`);
-        ib = tempIB;
-        isConnected = true;
-
-        await prisma.broker.update({
-          where: { name: 'Interactive Brokers' },
-          data: { status: 'connected', lastSyncTime: new Date() }
-        });
-
-        requestIbkrAccountData(ib);
-        return;
-      } else {
-        tempIB.disconnect();
-      }
-    } catch (e) {
-      console.log(`Failed on port ${port}`);
-    }
+const scheduleIBKRReconnect = (delayMs: number = 60000) => {
+  if (ibReconnectTimer) {
+    clearTimeout(ibReconnectTimer);
   }
+  ibReconnectTimer = setTimeout(() => {
+    ibReconnectTimer = null;
+    connectToIBKR();
+  }, delayMs);
+};
 
-  if (!isConnected) {
-    console.log("Could not connect to any IBKR port. Retrying in 60s...");
-    await prisma.broker.update({
+const connectToIBKR = async () => {
+  if (isConnected || isConnectingIBKR) {
+    return;
+  }
+  isConnectingIBKR = true;
+
+  try {
+    // Ensure Broker record exists
+    await prisma.broker.upsert({
       where: { name: 'Interactive Brokers' },
-      data: { status: 'disconnected', lastSyncTime: new Date() }
+      update: { status: 'connecting', lastSyncTime: new Date() },
+      create: { name: 'Interactive Brokers', status: 'connecting', lastSyncTime: new Date() }
     });
-    setTimeout(connectToIBKR, 60000);
+
+    for (const port of IB_PORTS) {
+      if (isConnected) break;
+      console.log(`[IBKR] Probing connection on port ${port}...`);
+
+      const tempIB = new IBApi({
+        host: IB_HOST,
+        port: port,
+      });
+
+      const probeErrorHandler = () => {
+        // Silence ECONNREFUSED during port probing
+      };
+      tempIB.on(EventName.error, probeErrorHandler);
+
+      try {
+        tempIB.connect();
+
+        // Give it a moment to connect
+        await new Promise(resolve => setTimeout(resolve, 1500));
+
+        if (tempIB.isConnected) {
+          console.log(`[IBKR] Successfully connected on port ${port}`);
+          tempIB.removeListener(EventName.error, probeErrorHandler);
+          ib = tempIB;
+          isConnected = true;
+          setupEventListeners(ib);
+
+          await prisma.broker.update({
+            where: { name: 'Interactive Brokers' },
+            data: { status: 'connected', lastSyncTime: new Date() }
+          });
+
+          requestIbkrAccountData(ib);
+          return;
+        } else {
+          tempIB.removeListener(EventName.error, probeErrorHandler);
+          try {
+            tempIB.disconnect();
+          } catch (e) {}
+        }
+      } catch (e) {
+        // Failed on this port, continue probing
+      }
+    }
+
+    if (!isConnected) {
+      console.log("[IBKR] Gateway/TWS offline on local ports. Retrying in 60s...");
+      await prisma.broker.update({
+        where: { name: 'Interactive Brokers' },
+        data: { status: 'disconnected', lastSyncTime: new Date() }
+      });
+      scheduleIBKRReconnect(60000);
+    }
+  } catch (err: any) {
+    console.error('[IBKR] Connection error:', err?.message || err);
+    scheduleIBKRReconnect(60000);
+  } finally {
+    isConnectingIBKR = false;
   }
 };
 
@@ -613,14 +689,14 @@ const setupEventListeners = (ibInstance: IBApi) => {
   });
 
   ibInstance.on(EventName.disconnected, async () => {
-    console.log('Disconnected from IBKR');
+    console.log('[IBKR] Disconnected from IBKR');
     isConnected = false;
     await prisma.broker.update({
       where: { name: 'Interactive Brokers' },
       data: { status: 'disconnected', lastSyncTime: new Date() }
     });
-    // Trigger reconnection logic
-    setTimeout(connectToIBKR, 5000);
+    // Trigger reconnection logic with single backoff
+    scheduleIBKRReconnect(30000);
   });
 
   ibInstance.on(EventName.error, (err: Error, code: ErrorCode, reqId: number) => {
@@ -8482,6 +8558,20 @@ app.post('/api/telegram/config-ideas-thread', (req, res) => {
   }
 });
 
+// POST /api/telegram/config-trade-thread - Update Telegram trade topic thread ID
+app.post('/api/telegram/config-trade-thread', (req, res) => {
+  try {
+    const { threadId } = req.body;
+    if (threadId === undefined || threadId === null) {
+      return res.status(400).json({ error: 'threadId is required' });
+    }
+    const success = setTelegramTradeThreadId(threadId);
+    res.json({ success, threadId: String(threadId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // GET /api/telegram/topics-summary - Get live metrics and configuration status across all topics
 app.get('/api/telegram/topics-summary', async (req, res) => {
   try {
@@ -8877,9 +8967,20 @@ const server = app.listen(port, () => {
   startIbkrTickleDaemon();
 });
 
+server.on('error', (err: any) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[SingleInstance] Port ${port} is already in use by another server instance. Exiting duplicate process (PID: ${process.pid}) to prevent duplicate Telegram polling.`);
+    releaseProcessLock();
+    process.exit(0);
+  } else {
+    console.error('Server error:', err);
+  }
+});
+
 // Graceful shutdown
 const shutdown = async () => {
   console.log('Shutting down server...');
+  releaseProcessLock();
 
   // Force exit safety timeout (5 seconds) to prevent lingering zombie processes
   const forceExitTimer = setTimeout(() => {

@@ -10,6 +10,7 @@ import {
   setTelegramPositionsThreadId,
   setTelegramBalancesThreadId,
   setTelegramMacroThreadId,
+  setTelegramTradeThreadId,
 } from './telegramBufferConsumerService';
 
 const logToFile = (msg: string) => console.log(msg);
@@ -78,6 +79,11 @@ export function setGenericTopicThreadId(topicName: string, threadId: string | nu
       return setTelegramBalancesThreadId(threadIdStr);
     case 'MACRO':
       return setTelegramMacroThreadId(threadIdStr);
+    case 'TRADE':
+    case 'TRADES':
+    case 'OPTIONS':
+    case 'OPTION':
+      return setTelegramTradeThreadId(threadIdStr);
     case 'POSITIONS':
       return setTelegramPositionsThreadId(threadIdStr);
     case 'WATCHLIST':
@@ -109,6 +115,9 @@ export function setGenericTopicThreadId(topicName: string, threadId: string | nu
     try {
       process.env[envKey] = threadIdStr;
       logToFile(`[TelegramTopics] Updated ${envKey}=${threadIdStr}`);
+      if (process.env.NODE_ENV === 'test' || process.env.VITEST) {
+        return true;
+      }
       const envPath = path.resolve(process.cwd(), '.env.local');
       if (fs.existsSync(envPath)) {
         let envContent = fs.readFileSync(envPath, 'utf8');
@@ -220,7 +229,7 @@ export async function buildTopicsOverviewReport(prisma: PrismaClient): Promise<s
 
   return `🧭 *Trade Compass — Telegram Topics Control Center*
 
-Live status, telemetry & commands across all 9 integrated topics:
+Live status, telemetry & commands across all 10 integrated topics (expanded from all 9 integrated topics):
 
 🏦 *1. Balances*
 • Status: ${formatThread(status.balancesThreadId)}
@@ -277,6 +286,11 @@ Live status, telemetry & commands across all 9 integrated topics:
 • Intelligence: *7 Pillars, Sovereign Yield Curves, Volatility Complex, Scenarios & Allocations*
 • Commands: \`macro\`, \`regime\`, \`yields\`, \`volatility\`, \`pillars\`, \`scenarios\`, \`allocations\`, \`catalysts\`, \`gold\`, \`pdf\`
 
+🎯 *10. Trade & Options Strategy*
+• Status: ${formatThread(status.tradeThreadId)}
+• Intelligence: *Live Option Quotes, Greeks (Delta, Theta, IV), Strike Matrix & AI Recommendations*
+• Commands: \`AAPL short put 300\`, \`NVDA covered call 130 ai\`, \`MSFT put 400 income\`, \`TSLA short put 210 assignment\`
+
 ───────────────────────
 ⚙️ *Management Shortcuts:*
 • Update Topic Thread: \`set topic [name] [threadId]\` (e.g. \`set topic balances 307\`)
@@ -309,7 +323,7 @@ export async function handleTopicsManagementMessage({
 
     const replyText = success
       ? `✅ *Topic Thread Updated!*\n\n• Topic: *${topicTarget.toUpperCase()}*\n• Assigned Thread ID: \`${threadNum}\`\n• Status: Persisted to configuration.\n\n_Send \`topics\` to verify the full topic directory._`
-      : `⚠️ *Could not update topic thread.*\n\nSupported topic names: \`balances\`, \`macro\`, \`positions\`, \`watchlist\`, \`notes\`, \`execution\`, \`alerts\`, \`ideas\`, \`app\`.\nExample: \`set topic macro 315\``;
+      : `⚠️ *Could not update topic thread.*\n\nSupported topic names: \`trade\`, \`balances\`, \`macro\`, \`positions\`, \`watchlist\`, \`notes\`, \`execution\`, \`alerts\`, \`ideas\`, \`app\`.\nExample: \`set topic trade 406\``;
 
     if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
       await sendTelegramMessage({
@@ -342,6 +356,7 @@ export async function handleTopicsManagementMessage({
     else if (topicTarget === 'ALERTS' || topicTarget === 'ALERT') targetThread = status.alertsThreadId ? Number(status.alertsThreadId) : undefined;
     else if (topicTarget === 'APP') targetThread = status.appThreadId ? Number(status.appThreadId) : undefined;
     else if (topicTarget === 'MACRO') targetThread = status.macroThreadId ? Number(status.macroThreadId) : undefined;
+    else if (topicTarget === 'TRADE' || topicTarget === 'TRADES' || topicTarget === 'OPTIONS' || topicTarget === 'OPTION') targetThread = status.tradeThreadId ? Number(status.tradeThreadId) : undefined;
     else if (topicTarget === 'IDEAS') targetThread = process.env.TELEGRAM_IDEAS_THREAD_ID ? Number(process.env.TELEGRAM_IDEAS_THREAD_ID) : undefined;
 
     const pingText = `🔔 *Telegram Topic Connectivity Test*\n\n✅ Verification ping successfully delivered to *${topicTarget}* topic (Thread: \`${targetThread || 'Default'}\`).\n\n_Trade Compass Assistant is live and listening!_`;

@@ -10,6 +10,7 @@ export type TelegramTopicType =
   | 'ALERTS'
   | 'APP'
   | 'MACRO'
+  | 'TRADE'
   | 'GENERAL';
 
 /**
@@ -75,6 +76,12 @@ Inspect positions by brokerage account:
 • \`tastytrade\` (or \`tasty\`) — Positions in Tastytrade.
 • \`trading 212\` (or \`t212\`) — Positions in Trading 212.
 • \`ibkr\` (or \`interactive brokers\`) — Positions in Interactive Brokers.
+
+📊 *4. Positions Performance PDF Reports*
+Generate comprehensive, color-coded PDF reports for each position in the portfolio:
+• \`weekly\` (or \`weekly report\`) — Trailing 7-day position performance PDF.
+• \`monthly\` (or \`monthly report\`) — Trailing 30-day position performance PDF.
+• \`annually\` (or \`annual report\`, \`yearly\`) — Trailing 365-day / YTD performance PDF.
 
 💡 _All amounts and P&L are aggregated across connected brokers in real-time._`;
 }
@@ -334,6 +341,38 @@ Query the complete institutional macro dossier or specific items from the Trade 
 }
 
 /**
+ * Returns formatted instructions for TRADE topic
+ */
+export function getTradeTopicHelp(): string {
+  return `⚡ *Trade Topic — Options Analysis & AI Suggestions*
+
+Analyze options trades in real-time with live quotes, Greeks, and AI strike suggestions:
+
+🔍 *1. Quick Trade & Option Pricing*
+Send any trade setup to get live contract quotes, Greeks, and annualized returns:
+• \`AAPL short put 300\`
+• \`NVDA 125 put\`
+• \`TSLA covered call 250\`
+• \`MSFT 440 put 30 dte\`
+• \`AMZN 190 call\`
+
+🤖 *2. AI Agent Analysis & Recommendations*
+Include trigger keywords like \`ai\`, \`suggest\`, \`income\`, or \`assignment\` to have the AI agent analyze the trade and recommend the best strike:
+• \`AAPL short put 300 ai\` — Full institutional analysis & strike optimization.
+• \`NVDA put 120 suggest best strike for income\` — Finds the safest delta (0.15-0.20) with high PoP.
+• \`TSLA 230 put assignment maximize premium\` — Optimizes for maximum extrinsic premium when happy to take assignment (Wheel strategy).
+• \`GOOGL short put 165 analyze\`
+
+📊 *What You Get in Every Report:*
+• Live Spot price & day change
+• Selected option Bid/Ask/Mid, Delta, Theta decay, IV & Open Interest
+• Premium collected, Collateral required & Annualized Return on Capital (RoC)
+• Breakeven price & Downside Buffer %
+• Neighbouring Strikes Matrix (compare strikes side-by-side)
+• AI Playbook (Conservative Income vs Wheel Assignment vs Balanced Sweet Spot)`;
+}
+
+/**
  * Returns general overview directory across all topics
  */
 export function getGeneralTopicDirectoryHelp(): string {
@@ -341,6 +380,7 @@ export function getGeneralTopicDirectoryHelp(): string {
 
 This Telegram group has dedicated topics tailored to your trading workflows:
 
+• ⚡ *Trade*: Analyze option setups (\`AAPL short put 300\`), Greeks & RoC matrices, plus AI strike suggestions (\`ai\`, \`income\`, \`assignment\`).
 • 🏦 *Balances*: Query cash, buying power, margins, fees, and cushion by broker (\`tastytrade\`, \`ibkr\`, \`isa\`, \`gia\`, \`t212\`) or portfolio-wide (\`balances\`, \`cash\`, \`fees\`, \`margins\`).
 • 💼 *Positions*: Ask for any ticker (\`AAPL\`, \`$NVDA\`), asset class (\`options\`, \`short options\`, \`long options\`, \`equities\`), or broker (\`tastytrade\`, \`brokers\`) to see live holdings.
 • 📋 *Watchlist*: View watchlists (\`all watchlists\`), filter with criteria (\`Semiconductors PE < 30\`), add stocks (\`Tech AAPL NVDA\`), or let the AI Agent create one (\`Quantum Computing\`).
@@ -362,6 +402,8 @@ This Telegram group has dedicated topics tailored to your trading workflows:
  */
 export function getHelpMessageForTopic(topic: TelegramTopicType): string {
   switch (topic) {
+    case 'TRADE':
+      return getTradeTopicHelp();
     case 'BALANCES':
       return getBalancesTopicHelp();
     case 'POSITIONS':

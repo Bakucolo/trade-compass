@@ -11,6 +11,7 @@ vi.mock('../../server/services/telegramReportService', async (importOriginal) =>
   return {
     ...actual,
     sendTelegramMessage: vi.fn().mockResolvedValue({ ok: true }),
+    sendPdfReportToTelegram: vi.fn().mockResolvedValue({ success: true, messageId: 9999 }),
     generateAndSendDailyReport: vi.fn().mockResolvedValue({ ok: true }),
   };
 });
@@ -110,6 +111,16 @@ describe('Telegram Positions Query Service', () => {
       expect(parsePositionQuery('?')).toEqual({ intent: 'HELP' });
       expect(parsePositionQuery('commands')).toEqual({ intent: 'HELP' });
       expect(parsePositionQuery('info')).toEqual({ intent: 'HELP' });
+    });
+
+    it('should parse performance report requests for weekly, monthly, annually, annualy', () => {
+      expect(parsePositionQuery('weekly')).toEqual({ intent: 'PERFORMANCE_REPORT', timeframe: 'WEEKLY' });
+      expect(parsePositionQuery('weekly report')).toEqual({ intent: 'PERFORMANCE_REPORT', timeframe: 'WEEKLY' });
+      expect(parsePositionQuery('monthly')).toEqual({ intent: 'PERFORMANCE_REPORT', timeframe: 'MONTHLY' });
+      expect(parsePositionQuery('monthly performance')).toEqual({ intent: 'PERFORMANCE_REPORT', timeframe: 'MONTHLY' });
+      expect(parsePositionQuery('annually')).toEqual({ intent: 'PERFORMANCE_REPORT', timeframe: 'ANNUALLY' });
+      expect(parsePositionQuery('annualy')).toEqual({ intent: 'PERFORMANCE_REPORT', timeframe: 'ANNUALLY' });
+      expect(parsePositionQuery('yearly')).toEqual({ intent: 'PERFORMANCE_REPORT', timeframe: 'ANNUALLY' });
     });
 
     it('should strip topic tags before parsing', () => {
@@ -438,6 +449,37 @@ describe('Telegram Positions Query Service', () => {
       expect(result.replyText).toContain('Ticker Lookup');
       expect(result.replyText).toContain('Asset Classes');
       expect(result.replyText).toContain('Broker Portfolios');
+    });
+
+    it('should handle "weekly", "monthly", and "annualy" performance reports and dispatch PDF', async () => {
+      const resultWeekly = await handlePositionsTopicMessage({
+        text: 'weekly',
+        chatId: 123456,
+        prisma: mockPrisma,
+      });
+
+      expect(resultWeekly.handled).toBe(true);
+      expect(resultWeekly.intent).toBe('PERFORMANCE_REPORT');
+      expect(resultWeekly.replyText).toContain('Weekly Positions Performance');
+      expect(resultWeekly.replyText).toContain('Portfolio Value:');
+
+      const resultMonthly = await handlePositionsTopicMessage({
+        text: 'monthly',
+        chatId: 123456,
+        prisma: mockPrisma,
+      });
+      expect(resultMonthly.handled).toBe(true);
+      expect(resultMonthly.intent).toBe('PERFORMANCE_REPORT');
+      expect(resultMonthly.replyText).toContain('Monthly Positions Performance');
+
+      const resultAnnualy = await handlePositionsTopicMessage({
+        text: 'annualy',
+        chatId: 123456,
+        prisma: mockPrisma,
+      });
+      expect(resultAnnualy.handled).toBe(true);
+      expect(resultAnnualy.intent).toBe('PERFORMANCE_REPORT');
+      expect(resultAnnualy.replyText).toContain('Annual Positions Performance');
     });
   });
 });

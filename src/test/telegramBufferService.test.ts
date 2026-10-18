@@ -19,6 +19,7 @@ describe('Telegram Buffer Webhook Consumer Service', () => {
 
   it('should return unconfigured status when TELEGRAM_BUFFER_URL is missing', async () => {
     delete process.env.TELEGRAM_BUFFER_URL;
+    delete process.env.TELEGRAM_BOT_TOKEN;
     const status = getTelegramBufferStatus();
     expect(status.isConfigured).toBe(false);
     expect(status.bufferUrl).toBeNull();
@@ -27,7 +28,7 @@ describe('Telegram Buffer Webhook Consumer Service', () => {
     const result = await consumeTelegramBuffer(mockPrisma);
     expect(result.success).toBe(false);
     expect(result.consumedCount).toBe(0);
-    expect(result.message).toContain('TELEGRAM_BUFFER_URL not configured');
+    expect(result.message).toContain('TELEGRAM_BUFFER_URL');
   });
 
   it('should consume and ingest messages from buffer endpoint', async () => {
@@ -117,5 +118,71 @@ describe('Telegram Buffer Webhook Consumer Service', () => {
     expect(result.success).toBe(true);
     expect(result.consumedCount).toBe(0);
     expect(mockPrisma.thoughtLog.create).not.toHaveBeenCalled();
+  });
+
+  it('should deduplicate messages arriving simultaneously from Cloudflare buffer and direct getUpdates', async () => {
+    process.env.TELEGRAM_BUFFER_URL = 'https://telegram-thought-buffer.workers.dev/consume';
+    process.env.TELEGRAM_BOT_TOKEN = 'mock_bot_token_123';
+
+    const duplicateMsg: BufferedTelegramMessage = {
+      id: 'msg_1787815200000_9999',
+      messageId: 9999,
+      text: 'Oust short put 16 19 February 2027',
+      date: 1787815200,
+      timestamp: '2026-10-16T18:33:43.000Z',
+      sender: { id: 8959, username: 'testuser' },
+      chat: { id: -1003872409872, type: 'supergroup' },
+    };
+
+    // First fetch call is to TELEGRAM_BUFFER_URL
+    // Second fetch call is to Telegram Bot API getUpdates
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          count: 1,
+          messages: [duplicateMsg],
+        }),
+      } as any)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          result: [
+            {
+              update_id: 555001,
+              message: {
+                message_id: 9999,
+                date: 1787815200,
+                text: 'Oust short put 16 19 February 2027',
+                from: { id: 8959, username: 'testuser' },
+                chat: { id: -1003872409872, type: 'supergroup' },
+              },
+            },
+          ],
+        }),
+      } as any);
+
+    const createdRecords: any[] = [];
+    const mockPrisma = {
+      thoughtLog: {
+        create: vi.fn().mockImplementation(async ({ data }) => {
+          const rec = { id: `log-${createdRecords.length + 1}`, ...data };
+          createdRecords.push(rec);
+          return rec;
+        }),
+      },
+    } as any;
+
+    const result = await consumeTelegramBuffer(mockPrisma);
+
+    expect(result.success).toBe(true);
+    // Even though it was returned by BOTH Cloudflare Worker and Telegram getUpdates,
+    // exactly ONE message was processed and ingested!
+    expect(result.consumedCount).toBe(1);
+    expect(createdRecords.length).toBe(1);
   });
 });

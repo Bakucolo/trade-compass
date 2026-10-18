@@ -126,17 +126,22 @@ export async function handleIdeasTopicMessage({
     const rawHeadline = createTitleFromText(clean, timestamp).replace(/^📱\s*/, '');
     const title = `💡 Idea: ${rawHeadline}`;
 
+    let ideaTags = `Telegram, Ideas, Mobile, ${senderLabel}`;
+    if (savedWatchlistResult || hasWatchlistDirective) {
+      ideaTags += ', Watchlist';
+    }
+
     const savedLog = await prisma.thoughtLog.create({
       data: {
         title,
         content: clean,
         folder: 'Ideas',
-        tags: `Telegram, Ideas, Mobile, ${senderLabel}`,
+        tags: ideaTags,
         symbols: detectedSymbols.length > 0 ? detectedSymbols.join(', ') : null,
         sentiment,
         isPinned: false,
         isFulfilled: false,
-        agentOutput: `💡 **Market Idea Logged**` + (savedWatchlistResult ? `\n\n📌 Added to Watchlist "${savedWatchlistResult.watchlistName}": ${savedWatchlistResult.added.map(s => `$${s}`).join(', ')}` : ''),
+        agentOutput: `💡 **Market Idea Logged**` + (savedWatchlistResult ? `\n\n📌 Saved to Watchlist "${savedWatchlistResult.watchlistName}": ${savedWatchlistResult.added.map(s => `$${s}`).join(', ')}` : ''),
         agentActionType: 'ADD_CONTEXT',
         marketDataJson: null,
         createdAt: new Date(timestamp),

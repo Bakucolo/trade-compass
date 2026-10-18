@@ -1100,6 +1100,18 @@ export async function sendPdfReportToTelegram(
 
   const defaultCaption = captionSummary || `📊 *TradeFlow Daily Executive Briefing*\n\nAttached is your synthesized institutional PDF report covering portfolio valuation, defense alerts, top 5 high-conviction dip opportunities, and macro volatility dossier.`;
 
+  // Suppress duplicate PDF dispatch within 10 seconds to the same chat/topic
+  const pdfOutKey = `pdf:${targetChatId}:${targetThreadId || 'root'}:${filename}`;
+  const now = Date.now();
+  if (recentOutboundMessageKeys.has(pdfOutKey)) {
+    const sentTime = recentOutboundMessageKeys.get(pdfOutKey) || 0;
+    if (now - sentTime < 10000) {
+      console.warn(`[TelegramReport] Suppressing duplicate PDF dispatch within 10s: ${filename}`);
+      return { success: true };
+    }
+  }
+  recentOutboundMessageKeys.set(pdfOutKey, now);
+
   const task = agentActivityTracker.startTask({
     agentName: 'Telegram PDF Executive Dispatcher',
     agentType: 'PORTFOLIO_AUDIT',
@@ -1122,12 +1134,30 @@ export async function sendPdfReportToTelegram(
 
     const telegramEndpoint = `https://api.telegram.org/bot${botToken}/sendDocument`;
 
-    const res = await fetch(telegramEndpoint, {
+    let res = await fetch(telegramEndpoint, {
       method: 'POST',
       body: formData,
     });
 
-    const responseJson = await res.json();
+    let responseJson = await res.json();
+
+    if (!res.ok || !responseJson.ok) {
+      const errMsg = responseJson.description || '';
+      if (/message thread not found/i.test(errMsg)) {
+        if (isAlert && targetThreadId !== 2) {
+          console.warn(`[TelegramReport] PDF topic thread ${targetThreadId} not found. Retrying with Alerts topic thread 2.`);
+          formData.set('message_thread_id', '2');
+          process.env.TELEGRAM_ALERTS_THREAD_ID = '2';
+          res = await fetch(telegramEndpoint, { method: 'POST', body: formData });
+          responseJson = await res.json();
+        }
+        if (!res.ok || !responseJson.ok) {
+          formData.delete('message_thread_id');
+          res = await fetch(telegramEndpoint, { method: 'POST', body: formData });
+          responseJson = await res.json();
+        }
+      }
+    }
 
     if (!res.ok || !responseJson.ok) {
       const errMsg = responseJson.description || `HTTP ${res.status} error from Telegram API`;
@@ -1200,6 +1230,10 @@ export function splitTelegramMessage(text: string, maxLen = 3800): string[] {
   return chunks;
 }
 
+// Outbound duplicate suppression map (chatId:threadId:hash -> timestamp)
+const recentOutboundMessageKeys = new Map<string, number>();
+const OUTBOUND_DEDUP_WINDOW_MS = 6000; // 6 seconds suppression window
+
 /**
  * Dispatches a text message to Telegram Bot API with dynamic topic routing:
  * - When an alert is triggered (isAlert === true):
@@ -1224,6 +1258,18 @@ export async function sendTelegramMessage(
   const isAlert = Boolean(options.isAlert);
   const targetChatId = options.chatId ?? (isAlert ? (process.env.TELEGRAM_ALERTS_CHAT_ID || '-1003872409872') : originalChatId);
   const targetThreadId = options.messageThreadId ?? (isAlert ? Number(process.env.TELEGRAM_ALERTS_THREAD_ID || 2) : undefined);
+
+  // Outbound duplicate protection: suppress identical text dispatched within 6 seconds
+  const outKey = `${targetChatId}:${targetThreadId || 'root'}:${options.text.trim().slice(0, 120)}`;
+  const now = Date.now();
+  if (recentOutboundMessageKeys.has(outKey)) {
+    const sentTime = recentOutboundMessageKeys.get(outKey) || 0;
+    if (now - sentTime < OUTBOUND_DEDUP_WINDOW_MS) {
+      console.warn(`[TelegramReport] Suppressing duplicate outbound message to topic within 6s: "${options.text.slice(0, 40)}..."`);
+      return { success: true, messageId: undefined };
+    }
+  }
+  recentOutboundMessageKeys.set(outKey, now);
 
   const telegramEndpoint = `https://api.telegram.org/bot${botToken}/sendMessage`;
   const chunks = splitTelegramMessage(options.text, 3800);
@@ -1267,6 +1313,36 @@ export async function sendTelegramMessage(
           body: JSON.stringify(payload),
         });
         responseJson = (await res.json()) as any;
+      }
+    }
+
+    // Fallback: If Telegram failed due to invalid message thread / topic not found
+    if (!res.ok || !responseJson.ok) {
+      const errMsg = responseJson.description || '';
+      if (/message thread not found/i.test(errMsg)) {
+        if (isAlert && payload.message_thread_id !== 2) {
+          console.warn(`[TelegramReport] Topic thread ${payload.message_thread_id} not found. Retrying with default Alerts topic thread 2.`);
+          payload.message_thread_id = 2;
+          process.env.TELEGRAM_ALERTS_THREAD_ID = '2';
+          res = await fetch(telegramEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          responseJson = (await res.json()) as any;
+        }
+
+        // If still failing or non-alert, fall back to omitting message_thread_id so message is delivered to chat
+        if (!res.ok || !responseJson.ok) {
+          console.warn(`[TelegramReport] Message thread still not found. Falling back to sending to general chat.`);
+          delete payload.message_thread_id;
+          res = await fetch(telegramEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          responseJson = (await res.json()) as any;
+        }
       }
     }
 
