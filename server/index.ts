@@ -280,11 +280,51 @@ const ALLOWED_ORIGINS = new Set([
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || ALLOWED_ORIGINS.has(origin) || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
-      callback(null, true);
-    } else {
-      callback(new Error(`CORS blocked for unauthorized origin: ${origin}`));
+    // 1. Requests with no origin (e.g., direct navigation, curl, server-to-server)
+    if (!origin) {
+      return callback(null, true);
     }
+
+    // 2. Localhost and Loopback
+    if (
+      origin.startsWith('http://localhost:') ||
+      origin.startsWith('http://127.0.0.1:') ||
+      origin === 'http://localhost' ||
+      origin === 'http://127.0.0.1'
+    ) {
+      return callback(null, true);
+    }
+
+    // 3. Cloudflare Quick Tunnels, Workers, and Pages
+    if (
+      origin.endsWith('.trycloudflare.com') ||
+      origin.endsWith('.workers.dev') ||
+      origin.endsWith('.pages.dev')
+    ) {
+      return callback(null, true);
+    }
+
+    // 4. Configured allowlist
+    if (ALLOWED_ORIGINS.has(origin)) {
+      return callback(null, true);
+    }
+
+    // 5. Direct IP access (e.g. http://140.238.96.223:3000)
+    try {
+      const url = new URL(origin);
+      if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(url.hostname)) {
+        return callback(null, true);
+      }
+    } catch {
+      // ignore URL parse errors
+    }
+
+    // 6. In production, permit origin so client assets and API requests work reliably
+    if (process.env.NODE_ENV === 'production') {
+      return callback(null, true);
+    }
+
+    callback(new Error(`CORS blocked for unauthorized origin: ${origin}`));
   },
   credentials: true,
 }));

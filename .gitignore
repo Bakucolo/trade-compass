@@ -28,3 +28,5 @@ venv/
 .cache/
 server/*.pid
 server/telegram_dedup.json
+*.key
+*.pem
