@@ -1,0 +1,38 @@
+services:
+  # ==============================================================================
+  # Trade Compass Core Application (Node.js API + Python Agent + Background Daemons)
+  # ==============================================================================
+  trade-compass:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trade-compass-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=file:/app/tradeflow.db?connection_limit=1&timeout=20000
+    env_file:
+      - .env.local
+    volumes:
+      # Persist the SQLite database across container upgrades and reboots
+      - tradeflow-data:/app/data
+      - ./tradeflow.db:/app/tradeflow.db
+
+  # ==============================================================================
+  # Cloudflare Tunnel (Optional, 100% Free Zero-Trust Gateway)
+  # Enables public HTTPS domain without opening router/firewall ports on the VM
+  # ==============================================================================
+  # cloudflared:
+  #   image: cloudflare/cloudflared:latest
+  #   container_name: trade-compass-tunnel
+  #   restart: unless-stopped
+  #   command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+  #   depends_on:
+  #     - trade-compass
+
+volumes:
+  tradeflow-data:
+    driver: local
