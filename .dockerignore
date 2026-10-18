@@ -19,3 +19,4 @@ server_debug.log
 portfolio_dump.json
 positions_dump.json
 *.txt
+!requirements.txt
