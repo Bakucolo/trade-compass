@@ -347,8 +347,8 @@ app.use('/api/position-folders', createPositionFolderRouter(prisma));
 // IBKR Connection Settings & Account Numbers
 export const IBKR_ISA_ACCOUNT = 'U14522424';
 export const IBKR_GIA_ACCOUNT = 'U15491236';
-const IB_HOST = '127.0.0.1';
-const IB_PORTS = [7497, 7496, 4001, 4002];
+const IB_HOST = process.env.IB_HOST || '127.0.0.1';
+const IB_PORTS = [4001, 4002, 7496, 7497];
 
 let ib: IBApi;
 let isConnected = false;

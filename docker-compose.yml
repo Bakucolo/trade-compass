@@ -14,25 +14,47 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - DATABASE_URL=file:/app/tradeflow.db?connection_limit=1&timeout=20000
+      - IB_HOST=ib-gateway
     env_file:
       - .env.local
     volumes:
       # Persist the SQLite database across container upgrades and reboots
       - tradeflow-data:/app/data
       - ./tradeflow.db:/app/tradeflow.db
+    depends_on:
+      - ib-gateway
+    networks:
+      - trade-net
 
   # ==============================================================================
-  # Cloudflare Tunnel (Optional, 100% Free Zero-Trust Gateway)
-  # Enables public HTTPS domain without opening router/firewall ports on the VM
+  # Interactive Brokers Headless Gateway + IBC (Autonomous 24/7 Cloud Connection)
   # ==============================================================================
-  # cloudflared:
-  #   image: cloudflare/cloudflared:latest
-  #   container_name: trade-compass-tunnel
-  #   restart: unless-stopped
-  #   command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
-  #   depends_on:
-  #     - trade-compass
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:latest
+    container_name: ib-gateway
+    restart: unless-stopped
+    environment:
+      TWS_USERID: ${TWS_USERID}
+      TWS_PASSWORD: ${TWS_PASSWORD}
+      TRADING_MODE: ${TRADING_MODE:-live}
+      VNC_SERVER_PASSWORD: ${VNC_SERVER_PASSWORD:-tradecompass123}
+      TIME_ZONE: ${TIME_ZONE:-Europe/London}
+      TWOFA_TIMEOUT_ACTION: restart
+      READ_ONLY_API: "no"
+      AUTO_RESTART_TIME: "11:59 PM"
+    env_file:
+      - .env.local
+    ports:
+      - "127.0.0.1:4001:4001"
+      - "127.0.0.1:4002:4002"
+      - "127.0.0.1:5900:5900"
+    networks:
+      - trade-net
 
 volumes:
   tradeflow-data:
     driver: local
+
+networks:
+  trade-net:
+    driver: bridge
