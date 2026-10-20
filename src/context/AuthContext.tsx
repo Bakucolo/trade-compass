@@ -11,10 +11,12 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   bypassMode: boolean;
+  pinConfigured: boolean;
   googleConfigured: boolean;
   authError: string | null;
   unauthorizedEmail: string | null;
   loginWithGoogle: () => Promise<void>;
+  loginWithPin: (pin: string) => Promise<{ success: boolean; error?: string; remainingAttempts?: number; lockedOut?: boolean }>;
   logout: () => Promise<void>;
   clearAuthError: () => void;
 }
@@ -26,6 +28,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [bypassMode, setBypassMode] = useState<boolean>(false);
+  const [pinConfigured, setPinConfigured] = useState<boolean>(false);
   const [googleConfigured, setGoogleConfigured] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [unauthorizedEmail, setUnauthorizedEmail] = useState<string | null>(null);
@@ -62,6 +65,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const data = await res.json();
         setIsAuthenticated(Boolean(data.authenticated));
         setBypassMode(Boolean(data.bypassMode));
+        setPinConfigured(Boolean(data.pinConfigured));
         setGoogleConfigured(Boolean(data.googleConfigured));
         setUser(data.user || null);
       } else {
@@ -79,6 +83,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     checkAuthStatus();
   }, [checkAuthStatus]);
+
+  const loginWithPin = async (pin: string): Promise<{ success: boolean; error?: string; remainingAttempts?: number; lockedOut?: boolean }> => {
+    try {
+      setAuthError(null);
+      const res = await fetch('/api/auth/pin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ pin }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const errMsg = data.error || 'Authentication failed';
+        setAuthError(errMsg);
+        return {
+          success: false,
+          error: errMsg,
+          remainingAttempts: data.remainingAttempts,
+          lockedOut: data.lockedOut,
+        };
+      }
+
+      if (data.authenticated && data.user) {
+        setIsAuthenticated(true);
+        setUser(data.user);
+        return { success: true };
+      }
+
+      return { success: false, error: 'Unexpected response' };
+    } catch (e: any) {
+      const errMsg = e.message || 'Connection error';
+      setAuthError(errMsg);
+      return { success: false, error: errMsg };
+    }
+  };
 
   const loginWithGoogle = async () => {
     try {
@@ -120,10 +161,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAuthenticated,
         isLoading,
         bypassMode,
+        pinConfigured,
         googleConfigured,
         authError,
         unauthorizedEmail,
         loginWithGoogle,
+        loginWithPin,
         logout,
         clearAuthError,
       }}

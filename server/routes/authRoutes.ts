@@ -6,6 +6,11 @@ import {
   clearSessionCookie,
   getSessionFromRequest,
   isGoogleAuthConfigured,
+  isPinAuthConfigured,
+  verifyMasterPin,
+  checkPinRateLimit,
+  recordFailedPinAttempt,
+  resetPinRateLimit,
   getAuthorizedEmails,
   getAppBaseUrl,
 } from '../auth';
@@ -15,20 +20,24 @@ export function createAuthRouter(): Router {
 
   // 1. Current Session State
   router.get('/me', (req: Request, res: Response) => {
+    const pinConfigured = isPinAuthConfigured();
     const googleConfigured = isGoogleAuthConfigured();
     const authorizedEmails = getAuthorizedEmails();
     const user = getSessionFromRequest(req);
 
-    if (!googleConfigured) {
-      // If Google Auth isn't configured in environment yet, treat as bypass mode
+    const isProtectionActive = pinConfigured || googleConfigured;
+
+    if (!isProtectionActive) {
+      // If neither PIN nor Google Auth is configured in environment yet, treat as bypass mode
       return res.json({
         authenticated: true,
         bypassMode: true,
         user: {
-          email: authorizedEmails[0] || 'owner@tradeflow.local',
+          email: authorizedEmails[0] || 'owner@tradecompass.local',
           name: 'Owner (Bypass Mode)',
           picture: '',
         },
+        pinConfigured: false,
         googleConfigured: false,
       });
     }
@@ -42,7 +51,8 @@ export function createAuthRouter(): Router {
           name: user.name,
           picture: user.picture,
         },
-        googleConfigured: true,
+        pinConfigured,
+        googleConfigured,
       });
     }
 
@@ -50,12 +60,67 @@ export function createAuthRouter(): Router {
       authenticated: false,
       bypassMode: false,
       user: null,
-      googleConfigured: true,
+      pinConfigured,
+      googleConfigured,
       authorizedEmailsCount: authorizedEmails.length,
     });
   });
 
-  // 2. Generate Google OAuth Redirect URL
+  // 2. Master PIN Authentication Endpoint
+  router.post('/pin/login', (req: Request, res: Response) => {
+    if (!isPinAuthConfigured()) {
+      return res.status(400).json({ error: 'Master PIN authentication is not configured on this server.' });
+    }
+
+    const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || '127.0.0.1';
+    const rateLimit = checkPinRateLimit(clientIp);
+
+    if (!rateLimit.allowed) {
+      return res.status(429).json({
+        error: `Too many failed attempts. Terminal is temporarily locked out. Try again in ${Math.ceil(rateLimit.retryAfterSeconds / 60)} minute(s).`,
+        retryAfterSeconds: rateLimit.retryAfterSeconds,
+      });
+    }
+
+    const { pin } = req.body || {};
+    if (!pin || typeof pin !== 'string') {
+      return res.status(400).json({ error: 'PIN is required' });
+    }
+
+    const isValid = verifyMasterPin(pin.trim());
+    if (!isValid) {
+      const failedResult = recordFailedPinAttempt(clientIp);
+      return res.status(401).json({
+        error: failedResult.lockedOut
+          ? 'Incorrect PIN. Maximum attempts reached. Terminal locked for 15 minutes.'
+          : `Incorrect PIN. ${failedResult.remainingAttempts} attempt(s) remaining.`,
+        remainingAttempts: failedResult.remainingAttempts,
+        lockedOut: failedResult.lockedOut,
+      });
+    }
+
+    // Success: reset rate limit attempts
+    resetPinRateLimit(clientIp);
+
+    // Create session token
+    const user = {
+      email: 'owner@tradecompass.local',
+      name: 'Terminal Owner',
+      picture: '',
+    };
+    const sessionToken = createSessionToken(user);
+    setSessionCookie(res, req, sessionToken);
+
+    console.log(`[Master PIN] Authorized terminal session established from ${clientIp}`);
+    return res.json({
+      success: true,
+      authenticated: true,
+      user,
+      token: sessionToken,
+    });
+  });
+
+  // 3. Generate Google OAuth Redirect URL
   router.get('/google/url', (req: Request, res: Response) => {
     const clientId = process.env.GOOGLE_CLIENT_ID;
     if (!clientId) {

@@ -129,6 +129,98 @@ export function isGoogleAuthConfigured(): boolean {
   return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 }
 
+// Master PIN Authentication
+export function getMasterPin(): string | null {
+  return process.env.APP_MASTER_PIN || process.env.MASTER_PIN || null;
+}
+
+export function isPinAuthConfigured(): boolean {
+  return Boolean(getMasterPin());
+}
+
+// Brute-force Rate Limiting for PIN attempts
+interface RateLimitRecord {
+  attempts: number;
+  lastAttempt: number;
+  lockedUntil: number;
+}
+
+const pinRateLimits = new Map<string, RateLimitRecord>();
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes lockout
+
+export function checkPinRateLimit(ip: string): { allowed: boolean; remainingAttempts: number; retryAfterSeconds: number } {
+  const now = Date.now();
+  const record = pinRateLimits.get(ip);
+  if (!record) {
+    return { allowed: true, remainingAttempts: MAX_FAILED_ATTEMPTS, retryAfterSeconds: 0 };
+  }
+
+  // Check if locked out
+  if (record.lockedUntil > now) {
+    const retryAfterSeconds = Math.ceil((record.lockedUntil - now) / 1000);
+    return { allowed: false, remainingAttempts: 0, retryAfterSeconds };
+  }
+
+  // If lockout expired or last attempt was > 15m ago, reset
+  if (record.lockedUntil <= now && record.lockedUntil > 0) {
+    pinRateLimits.delete(ip);
+    return { allowed: true, remainingAttempts: MAX_FAILED_ATTEMPTS, retryAfterSeconds: 0 };
+  }
+
+  if (now - record.lastAttempt > LOCKOUT_DURATION_MS) {
+    pinRateLimits.delete(ip);
+    return { allowed: true, remainingAttempts: MAX_FAILED_ATTEMPTS, retryAfterSeconds: 0 };
+  }
+
+  const remaining = Math.max(0, MAX_FAILED_ATTEMPTS - record.attempts);
+  return { allowed: remaining > 0, remainingAttempts: remaining, retryAfterSeconds: 0 };
+}
+
+export function recordFailedPinAttempt(ip: string): { remainingAttempts: number; lockedOut: boolean; retryAfterSeconds: number } {
+  const now = Date.now();
+  const record = pinRateLimits.get(ip) || { attempts: 0, lastAttempt: now, lockedUntil: 0 };
+
+  record.attempts += 1;
+  record.lastAttempt = now;
+
+  if (record.attempts >= MAX_FAILED_ATTEMPTS) {
+    record.lockedUntil = now + LOCKOUT_DURATION_MS;
+    pinRateLimits.set(ip, record);
+    return {
+      remainingAttempts: 0,
+      lockedOut: true,
+      retryAfterSeconds: Math.ceil(LOCKOUT_DURATION_MS / 1000),
+    };
+  }
+
+  pinRateLimits.set(ip, record);
+  return {
+    remainingAttempts: Math.max(0, MAX_FAILED_ATTEMPTS - record.attempts),
+    lockedOut: false,
+    retryAfterSeconds: 0,
+  };
+}
+
+export function resetPinRateLimit(ip: string): void {
+  pinRateLimits.delete(ip);
+}
+
+// Constant-Time Cryptographic PIN Verification
+export function verifyMasterPin(candidate: string): boolean {
+  const masterPin = getMasterPin();
+  if (!masterPin || !candidate) return false;
+
+  const candidateNorm = String(candidate).trim();
+  const masterNorm = String(masterPin).trim();
+
+  // Hash both with SHA-256 to ensure identical length buffers before timingSafeEqual
+  const candidateHash = crypto.createHash('sha256').update(candidateNorm).digest();
+  const masterHash = crypto.createHash('sha256').update(masterNorm).digest();
+
+  return crypto.timingSafeEqual(candidateHash, masterHash);
+}
+
 // Infer app public URL
 export function getAppBaseUrl(req: Request): string {
   if (process.env.APP_URL) {
@@ -142,8 +234,8 @@ export function getAppBaseUrl(req: Request): string {
 
 // Express Auth Middleware
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  // If Google Auth is not configured yet in environment, allow bypass with warning
-  if (!isGoogleAuthConfigured()) {
+  // If neither PIN nor Google Auth is configured in environment, allow bypass
+  if (!isPinAuthConfigured() && !isGoogleAuthConfigured()) {
     return next();
   }
 
@@ -151,7 +243,8 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (
     req.path.startsWith('/api/auth/') ||
     req.path === '/api/telegram/buffer/consume' || // External Cloudflare worker webhook
-    req.path === '/api/health'
+    req.path === '/api/health' ||
+    req.path === '/api/telegram/webhook'
   ) {
     return next();
   }
@@ -159,7 +252,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const user = getSessionFromRequest(req);
   if (!user) {
     return res.status(401).json({
-      error: 'Unauthorized. Please sign in with your authorized Google Account.',
+      error: 'Unauthorized. Terminal is locked.',
       code: 'AUTH_REQUIRED',
     });
   }
