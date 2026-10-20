@@ -152,7 +152,7 @@ export async function handleAlertsTopicMessage({
       )
       .join('\n');
 
-    const replyText = `🔔 *Price Alert Armed & Monitored 24/7*\n\n${alertSummary}\n\n───────────────────────\n_You will receive instant alerts here the moment this price condition triggers!_`;
+    const replyText = `🎯 *Price Alert Armed & Monitored 24/7*\n\n${alertSummary}\n\n───────────────────────\n🚨 _When triggered, live alert notifications will fire into the *Alerts* topic!_`;
 
     if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
       await sendTelegramMessage({

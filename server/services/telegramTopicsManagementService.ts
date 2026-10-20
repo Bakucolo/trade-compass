@@ -11,6 +11,7 @@ import {
   setTelegramBalancesThreadId,
   setTelegramMacroThreadId,
   setTelegramTradeThreadId,
+  setTelegramSetAlertThreadId,
 } from './telegramBufferConsumerService';
 
 const logToFile = (msg: string) => console.log(msg);
@@ -70,7 +71,7 @@ export function isTopicsManagementRequest(rawText: string): boolean {
  * Helper to update any topic thread ID in environment and .env.local
  */
 export function setGenericTopicThreadId(topicName: string, threadId: string | number): boolean {
-  const tName = topicName.trim().toUpperCase();
+  const tName = topicName.trim().toUpperCase().replace(/[\s-]+/g, '_');
   const threadIdStr = String(threadId).trim();
 
   let envKey = '';
@@ -95,6 +96,11 @@ export function setGenericTopicThreadId(topicName: string, threadId: string | nu
     case 'EXECUTION':
     case 'QUEUE':
       return setTelegramExecutionThreadId(threadIdStr);
+    case 'SET_ALERT':
+    case 'SET_ALERTS':
+    case 'SETALERT':
+    case 'SETALERTS':
+      return setTelegramSetAlertThreadId(threadIdStr);
     case 'ALERTS':
     case 'ALERT':
       envKey = 'TELEGRAM_ALERTS_THREAD_ID';
@@ -229,7 +235,7 @@ export async function buildTopicsOverviewReport(prisma: PrismaClient): Promise<s
 
   return `🧭 *Trade Compass — Telegram Topics Control Center*
 
-Live status, telemetry & commands across all 10 integrated topics (expanded from all 9 integrated topics):
+Live status, telemetry & commands across all 11 integrated topics:
 
 🏦 *1. Balances*
 • Status: ${formatThread(status.balancesThreadId)}
@@ -263,38 +269,42 @@ Live status, telemetry & commands across all 10 integrated topics (expanded from
   • Queue trade: \`BUY 100 AAPL @ 220 SL 210\`, \`STO 1 NVDA 120P\`
   • Cancel order: \`cancel AAPL\`
 
-🔔 *6. Price Alerts*
-• Status: ${formatThread(status.alertsThreadId)}
+🎯 *6. Set Alert*
+• Status: ${formatThread(status.setAlertThreadId)}
 • Monitored: *${metrics.alerts.activeAlertsCount} active price alerts armed*
 • Commands:
+  • Arm alert: \`Alert NVDA above $145\`, \`AAPL < 210\`, \`PLTR > 60\`
   • Check alerts: \`alerts\`, \`list\`, \`active\`
-  • Set alert: \`Alert NVDA above $145\`, \`AAPL < 210\`
   • Cancel alert: \`delete alert NVDA\`
 
-💡 *7. Market Ideas*
+🚨 *7. Alerts (Broadcast Channel)*
+• Status: ${formatThread(status.alertsThreadId)}
+• Role: *Dedicated broadcast channel where triggered 24/7 price alerts fire instantly*
+
+💡 *8. Market Ideas*
 • Status: ${formatThread(process.env.TELEGRAM_IDEAS_THREAD_ID)}
 • Repository: *${metrics.ideas.ideasCount} market theses & catalysts logged*
 • Commands: \`ideas\`, \`recent ideas\`, or send any market observation
 
-💡 *8. App Roadmap*
+💡 *9. App Roadmap*
 • Status: ${formatThread(status.appThreadId)}
 • Backlog: *${metrics.app.appIdeasCount} open feature ideas & bug reports*
 • Commands: \`roadmap\`, \`ideas\`, or submit \`[UI] ...\`, \`[Bug] ...\`
 
-🌐 *9. Macro Intelligence*
+🌐 *10. Macro Intelligence*
 • Status: ${formatThread(status.macroThreadId)}
 • Intelligence: *7 Pillars, Sovereign Yield Curves, Volatility Complex, Scenarios & Allocations*
 • Commands: \`macro\`, \`regime\`, \`yields\`, \`volatility\`, \`pillars\`, \`scenarios\`, \`allocations\`, \`catalysts\`, \`gold\`, \`pdf\`
 
-🎯 *10. Trade & Options Strategy*
+🎯 *11. Trade & Options Strategy*
 • Status: ${formatThread(status.tradeThreadId)}
 • Intelligence: *Live Option Quotes, Greeks (Delta, Theta, IV), Strike Matrix & AI Recommendations*
 • Commands: \`AAPL short put 300\`, \`NVDA covered call 130 ai\`, \`MSFT put 400 income\`, \`TSLA short put 210 assignment\`
 
 ───────────────────────
 ⚙️ *Management Shortcuts:*
-• Update Topic Thread: \`set topic [name] [threadId]\` (e.g. \`set topic balances 307\`)
-• Test Topic Delivery: \`test topic [name]\` (e.g. \`test topic positions\`)
+• Update Topic Thread: \`set topic [name] [threadId]\` (e.g. \`set topic set_alert 499\`)
+• Test Topic Delivery: \`test topic [name]\` (e.g. \`test topic set_alert\`)
 • Detailed Guide: Send \`help\` in any topic for deep-dive instructions!`;
 }
 
@@ -323,7 +333,7 @@ export async function handleTopicsManagementMessage({
 
     const replyText = success
       ? `✅ *Topic Thread Updated!*\n\n• Topic: *${topicTarget.toUpperCase()}*\n• Assigned Thread ID: \`${threadNum}\`\n• Status: Persisted to configuration.\n\n_Send \`topics\` to verify the full topic directory._`
-      : `⚠️ *Could not update topic thread.*\n\nSupported topic names: \`trade\`, \`balances\`, \`macro\`, \`positions\`, \`watchlist\`, \`notes\`, \`execution\`, \`alerts\`, \`ideas\`, \`app\`.\nExample: \`set topic trade 406\``;
+      : `⚠️ *Could not update topic thread.*\n\nSupported topic names: \`trade\`, \`balances\`, \`macro\`, \`positions\`, \`watchlist\`, \`notes\`, \`execution\`, \`set_alert\`, \`alerts\`, \`ideas\`, \`app\`.\nExample: \`set topic set_alert 499\``;
 
     if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
       await sendTelegramMessage({
@@ -344,7 +354,7 @@ export async function handleTopicsManagementMessage({
   // 2. TEST / PING TOPIC COMMAND
   const testMatch = clean.match(/^(?:test|ping|check)\s+topic\s+([A-Za-z0-9_-]+)/i);
   if (testMatch) {
-    const topicTarget = testMatch[1].trim().toUpperCase();
+    const topicTarget = testMatch[1].trim().toUpperCase().replace(/[\s-]+/g, '_');
     const status = getTelegramBufferStatus();
 
     let targetThread: number | undefined;
@@ -353,6 +363,7 @@ export async function handleTopicsManagementMessage({
     else if (topicTarget === 'WATCHLIST' || topicTarget === 'WATCHLISTS') targetThread = status.watchlistThreadId ? Number(status.watchlistThreadId) : undefined;
     else if (topicTarget === 'NOTES' || topicTarget === 'NOTE') targetThread = status.notesThreadId ? Number(status.notesThreadId) : undefined;
     else if (topicTarget === 'EXECUTION' || topicTarget === 'QUEUE') targetThread = status.executionThreadId ? Number(status.executionThreadId) : undefined;
+    else if (topicTarget === 'SET_ALERT' || topicTarget === 'SET_ALERTS' || topicTarget === 'SETALERT') targetThread = status.setAlertThreadId ? Number(status.setAlertThreadId) : undefined;
     else if (topicTarget === 'ALERTS' || topicTarget === 'ALERT') targetThread = status.alertsThreadId ? Number(status.alertsThreadId) : undefined;
     else if (topicTarget === 'APP') targetThread = status.appThreadId ? Number(status.appThreadId) : undefined;
     else if (topicTarget === 'MACRO') targetThread = status.macroThreadId ? Number(status.macroThreadId) : undefined;

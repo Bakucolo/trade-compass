@@ -8,6 +8,7 @@ export type TelegramTopicType =
   | 'EXECUTION'
   | 'IDEAS'
   | 'ALERTS'
+  | 'SET_ALERT'
   | 'APP'
   | 'MACRO'
   | 'TRADE'
@@ -219,32 +220,49 @@ Check and log market thoughts, earnings catalysts, macro theses, and watch oppor
 }
 
 /**
- * Returns formatted instructions for ALERTS topic
+ * Returns formatted instructions for SET_ALERT topic
  */
-export function getAlertsTopicHelp(): string {
-  return `🔔 *Alerts Topic — Price Alerts Instructions*
+export function getSetAlertTopicHelp(): string {
+  return `🎯 *Set Alert Topic — Instructions & Commands*
 
-Check, arm, and manage instant real-time price alerts monitored 24/7 by the system:
+Set, query, and manage 24/7 price alerts right here. When triggered, the notification fires in the *Alerts* topic!
 
-📋 *1. Check Active Alerts*
-• \`alerts\` (or \`list\`, \`active\`, \`my alerts\`, \`show alerts\`)
-  _Lists every armed price alert with trigger condition (▲ above / ▼ below), spot price, and distance._
-
-🗑️ *2. Cancel / Disarm an Alert*
-• \`delete alert NVDA\` or \`cancel alert AAPL\` (or \`clear TSLA\`)
-  _Disarms and removes the alert monitor for that stock._
-
-🎯 *3. Arm New Price Alerts*
+🎯 *1. Arm New Price Alerts*
 • \`Alert NVDA above $145\`
 • \`Alert AAPL below $215\`
 • \`Notify me when PLTR hits $60\`
 • \`TSLA > 250\`
 • \`AMD < 130\`
 
+📋 *2. Check Active Alerts*
+• \`alerts\` (or \`list\`, \`active\`, \`my alerts\`, \`show alerts\`)
+  _Lists every armed price alert with trigger condition (▲ above / ▼ below), spot price, and distance._
+
+🗑️ *3. Cancel / Disarm an Alert*
+• \`delete alert NVDA\` or \`cancel alert AAPL\` (or \`clear TSLA\`)
+  _Disarms and removes the alert monitor for that stock._
+
 ⚡ *Alert Features:*
 • 📈 *Direction Detection*: Automatically recognizes above (▲) or below (▼) conditions.
-• 📲 *Instant Dispatch*: When the price triggers, a Telegram alert and browser notification fire immediately.
+• 📲 *Dedicated Firing*: When triggered, the alert notification fires directly into the *Alerts* topic so your notifications stay organized!
 • 🔕 *Bracket Arms*: Automatically tracks target levels until triggered or updated.`;
+}
+
+/**
+ * Returns formatted instructions for ALERTS topic (fired alerts)
+ */
+export function getAlertsTopicHelp(): string {
+  return `🚨 *Alerts Topic — Fired Price Alerts*
+
+This dedicated topic receives real-time broadcasts when your price alerts trigger:
+
+🚨 *Live Alert Notifications:*
+• Instant alerts with trigger price, current price, and timestamp are broadcast here 24/7.
+• High-priority push notifications ensure you never miss critical market moves.
+
+🎯 *Setting & Managing Alerts:*
+• To set, check, or cancel alerts, head over to the *Set alerts* topic!
+• Or type \`alerts\` or \`NVDA > 145\` here or in *Set alerts*.`;
 }
 
 /**
@@ -386,7 +404,8 @@ This Telegram group has dedicated topics tailored to your trading workflows:
 • 📋 *Watchlist*: View watchlists (\`all watchlists\`), filter with criteria (\`Semiconductors PE < 30\`), add stocks (\`Tech AAPL NVDA\`), or let the AI Agent create one (\`Quantum Computing\`).
 • 📝 *Notes*: Check notes (\`AAPL\`, \`all notes\`), save persistent DD (\`AAPL Note here\`), or clear notes (\`delete note AAPL\`).
 • 🎯 *Execution*: Check queue (\`queue\`, \`orders\`), queue tactical trades (\`BUY 100 AAPL @ 220 SL 210\`), or cancel orders (\`cancel AAPL\`).
-• 🔔 *Alerts*: Check active alerts (\`alerts\`), arm new price monitors (\`Alert NVDA above $145\`), or cancel alerts (\`delete alert NVDA\`).
+• 🎯 *Set Alert*: Check active alerts (\`alerts\`), arm new price monitors (\`Alert NVDA above $145\`), or cancel alerts (\`delete alert NVDA\`).
+• 🚨 *Alerts*: Dedicated broadcast channel where triggered 24/7 price alerts fire instantly.
 • 💡 *Ideas*: Check recent market theses (\`ideas\`, \`ideas NVDA\`) and log catalysts with automatic ticker telemetry.
 • 💡 *App*: Check backlog (\`roadmap\`, \`ideas\`) and submit feature ideas and bug reports (\`[UI] Add dark mode\`).
 • 🌐 *Macro*: Query the full institutional dossier (\`macro\`, \`report\`), specific items (\`regime\`, \`yields\`, \`volatility\`, \`pillars\`, \`scenarios\`, \`allocations\`, \`catalysts\`, \`gold\`), or write \`pdf\` for a styled PDF document!
@@ -418,6 +437,8 @@ export function getHelpMessageForTopic(topic: TelegramTopicType): string {
       return getIdeasTopicHelp();
     case 'ALERTS':
       return getAlertsTopicHelp();
+    case 'SET_ALERT':
+      return getSetAlertTopicHelp();
     case 'APP':
       return getAppTopicHelp();
     case 'MACRO':
