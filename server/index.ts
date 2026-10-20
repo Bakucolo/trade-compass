@@ -212,6 +212,8 @@ import { createAppIdeaRouter } from './routes/appIdeaRoutes';
 import { createMonteCarloRouter } from './routes/monteCarloRoutes';
 import { createAiTradingRouter } from './routes/aiTradingRoutes';
 import { createPositionFolderRouter } from './routes/positionFolderRoutes';
+import { createAuthRouter } from './routes/authRoutes';
+import { requireAuth } from './auth';
 import { autoCreateAlertsFromText } from './services/thoughtLogAlertService';
 import { SYMBOL_ALIASES, resolveYahooFinanceSymbol, getCanonicalCompanyName } from './services/tickerResolutionService';
 import { KNOWN_COMPANY_NAMES, getKnownCompanyName } from './services/commonTickers';
@@ -337,6 +339,10 @@ app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
   next();
 });
+
+// Authentication Router & Access Control
+app.use('/api/auth', createAuthRouter());
+app.use(requireAuth);
 
 // Quantitative Analytics: Multi-Factor Monte Carlo Equity Valuation Engine
 app.use('/api/quant/monte-carlo', createMonteCarloRouter());

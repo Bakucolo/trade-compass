@@ -31,6 +31,7 @@ import { useEarningsData } from '@/services/earningsService';
 import { AgentActivityDrawer } from './AgentActivityDrawer';
 import { ThemeSwitcherButton } from './ThemeSwitcherButton';
 import { TelegramTopicsModal } from './TelegramTopicsModal';
+import { UserMenu } from './auth/UserMenu';
 
 interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
@@ -267,6 +268,11 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
               </div>
             )}
           </button>
+        </div>
+
+        {/* User Identity & Logout Menu */}
+        <div className="px-2 pb-1.5">
+          <UserMenu collapsed={collapsed} />
         </div>
 
         {/* Stylings & Theme Switcher Button */}
