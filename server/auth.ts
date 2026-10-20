@@ -239,7 +239,12 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     return next();
   }
 
-  // Exempt public endpoints
+  // Exempt static frontend assets and page navigation (so LockScreen can render in browser)
+  if (!req.path.startsWith('/api')) {
+    return next();
+  }
+
+  // Exempt public auth & webhook endpoints
   if (
     req.path.startsWith('/api/auth/') ||
     req.path === '/api/telegram/buffer/consume' || // External Cloudflare worker webhook
