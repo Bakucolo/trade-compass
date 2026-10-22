@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useIBKRClientPortalStatus } from '@/services/ibkr';
+import { useHostingEnvironment, isClientCloud } from '@/services/environmentService';
 import { BuyingPowerModal } from './BuyingPowerModal';
 
 export type SupportedBroker = 'tastytrade' | 'alpaca' | 'ibkr';
@@ -87,6 +88,14 @@ export const AiTradingBrokerBar: React.FC<AiTradingBrokerBarProps> = ({
 
   const currentBroker = brokers.find((b) => b.id === activeBroker) || brokers[0];
   const { data: ibkrStatus } = useIBKRClientPortalStatus();
+  const { data: envData } = useHostingEnvironment();
+  const isCloud = Boolean(envData?.isCloud ?? isClientCloud());
+
+  React.useEffect(() => {
+    if (isCloud && selectedModel === 'local/quant') {
+      onSelectModel('auto');
+    }
+  }, [isCloud, selectedModel, onSelectModel]);
 
   return (
     <div className="bg-card/90 border border-border/80 rounded-2xl p-4 sm:p-5 shadow-lg backdrop-blur-sm space-y-4">
@@ -130,7 +139,9 @@ export const AiTradingBrokerBar: React.FC<AiTradingBrokerBarProps> = ({
               <option value="openai/gpt-4o" className="bg-card text-foreground">GPT-4o (Reasoning)</option>
               <option value="deepseek/deepseek-r1" className="bg-card text-foreground">DeepSeek R1</option>
               <option value="meta-llama/llama-3.3-70b-instruct" className="bg-card text-foreground">Llama 3.3 70B</option>
-              <option value="local/quant" className="bg-card text-foreground">Local Quant</option>
+              <option value="local/quant" disabled={isCloud} className="bg-card text-foreground disabled:text-muted-foreground">
+                Local Quant {isCloud ? '(Localhost Only)' : ''}
+              </option>
             </select>
           </div>
 

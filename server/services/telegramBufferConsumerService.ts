@@ -27,6 +27,7 @@ import { handleAppTopicMessage } from './telegramAppTopicService';
 import { handleIdeasTopicMessage } from './telegramIdeasTopicService';
 import { handleMacroTopicMessage } from './telegramMacroQueryService';
 import { handleTradeTopicMessage } from './telegramTradeTopicService';
+import { handleTickerTopicMessage } from './telegramTickerTopicService';
 
 const logToFile = (msg: string) => console.log(msg);
 
@@ -169,6 +170,15 @@ export function markMessageAsProcessed(msg: BufferedTelegramMessage): void {
   const key = getTelegramMessageDedupKey(msg);
   recentlyProcessedMessageKeys.set(key, Date.now());
   savePersistedDedupKeys(recentlyProcessedMessageKeys);
+}
+
+export function clearPersistedDedupKeysForTest(): void {
+  recentlyProcessedMessageKeys.clear();
+  try {
+    if (fs.existsSync(DEDUP_FILE)) {
+      fs.unlinkSync(DEDUP_FILE);
+    }
+  } catch {}
 }
 
 /**
@@ -1250,6 +1260,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       const configuredBalancesThreadId = process.env.TELEGRAM_BALANCES_THREAD_ID ? Number(process.env.TELEGRAM_BALANCES_THREAD_ID) : undefined;
       const configuredMacroThreadId = process.env.TELEGRAM_MACRO_THREAD_ID ? Number(process.env.TELEGRAM_MACRO_THREAD_ID) : undefined;
       const configuredTradeThreadId = process.env.TELEGRAM_TRADE_THREAD_ID ? Number(process.env.TELEGRAM_TRADE_THREAD_ID) : 406;
+      const configuredTickerThreadId = process.env.TELEGRAM_TICKER_THREAD_ID ? Number(process.env.TELEGRAM_TICKER_THREAD_ID) : undefined;
 
       const msgThreadNum = msg.messageThreadId !== undefined ? Number(msg.messageThreadId) : undefined;
       const isExplicitAppThread = msgThreadNum !== undefined && msgThreadNum === configuredAppThreadId;
@@ -1263,6 +1274,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       const isExplicitBalancesThread = configuredBalancesThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredBalancesThreadId;
       const isExplicitMacroThread = configuredMacroThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredMacroThreadId;
       const isExplicitTradeThread = configuredTradeThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredTradeThreadId;
+      const isExplicitTickerThread = configuredTickerThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredTickerThreadId;
 
       const resolvedTopicName = msg.topicName || (msgThreadNum !== undefined ? topicNameByThreadId.get(msgThreadNum) : undefined);
 
@@ -1270,7 +1282,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         topicNameByThreadId.set(msgThreadNum, resolvedTopicName);
       }
 
-      // Auto-discover and persist Watchlist, Notes, Positions, Balances, Macro, Trade & Set Alert thread IDs if not yet configured
+      // Auto-discover and persist Watchlist, Notes, Positions, Balances, Macro, Trade, Ticker & Set Alert thread IDs if not yet configured
       if (resolvedTopicName && /set\s*alert/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_SET_ALERT_THREAD_ID) {
         setTelegramSetAlertThreadId(msgThreadNum);
       }
@@ -1291,6 +1303,9 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       }
       if (resolvedTopicName && /^trades?$/i.test(resolvedTopicName.trim()) && msgThreadNum !== undefined && !process.env.TELEGRAM_TRADE_THREAD_ID) {
         setTelegramTradeThreadId(msgThreadNum);
+      }
+      if (resolvedTopicName && /^tickers?$/i.test(resolvedTopicName.trim()) && msgThreadNum !== undefined && !process.env.TELEGRAM_TICKER_THREAD_ID) {
+        setTelegramTickerThreadId(msgThreadNum);
       }
 
       // Topic created status message handling
@@ -1481,7 +1496,20 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         (msg.chat?.id === -1003872409872 && msgThreadNum === configuredNotesThreadId)
       ));
 
-      const isAppTopic = isExplicitAppThread || (!isSetAlertTopic && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isNotesTopic && !isPositionsTopic && !isBalancesTopic && !isMacroTopic && !isTradeTopic && Boolean(
+      const isTickerTopic = isExplicitTickerThread || (!isExplicitAppThread && !isSetAlertTopic && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isNotesTopic && !isPositionsTopic && !isBalancesTopic && !isMacroTopic && !isTradeTopic && Boolean(
+        (resolvedTopicName && /^tickers?$/i.test(resolvedTopicName.trim())) ||
+        contentText.toLowerCase().startsWith('#ticker') ||
+        contentText.toLowerCase().startsWith('#tickers') ||
+        contentText.match(/#(?:topic:)?tickers?\b/i) ||
+        (configuredTickerThreadId !== undefined && msgThreadNum === configuredTickerThreadId)
+      ));
+
+      // Auto-discover and persist TELEGRAM_TICKER_THREAD_ID if not yet configured
+      if (isTickerTopic && msgThreadNum !== undefined && !process.env.TELEGRAM_TICKER_THREAD_ID) {
+        setTelegramTickerThreadId(msgThreadNum);
+      }
+
+      const isAppTopic = isExplicitAppThread || (!isSetAlertTopic && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isNotesTopic && !isPositionsTopic && !isBalancesTopic && !isMacroTopic && !isTradeTopic && !isTickerTopic && Boolean(
         (resolvedTopicName && resolvedTopicName.toLowerCase().includes('app')) ||
         contentText.toLowerCase().startsWith('#app') ||
         contentText.toLowerCase().includes('#app-idea') ||
@@ -1508,6 +1536,10 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
           topicType = 'MACRO';
           topicFolder = 'Macro';
           targetThreadId = msgThreadNum || configuredMacroThreadId;
+        } else if (isTickerTopic) {
+          topicType = 'TICKER';
+          topicFolder = 'Research';
+          targetThreadId = msgThreadNum || configuredTickerThreadId;
         } else if (isPositionsTopic) {
           topicType = 'POSITIONS';
           topicFolder = 'Positions';
@@ -2044,10 +2076,14 @@ Output strictly valid JSON matching this schema:
           logToFile(`[TelegramBuffer] 🎯 Execution topic action (${execResult.actionTaken}) handled for ${senderLabel}`);
           const tradeSummaries = execResult.tradesCreated && execResult.tradesCreated.length > 0
             ? execResult.tradesCreated.map((t: any) => `${t.action} ${t.quantity} ${t.symbol}${t.targetPrice ? ` @ $${t.targetPrice}` : ''}`).join(', ')
-            : `Telegram Execution: ${execResult.actionTaken}`;
+            : execResult.reminderCreated
+              ? `⏰ Reminder: $${execResult.reminderCreated.symbol} - ${execResult.reminderCreated.task}`
+              : `Telegram Execution: ${execResult.actionTaken}`;
 
           const primaryTimeframe = execResult.tradesCreated?.[0]?.timeframe || 'DAY';
-          const agentOutputText = `🎯 **Daily & Weekly Trade Execution Queue**\n\nStatus: PENDING (${primaryTimeframe})\n\n${execResult.replyText}`;
+          const agentOutputText = execResult.reminderCreated
+            ? `🎯 **Tactical Execution Reminder Scheduled**\n\nStatus: ARMED / PENDING\n\n${execResult.replyText}`
+            : `🎯 **Daily & Weekly Trade Execution Queue**\n\nStatus: PENDING (${primaryTimeframe})\n\n${execResult.replyText}`;
 
           const savedLog = await (prisma as any).thoughtLog.create({
             data: {
@@ -2055,13 +2091,52 @@ Output strictly valid JSON matching this schema:
               content: contentText.trim(),
               folder: 'Execution',
               tags: `Telegram, Execution, Queue, ${execResult.actionTaken}, ${senderLabel}`,
-              symbols: execResult.tradesCreated?.map((t: any) => t.symbol).join(', ') || null,
+              symbols: execResult.tradesCreated?.map((t: any) => t.symbol).join(', ')
+                || (execResult.reminderCreated?.symbol || null),
               sentiment: 'NEUTRAL',
               isPinned: false,
               isFulfilled: true,
               agentOutput: agentOutputText,
               agentActionType: 'ADD_CONTEXT',
               marketDataJson: null,
+              createdAt: new Date(msg.timestamp),
+            },
+          });
+          createdLogs.push({ id: savedLog.id, title: savedLog.title, symbols: savedLog.symbols });
+          continue;
+        }
+      }
+
+      // ==========================================
+      // TICKER TOPIC HANDLER
+      // ==========================================
+      if (isTickerTopic) {
+        const targetThreadId = msgThreadNum || configuredTickerThreadId;
+        logToFile(`[TelegramBuffer] 📊 Processing Ticker request in thread ${targetThreadId}: "${contentText}"`);
+
+        const tickerResult = await handleTickerTopicMessage({
+          text: contentText,
+          chatId: targetChatId,
+          messageThreadId: targetThreadId,
+          prisma,
+          senderLabel,
+        });
+
+        if (tickerResult.handled) {
+          logToFile(`[TelegramBuffer] 📊 Ticker topic action (${tickerResult.actionTaken}) handled for ${senderLabel}`);
+          const savedLog = await (prisma as any).thoughtLog.create({
+            data: {
+              title: `📊 Stock Intelligence: ${tickerResult.symbol ? `$${tickerResult.symbol}` : tickerResult.actionTaken}`,
+              content: contentText.trim(),
+              folder: 'Research',
+              tags: `Telegram, Ticker, Research, ${tickerResult.actionTaken}, ${senderLabel}`,
+              symbols: tickerResult.symbol || null,
+              sentiment: 'NEUTRAL',
+              isPinned: false,
+              isFulfilled: true,
+              agentOutput: tickerResult.replyText,
+              agentActionType: 'ADD_CONTEXT',
+              marketDataJson: tickerResult.scorecard ? JSON.stringify(tickerResult.scorecard) : null,
               createdAt: new Date(msg.timestamp),
             },
           });
@@ -2471,6 +2546,7 @@ export function getTelegramBufferStatus() {
     balancesThreadId: process.env.TELEGRAM_BALANCES_THREAD_ID || null,
     macroThreadId: process.env.TELEGRAM_MACRO_THREAD_ID || null,
     tradeThreadId: process.env.TELEGRAM_TRADE_THREAD_ID || null,
+    tickerThreadId: process.env.TELEGRAM_TICKER_THREAD_ID || null,
     lastSyncTimestamp,
     lastSyncCount,
   };
@@ -2699,6 +2775,25 @@ export function setTelegramSetAlertThreadId(threadId: string | number): boolean 
     return true;
   } catch (e: any) {
     logToFile(`[TelegramBuffer] Error setting set alert thread ID: ${e.message}`);
+    return false;
+  }
+}
+
+/**
+ * Explicitly update and persist TELEGRAM_TICKER_THREAD_ID to environment & .env.local
+ */
+export function setTelegramTickerThreadId(threadId: string | number): boolean {
+  try {
+    const threadIdStr = String(threadId).trim();
+    process.env.TELEGRAM_TICKER_THREAD_ID = threadIdStr;
+    if (threadIdStr) {
+      topicNameByThreadId.set(Number(threadIdStr), 'Ticker');
+    }
+    logToFile(`[TelegramBuffer] Updated TELEGRAM_TICKER_THREAD_ID=${threadIdStr}`);
+    persistThreadIdToEnv('TELEGRAM_TICKER_THREAD_ID', threadIdStr);
+    return true;
+  } catch (e: any) {
+    logToFile(`[TelegramBuffer] Error setting ticker thread ID: ${e.message}`);
     return false;
   }
 }

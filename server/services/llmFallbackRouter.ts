@@ -14,6 +14,8 @@
  * - Normalizes input/output across providers with automatic JSON fence stripping and schema validation.
  */
 
+import { isCloudHosting } from './environmentService';
+
 export type ProviderId = 'openrouter' | 'google-ai-studio' | 'groq' | 'cloudflare';
 
 export interface ChatMessage {
@@ -120,12 +122,16 @@ export interface ProviderAllowance {
   requestsToday: number;
   lastUsedAt?: string;
   notes?: string;
+  isLocalOnly?: boolean;
+  isCloudDisabled?: boolean;
 }
 
 export interface LLMAllowancesReport {
   timestamp: string;
   totalCallsToday: number;
   activeCascade: string[];
+  isCloud?: boolean;
+  hostingMode?: 'cloud' | 'local';
   providers: ProviderAllowance[];
 }
 
@@ -509,39 +515,46 @@ class ProviderCooldownManager {
     });
 
     // 4. Ollama (Local)
+    const isCloud = isCloudHosting();
     const ollamaState = this.states.get('ollama' as any);
     const ollamaReqToday = ollamaState?.requestsToday || 0;
     totalCallsToday += ollamaReqToday;
 
     allowances.push({
       providerId: 'ollama' as any,
-      name: 'Ollama (Local Offline)',
-      hasKey: true,
+      name: isCloud ? 'Ollama (Local Offline - Disabled in Cloud)' : 'Ollama (Local Offline)',
+      hasKey: !isCloud,
       tier: 'Local Offline',
-      isAvailable: true,
+      isAvailable: !isCloud,
       isCoolingDown: false,
       cooldownRemainingSeconds: 0,
       quotaType: 'unlimited',
       totalQuota: null,
       consumed: ollamaReqToday,
       remaining: null,
-      percentRemaining: 100,
+      percentRemaining: isCloud ? 0 : 100,
       unitLabel: 'Local Inferences',
       rateLimits: {
-        resetText: 'Zero cloud rate limits or quotas',
+        resetText: isCloud ? 'Disabled in Cloud Hosting (Localhost Only)' : 'Zero cloud rate limits or quotas',
       },
       activeModel: 'llama3.1',
       totalCalls: ollamaState?.totalCalls || 0,
       successfulCalls: ollamaState?.successfulCalls || 0,
       requestsToday: ollamaReqToday,
       lastUsedAt: ollamaState?.lastUsedAt ? new Date(ollamaState.lastUsedAt).toISOString() : undefined,
-      notes: '100% private on-device execution. Unlimited inferences with 0 cost.',
+      notes: isCloud
+        ? 'Disabled in cloud hosting mode. Local Ollama execution is available only when running on localhost.'
+        : '100% private on-device execution. Unlimited inferences with 0 cost.',
+      isLocalOnly: true,
+      isCloudDisabled: isCloud
     });
 
     return {
       timestamp: new Date().toISOString(),
       totalCallsToday,
       activeCascade: DEFAULT_PROVIDER_CASCADE,
+      isCloud,
+      hostingMode: isCloud ? 'cloud' : 'local',
       providers: allowances,
     };
   }

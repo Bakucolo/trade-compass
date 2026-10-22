@@ -6,6 +6,15 @@ import {
   ParsedExecutionTrade,
 } from './telegramBufferConsumerService';
 import { createPlannedTrade, PlannedTradeItem } from './plannedTradeService';
+import {
+  parseExecutionReminder,
+  createExecutionReminder,
+  getExecutionReminders,
+  cancelExecutionReminder,
+  formatReminderCreatedTelegramReply,
+  formatRemindersListTelegramReply,
+  ExecutionReminderItem,
+} from './executionReminderService';
 
 const logToFile = (msg: string) => console.log(msg);
 
@@ -23,10 +32,14 @@ export type ExecutionTopicAction =
   | 'CANCEL_ORDER'
   | 'STATUS_TICKER'
   | 'CREATE_TRADE'
+  | 'SCHEDULE_REMINDER'
+  | 'VIEW_REMINDERS'
+  | 'CANCEL_REMINDER'
+  | 'STATUS_REMINDER'
   | 'HELP';
 
 /**
- * Handles incoming Execution topic messages (view queue, cancel order, check order, or queue trade)
+ * Handles incoming Execution topic messages (view queue, cancel order, check order, queue trade, or execution reminder)
  */
 export async function handleExecutionTopicMessage({
   text,
@@ -40,6 +53,7 @@ export async function handleExecutionTopicMessage({
   replyText: string;
   actionTaken: ExecutionTopicAction;
   tradesCreated?: PlannedTradeItem[];
+  reminderCreated?: ExecutionReminderItem;
 }> {
   const clean = text
     .replace(/#(?:topic:)?(?:execution|execute|trade-execution|queue)\b/gi, '')
@@ -49,7 +63,131 @@ export async function handleExecutionTopicMessage({
   const lower = clean.toLowerCase();
 
   // ==========================================
-  // 1. CANCEL / REMOVE ORDER FROM QUEUE
+  // 1. CANCEL / REMOVE EXECUTION REMINDER
+  // ==========================================
+  const cancelReminderMatch = clean.match(/^(?:cancel|remove|delete|clear)\s+(?:reminders?|tasks?)\s+\$?([A-Za-z0-9_-]+)$/i);
+  if (cancelReminderMatch) {
+    const symOrId = cancelReminderMatch[1];
+    const { count, cancelled } = await cancelExecutionReminder(symOrId, prisma);
+
+    let replyText = '';
+    if (count === 0) {
+      replyText = `⏰ *Execution Reminders for $${symOrId.toUpperCase()}*\n\n_No active scheduled reminders found for "${symOrId}"._\n\n💡 _Send \`reminders\` to review all active execution reminders._`;
+    } else {
+      replyText = `🗑️ *Execution Reminder Cancelled*\n\nCancelled and removed ${count} scheduled reminder(s) for *$${symOrId.toUpperCase()}*.\n\n💡 _Send \`reminders\` to view remaining scheduled tasks._`;
+    }
+
+    if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
+      await sendTelegramMessage({
+        text: replyText,
+        chatId,
+        messageThreadId,
+        parseMode: 'Markdown',
+      }).catch((e: any) => logToFile(`[TelegramExecution] Send error: ${e.message}`));
+    }
+
+    return {
+      handled: true,
+      replyText,
+      actionTaken: 'CANCEL_REMINDER',
+    };
+  }
+
+  // ==========================================
+  // 2. VIEW SCHEDULED REMINDERS
+  // ==========================================
+  if (/^(reminders|tasks|scheduled|my\s+reminders|show\s+reminders|list\s+reminders|active\s+reminders|pending\s+reminders|execution\s+reminders)$/i.test(lower)) {
+    const activeReminders = await getExecutionReminders({ status: 'PENDING' }, prisma);
+    const replyText = formatRemindersListTelegramReply(activeReminders);
+
+    if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
+      await sendTelegramMessage({
+        text: replyText,
+        chatId,
+        messageThreadId,
+        parseMode: 'Markdown',
+      }).catch((e: any) => logToFile(`[TelegramExecution] Send error: ${e.message}`));
+    }
+
+    return {
+      handled: true,
+      replyText,
+      actionTaken: 'VIEW_REMINDERS',
+    };
+  }
+
+  // ==========================================
+  // 3. CHECK REMINDER STATUS FOR TICKER
+  // ==========================================
+  const statusReminderMatch = clean.match(/^(?:status\s+reminder|reminder|reminders\s+for)\s+\$?([A-Za-z]{1,6})$/i);
+  if (statusReminderMatch) {
+    const sym = statusReminderMatch[1].toUpperCase();
+    const reminders = await getExecutionReminders({ symbol: sym, status: 'PENDING' }, prisma);
+
+    let replyText = '';
+    if (reminders.length === 0) {
+      replyText = `⏰ *Reminders for $${sym}*\n\n_No active scheduled execution reminders for $${sym}._\n\n💡 _To set one: \`$${sym} roll call spread tomorrow at 10am\`_`;
+    } else {
+      replyText = formatRemindersListTelegramReply(reminders);
+    }
+
+    if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
+      await sendTelegramMessage({
+        text: replyText,
+        chatId,
+        messageThreadId,
+        parseMode: 'Markdown',
+      }).catch((e: any) => logToFile(`[TelegramExecution] Send error: ${e.message}`));
+    }
+
+    return {
+      handled: true,
+      replyText,
+      actionTaken: 'STATUS_REMINDER',
+    };
+  }
+
+  // ==========================================
+  // 4. PARSE & SCHEDULE EXECUTION REMINDER
+  // ==========================================
+  const parsedReminder = parseExecutionReminder(clean, new Date(timestamp));
+  if (parsedReminder) {
+    const createdReminder = await createExecutionReminder(
+      {
+        symbol: parsedReminder.symbol,
+        task: parsedReminder.task,
+        remindAt: parsedReminder.remindAt,
+        chatId,
+        messageThreadId,
+        senderLabel,
+        sourceMessage: clean,
+      },
+      prisma
+    );
+
+    const replyText = formatReminderCreatedTelegramReply(createdReminder, parsedReminder.rawDateTimeStr);
+
+    if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
+      await sendTelegramMessage({
+        text: replyText,
+        chatId,
+        messageThreadId,
+        parseMode: 'Markdown',
+      }).catch((e: any) => logToFile(`[TelegramExecution] Send error: ${e.message}`));
+    }
+
+    logToFile(`[TelegramExecution] Scheduled reminder #${createdReminder.id}: $${createdReminder.symbol} - "${createdReminder.task}" at ${createdReminder.remindAt.toISOString()}`);
+
+    return {
+      handled: true,
+      replyText,
+      actionTaken: 'SCHEDULE_REMINDER',
+      reminderCreated: createdReminder,
+    };
+  }
+
+  // ==========================================
+  // 5. CANCEL / REMOVE ORDER FROM QUEUE
   // ==========================================
   const cancelMatch = clean.match(/^(?:cancel|remove|delete|clear)\s+(?:order\s+)?\$?([A-Za-z]{1,6})$/i);
   if (cancelMatch) {

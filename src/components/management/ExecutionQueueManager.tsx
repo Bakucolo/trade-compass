@@ -16,6 +16,12 @@ import { PlannedTradeModal } from './PlannedTradeModal';
 import { PriceAlertModal } from '../PriceAlertModal';
 import { TradeEntryProposalModal } from './TradeEntryProposalModal';
 import { useCreateTrade } from '@/services/tradeService';
+import {
+  useExecutionReminders,
+  useCreateExecutionReminder,
+  useDeleteExecutionReminder,
+  ExecutionReminder,
+} from '@/services/executionReminderService';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -40,6 +46,7 @@ import {
   ArrowUpDown,
   Sparkles,
   Bell,
+  AlarmClock,
   RefreshCw,
   Settings2,
   RotateCcw,
@@ -56,9 +63,10 @@ interface ExecutionQueueManagerProps {
   onNavigateToResearch?: (symbol: string) => void;
   onNavigateToPortfolio?: () => void;
   onNavigateToGraphs?: (symbol?: string) => void;
-  initialView?: 'QUEUE' | 'EXECUTED';
+  initialView?: 'QUEUE' | 'EXECUTED' | 'REMINDERS';
   onSelectExecutedTab?: () => void;
   onSelectQueueTab?: () => void;
+  onSelectRemindersTab?: () => void;
 }
 
 export function ExecutionQueueManager({
@@ -68,11 +76,23 @@ export function ExecutionQueueManager({
   initialView = 'QUEUE',
   onSelectExecutedTab,
   onSelectQueueTab,
+  onSelectRemindersTab,
 }: ExecutionQueueManagerProps) {
-  const [viewMode, setViewMode] = useState<'QUEUE' | 'EXECUTED'>(initialView);
+  const [viewMode, setViewMode] = useState<'QUEUE' | 'EXECUTED' | 'REMINDERS'>(initialView);
   const [timeframeFilter, setTimeframeFilter] = useState<'ALL' | 'DAY' | 'WEEK'>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'TRIGGERED'>('ALL');
   const [executedSearchQuery, setExecutedSearchQuery] = useState('');
+
+  // Execution Reminders State
+  const { data: reminders = [], isLoading: isLoadingReminders } = useExecutionReminders();
+  const createReminderMutation = useCreateExecutionReminder();
+  const deleteReminderMutation = useDeleteExecutionReminder();
+  const [reminderInput, setReminderInput] = useState('');
+  const [isSubmittingReminder, setIsSubmittingReminder] = useState(false);
+
+  const pendingReminders = useMemo(() => {
+    return reminders.filter((r) => r.status === 'PENDING');
+  }, [reminders]);
 
   React.useEffect(() => {
     if (initialView && initialView !== viewMode) {
@@ -444,6 +464,33 @@ export function ExecutionQueueManager({
     window.open('/api/management/planned-trades/preview-pdf', '_blank');
   };
 
+  // Schedule an Execution Reminder
+  const handleScheduleReminder = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!reminderInput.trim()) return;
+
+    setIsSubmittingReminder(true);
+    try {
+      const res = await createReminderMutation.mutateAsync({ text: reminderInput.trim() });
+      toast.success(`Reminder armed for $${res.symbol} at ${new Date(res.remindAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}!`);
+      setReminderInput('');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to schedule reminder');
+    } finally {
+      setIsSubmittingReminder(false);
+    }
+  };
+
+  // Delete an Execution Reminder
+  const handleDeleteReminder = async (reminder: ExecutionReminder) => {
+    try {
+      await deleteReminderMutation.mutateAsync(reminder.id);
+      toast.success(`Cancelled scheduled reminder for $${reminder.symbol}`);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to cancel reminder');
+    }
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       {/* ================= VIEW MODE TOGGLE & HEADER ================= */}
@@ -461,7 +508,11 @@ export function ExecutionQueueManager({
             <div>
               <div className="flex items-center gap-2.5 flex-wrap">
                 <h2 className="text-xl font-bold tracking-tight text-foreground">
-                  {viewMode === 'QUEUE' ? 'Daily & Weekly Trade Execution Queue' : 'Executed Trades Archive & History'}
+                  {viewMode === 'QUEUE'
+                    ? 'Daily & Weekly Trade Execution Queue'
+                    : viewMode === 'REMINDERS'
+                    ? 'Scheduled Execution Reminders & Tasks'
+                    : 'Executed Trades Archive & History'}
                 </h2>
                 <Badge
                   variant="outline"
@@ -469,15 +520,23 @@ export function ExecutionQueueManager({
                     "text-[10px] font-mono font-bold",
                     viewMode === 'QUEUE'
                       ? "bg-primary/10 text-primary border-primary/30"
+                      : viewMode === 'REMINDERS'
+                      ? "bg-amber-500/10 text-amber-300 border-amber-500/40"
                       : "bg-emerald-500/10 text-emerald-300 border-emerald-500/40"
                   )}
                 >
-                  {viewMode === 'QUEUE' ? 'Ranked Priority' : `Completed (${executedTrades.length})`}
+                  {viewMode === 'QUEUE'
+                    ? 'Ranked Priority'
+                    : viewMode === 'REMINDERS'
+                    ? `Active Alerts (${pendingReminders.length})`
+                    : `Completed (${executedTrades.length})`}
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
                 {viewMode === 'QUEUE'
                   ? 'Queue tactical orders for day and weekly execution. Drag and drop rows to rank your execution priorities.'
+                  : viewMode === 'REMINDERS'
+                  ? 'Input a ticker, task, and target date/time to receive timely execution reminders here and via Telegram push notifications.'
                   : 'Historical record of completed and filled trades from your execution queue. Review execution capital, volume, or restore back to active queue.'}
               </p>
             </div>
@@ -502,6 +561,22 @@ export function ExecutionQueueManager({
               >
                 <Target className="w-3.5 h-3.5" />
                 <span>Active Queue ({pendingTrades.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setViewMode('REMINDERS');
+                  onSelectRemindersTab?.();
+                }}
+                className={cn(
+                  'px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5',
+                  viewMode === 'REMINDERS'
+                    ? 'bg-amber-500 text-white shadow-sm'
+                    : 'text-muted-foreground hover:text-amber-400'
+                )}
+              >
+                <AlarmClock className="w-3.5 h-3.5" />
+                <span>Reminders ({pendingReminders.length})</span>
               </button>
               <button
                 type="button"
@@ -1553,6 +1628,226 @@ export function ExecutionQueueManager({
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ================= VIEW: SCHEDULED REMINDERS ================= */}
+      {viewMode === 'REMINDERS' && (
+        <div className="space-y-4">
+          {/* Quick Scheduler Input Card */}
+          <div className="glass-card rounded-2xl p-4 border border-amber-500/30 bg-gradient-to-r from-amber-500/5 via-background to-primary/5 shadow-md">
+            <form onSubmit={handleScheduleReminder} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <div className="relative flex-1">
+                <AlarmClock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-400" />
+                <input
+                  type="text"
+                  placeholder="Enter ticker, task & date/time (e.g. AAPL roll call spread tomorrow at 10am, NVDA trim 50 shares Friday 3:30pm)..."
+                  value={reminderInput}
+                  onChange={(e) => setReminderInput(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-background border border-border/70 focus:outline-none focus:ring-2 focus:ring-amber-500/40 text-foreground placeholder:text-muted-foreground"
+                />
+              </div>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={isSubmittingReminder || !reminderInput.trim()}
+                className="bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs gap-1.5 shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{isSubmittingReminder ? 'Arming...' : 'Arm Reminder'}</span>
+              </Button>
+            </form>
+
+            {/* Quick Template Chips */}
+            <div className="flex items-center gap-1.5 flex-wrap mt-3 pt-3 border-t border-border/40 text-[11px] text-muted-foreground">
+              <span className="font-semibold text-foreground/80 flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-amber-400" />
+                Try examples:
+              </span>
+              {[
+                'AAPL roll call spread tomorrow at 10am',
+                'NVDA buy 100 shares if breakout holds Friday at 3:30pm',
+                'TSLA check 250 resistance and sell call spread in 2 hours',
+                'PLTR execute covered call Oct 24 at 10am',
+              ].map((tpl) => (
+                <button
+                  key={tpl}
+                  type="button"
+                  onClick={() => setReminderInput(tpl)}
+                  className="px-2 py-0.5 rounded-lg bg-muted/60 hover:bg-muted text-[10px] font-medium transition-colors text-muted-foreground hover:text-foreground border border-border/50 font-mono"
+                >
+                  {tpl}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Reminders List */}
+          {isLoadingReminders ? (
+            <div className="glass-card rounded-2xl p-12 text-center border border-border/50 flex flex-col items-center justify-center gap-3">
+              <div className="w-8 h-8 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" />
+              <p className="text-xs text-muted-foreground">Loading scheduled reminders...</p>
+            </div>
+          ) : reminders.length === 0 ? (
+            <div className="glass-card rounded-2xl p-12 text-center border border-dashed border-border/60">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto mb-3 text-amber-400">
+                <AlarmClock className="w-6 h-6" />
+              </div>
+              <h3 className="text-sm font-bold text-foreground">No Scheduled Execution Reminders</h3>
+              <p className="text-xs text-muted-foreground max-w-md mx-auto mt-1">
+                Input a ticker, task, and target date/time above or send it directly to your Telegram <span className="text-primary font-semibold">Execution</span> topic. You will receive an automated push alert when it is time to execute!
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {reminders.map((reminder) => {
+                const remindDate = new Date(reminder.remindAt);
+                const isPast = remindDate.getTime() <= Date.now();
+                const isTriggered = reminder.status === 'TRIGGERED';
+                const isCancelled = reminder.status === 'CANCELLED';
+
+                return (
+                  <div
+                    key={reminder.id}
+                    className={cn(
+                      "glass-card rounded-2xl p-4 border transition-all flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4",
+                      isTriggered
+                        ? "border-emerald-500/30 bg-emerald-950/5"
+                        : isCancelled
+                        ? "border-border/30 opacity-60"
+                        : "border-amber-500/30 hover:border-amber-500/60 bg-gradient-to-r from-amber-500/5 via-background to-transparent"
+                    )}
+                  >
+                    <div className="flex items-start gap-3 min-w-0">
+                      <div className={cn(
+                        "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border",
+                        isTriggered
+                          ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                          : isCancelled
+                          ? "bg-muted border-border text-muted-foreground"
+                          : "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                      )}>
+                        <AlarmClock className="w-5 h-5" />
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <StockHoverGraphCard symbol={reminder.symbol}>
+                            <span className="font-mono font-bold text-sm text-foreground hover:text-primary transition-colors cursor-pointer">
+                              ${reminder.symbol}
+                            </span>
+                          </StockHoverGraphCard>
+
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-[10px] font-mono font-bold uppercase",
+                              isTriggered
+                                ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                                : isCancelled
+                                ? "bg-muted text-muted-foreground border-border"
+                                : "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                            )}
+                          >
+                            {reminder.status}
+                          </Badge>
+
+                          {reminder.senderLabel && (
+                            <Badge variant="outline" className="text-[10px] text-muted-foreground border-border/50">
+                              via {reminder.senderLabel}
+                            </Badge>
+                          )}
+                        </div>
+
+                        <p className="text-xs font-semibold text-foreground/90 mt-1">
+                          {reminder.task}
+                        </p>
+
+                        {reminder.sourceMessage && reminder.sourceMessage !== reminder.task && (
+                          <p className="text-[11px] text-muted-foreground italic mt-0.5 truncate max-w-md">
+                            &ldquo;{reminder.sourceMessage}&rdquo;
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-border/40">
+                      <div className="text-right">
+                        <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-foreground justify-end">
+                          <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                          <span>
+                            {remindDate.toLocaleDateString('en-US', {
+                              weekday: 'short',
+                              month: 'short',
+                              day: 'numeric',
+                            })}
+                          </span>
+                          <Clock className="w-3.5 h-3.5 text-amber-400 ml-1" />
+                          <span>
+                            {remindDate.toLocaleTimeString('en-US', {
+                              hour: 'numeric',
+                              minute: '2-digit',
+                              hour12: true,
+                            })}
+                          </span>
+                        </div>
+                        <span className={cn(
+                          "text-[10px] font-medium",
+                          isPast ? "text-emerald-400" : "text-amber-400/90"
+                        )}>
+                          {isTriggered
+                            ? 'Dispatched & Triggered'
+                            : isPast
+                            ? 'Due Now'
+                            : `Target in ${Math.max(1, Math.round((remindDate.getTime() - Date.now()) / (60 * 1000)))}m`}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setTradeToEdit({
+                              id: '',
+                              symbol: reminder.symbol,
+                              action: 'BUY',
+                              assetType: 'STOCK',
+                              timeframe: 'DAY',
+                              orderType: 'LIMIT',
+                              quantity: 100,
+                              conviction: 'HIGH',
+                              rank: 1,
+                              status: 'PENDING',
+                              notes: `Reminder task: ${reminder.task}`,
+                              createdAt: new Date().toISOString(),
+                              updatedAt: new Date().toISOString(),
+                            });
+                            setIsModalOpen(true);
+                          }}
+                          className="h-8 text-xs font-semibold gap-1 border-primary/30 text-primary hover:bg-primary/10"
+                          title="Queue this trade into Active Execution Queue"
+                        >
+                          <Target className="w-3.5 h-3.5" />
+                          <span className="hidden md:inline">Queue Order</span>
+                        </Button>
+
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleDeleteReminder(reminder)}
+                          className="h-8 w-8 p-0 text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10"
+                          title="Cancel Reminder"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 );

@@ -1,10 +1,15 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { consumeTelegramBuffer, parseTradeExecutionCandidates, formatTelegramExecutionSummary } from '../../server/services/telegramBufferConsumerService';
+import {
+  consumeTelegramBuffer,
+  parseTradeExecutionCandidates,
+  formatTelegramExecutionSummary,
+  clearPersistedDedupKeysForTest,
+} from '../../server/services/telegramBufferConsumerService';
 
 describe('Telegram Execution Topic Ingestion & Trade Queue Processing', () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
+    clearPersistedDedupKeysForTest();
     process.env.TELEGRAM_BUFFER_URL = 'https://telegram-thought-buffer.workers.dev/consume';
     process.env.TELEGRAM_BUFFER_SECRET = 'tradecompass_secret_consume_token_2026';
     process.env.TELEGRAM_EXECUTION_THREAD_ID = '5';
@@ -506,5 +511,80 @@ describe('Telegram Execution Topic Ingestion & Trade Queue Processing', () => {
     expect(dispatchedTelegramBody.text).toContain('Short Put: 1 Contract $AAPL 150P');
     expect(dispatchedTelegramBody.text).not.toContain('BUY 100');
     expect(dispatchedTelegramBody.text).not.toContain('SELL 100');
+  });
+
+  it('routes Execution topic reminders to ExecutionReminder model and saves to Execution ThoughtLog', async () => {
+    const mockMessages = [
+      {
+        id: 'msg_rem_1',
+        sender: 'trader_user',
+        senderLabel: '@trader_user',
+        text: 'AAPL roll call spread tomorrow at 10am',
+        topicName: 'Execution',
+        messageThreadId: 5,
+        timestamp: Date.now(),
+      },
+    ];
+
+    let dispatchedTelegramBody: any = null;
+
+    global.fetch = vi.fn().mockImplementation(async (url: string, init?: any) => {
+      if (url.includes('telegram-thought-buffer.workers.dev/consume')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, count: mockMessages.length, messages: mockMessages }),
+        };
+      }
+      if (url.includes('api.telegram.org')) {
+        if (init?.body) {
+          dispatchedTelegramBody = JSON.parse(init.body);
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, result: { message_id: 777 } }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+
+    const mockCreatedReminders: any[] = [];
+    const mockCreatedThoughtLogs: any[] = [];
+
+    const mockPrisma: any = {
+      executionReminder: {
+        create: vi.fn().mockImplementation(async ({ data }: any) => {
+          const rec = { id: 'rem-ingest-1', ...data };
+          mockCreatedReminders.push(rec);
+          return rec;
+        }),
+      },
+      thoughtLog: {
+        create: vi.fn().mockImplementation(async ({ data }: any) => {
+          mockCreatedThoughtLogs.push(data);
+          return { id: 'tl-rem-1', ...data };
+        }),
+      },
+    };
+
+    const result = await consumeTelegramBuffer(mockPrisma);
+
+    expect(result.success).toBe(true);
+    expect(mockCreatedReminders.length).toBe(1);
+    expect(mockCreatedReminders[0].symbol).toBe('AAPL');
+    expect(mockCreatedReminders[0].task).toBe('Roll call spread');
+
+    // Check Telegram confirmation message
+    expect(dispatchedTelegramBody).not.toBeNull();
+    expect(dispatchedTelegramBody.text).toContain('Execution Reminder Scheduled');
+    expect(dispatchedTelegramBody.text).toContain('$AAPL');
+    expect(dispatchedTelegramBody.text).toContain('Roll call spread');
+
+    // Check ThoughtLog
+    expect(mockCreatedThoughtLogs.length).toBe(1);
+    expect(mockCreatedThoughtLogs[0].folder).toBe('Execution');
+    expect(mockCreatedThoughtLogs[0].tags).toContain('SCHEDULE_REMINDER');
+    expect(mockCreatedThoughtLogs[0].symbols).toContain('AAPL');
   });
 });

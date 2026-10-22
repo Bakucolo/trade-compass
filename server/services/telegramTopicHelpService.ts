@@ -12,6 +12,7 @@ export type TelegramTopicType =
   | 'APP'
   | 'MACRO'
   | 'TRADE'
+  | 'TICKER'
   | 'GENERAL';
 
 /**
@@ -160,24 +161,34 @@ Start your message with the ticker symbol, followed by your thesis:
  * Returns formatted instructions for EXECUTION topic
  */
 export function getExecutionTopicHelp(): string {
-  return `🎯 *Execution Topic — Tactical Queue Instructions*
+  return `🎯 *Execution Topic — Tactical Queue & Reminders Instructions*
 
-Check, manage, and queue tactical trade ideas, orders, and option structures directly into Trade Compass:
+Check, manage, queue tactical trade ideas, and schedule execution reminders directly into Trade Compass:
 
 📋 *1. Check Tactical Execution Queue*
 • \`queue\` (or \`orders\`, \`pending\`, \`list\`, \`status\`)
   _Displays every active order in the tactical execution queue with entry price, stop loss, take profit, and status._
 • \`status AAPL\` or \`order NVDA\` — Check orders specifically for that ticker.
 
-🗑️ *2. Cancel / Remove an Order*
+⏰ *2. Schedule Execution Reminders (Ticker + Task + Time)*
+Get an automated reminder alert in this topic at a specific date and time:
+• \`AAPL roll call spread tomorrow at 10am\`
+• \`NVDA buy 100 shares if breakout holds Friday at 3:30pm\`
+• \`remind TSLA trim position in 2 hours\`
+• \`task NVDA roll July calls to Aug next Monday 10am\`
+• \`BUY 100 AAPL @ 150 tomorrow at 10am\`
+• \`reminders\` (or \`tasks\`, \`scheduled\`) — View all active scheduled execution reminders.
+• \`cancel reminder AAPL\` — Cancel a scheduled execution reminder.
+
+🗑️ *3. Cancel / Remove an Order*
 • \`cancel AAPL\` or \`remove NVDA\` — Cancels and removes pending orders from the tactical queue.
 
-📈 *3. Queue Equity Orders*
+📈 *4. Queue Equity Orders*
 • \`BUY 100 AAPL @ 220 SL 210 TP 245\`
 • \`SELL 50 NVDA @ 140\`
 • \`BUY 200 PLTR MKT SL 52\`
 
-⚡ *4. Queue Options & Multi-Leg Strategies*
+⚡ *5. Queue Options & Multi-Leg Strategies*
 • \`BTO 2 AAPL 230C 01/17 @ 5.50\`
 • \`STO 1 NVDA 120P 03/21 @ 3.20\`
 • \`Covered Call AAPL 230C Jan 17\`
@@ -191,7 +202,7 @@ Check, manage, and queue tactical trade ideas, orders, and option structures dir
 • *Take Profit / Target*: \`TP 170\` or \`target 170\`
 • *Timeframe*: \`DAY\`, \`WEEK\`, or \`SWING\`
 
-_All orders are parsed and queued into the Tactical Execution Queue in Trade Compass with automatic risk parameters._`;
+_All orders are queued into the Tactical Execution Queue in Trade Compass with automatic risk parameters, and scheduled execution reminders dispatch push notifications at your exact requested time!_`;
 }
 
 /**
@@ -409,11 +420,39 @@ This Telegram group has dedicated topics tailored to your trading workflows:
 • 💡 *Ideas*: Check recent market theses (\`ideas\`, \`ideas NVDA\`) and log catalysts with automatic ticker telemetry.
 • 💡 *App*: Check backlog (\`roadmap\`, \`ideas\`) and submit feature ideas and bug reports (\`[UI] Add dark mode\`).
 • 🌐 *Macro*: Query the full institutional dossier (\`macro\`, \`report\`), specific items (\`regime\`, \`yields\`, \`volatility\`, \`pillars\`, \`scenarios\`, \`allocations\`, \`catalysts\`, \`gold\`), or write \`pdf\` for a styled PDF document!
+• 📊 *Ticker*: Query deep fundamentals, technicals & stage analysis for any stock (\`AAPL\`, \`$NVDA\`), or write \`pdf\` (\`AAPL pdf\`) for a styled PDF dossier with historical vector price chart!
 
 ⚙️ *Topics Operations:*
 • Send \`topics\` in any topic for the full Live Topic Dashboard & Status Control Center!
 • Send \`set topic [name] [threadId]\` to map or update topic thread routing!
 • Type \`help\` inside any topic to get the full detailed instruction manual for that topic.`;
+}
+
+/**
+ * Returns formatted instructions for TICKER topic
+ */
+export function getTickerTopicHelp(): string {
+  return `📊 *Ticker Topic — Instructions & Commands*
+
+Analyze any stock or ETF across deep institutional fundamentals, technical indicators, and vector price charts:
+
+🔍 *1. Ticker Intelligence Lookup*
+Send any stock ticker to get a complete briefing:
+• \`AAPL\` or \`$NVDA\` — Spot price, day change, 52-week range, market cap, and valuation multiples.
+• \`PLTR\` or \`TSLA\` — Stage analysis, 20 EMA / 50 SMA / 200 SMA, RSI(14), MACD posture, support & resistance levels.
+• \`MSFT\` — Piotroski F-score, Altman Z-score, operating margins, debt-to-equity, and fair value model.
+
+📄 *2. Executive PDF Dossier with Stock Price Chart*
+Add \`pdf\` to any ticker inquiry (or write \`pdf\` after checking a stock) to receive a styled 2-page institutional PDF:
+• \`AAPL pdf\` or \`pdf NVDA\`
+• \`PLTR please send pdf\`
+• \`pdf\` _(generates PDF for your most recently queried ticker)_
+
+📊 *What is Included in the PDF Report:*
+• *Page 1:* Executive Overview, Valuation Multiples (P/E, P/S, EV/EBITDA, PEG), Profitability Margins, Balance Sheet Solvency (Piotroski, Altman Z), and Investment Thesis (Strengths, Risks, Bull & Bear cases).
+• *Page 2:* Native high-resolution vector stock price chart (6-month daily candles) with 50 SMA / 200 SMA overlays, support/resistance levels, momentum indicators (RSI, MACD), and actionable trade execution plan (buy zone, targets, stop-loss).
+
+💡 _Data is refreshed live with real-time quotes, technical math, and fundamental financial statements._`;
 }
 
 /**
@@ -443,6 +482,8 @@ export function getHelpMessageForTopic(topic: TelegramTopicType): string {
       return getAppTopicHelp();
     case 'MACRO':
       return getMacroTopicHelp();
+    case 'TICKER':
+      return getTickerTopicHelp();
     case 'GENERAL':
     default:
       return getGeneralTopicDirectoryHelp();

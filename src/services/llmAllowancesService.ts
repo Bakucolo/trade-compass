@@ -26,12 +26,16 @@ export interface ProviderAllowance {
   requestsToday: number;
   lastUsedAt?: string;
   notes?: string;
+  isLocalOnly?: boolean;
+  isCloudDisabled?: boolean;
 }
 
 export interface LLMAllowancesReport {
   timestamp: string;
   totalCallsToday: number;
   activeCascade: string[];
+  isCloud?: boolean;
+  hostingMode?: 'cloud' | 'local';
   providers: ProviderAllowance[];
 }
 

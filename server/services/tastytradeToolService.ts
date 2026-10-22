@@ -22,6 +22,7 @@ import {
     isTastySandbox
 } from './tastytradeService';
 import { alpacaService } from './alpacaService';
+import { isCloudHosting } from './environmentService';
 import {
     fetchIbkrAccounts,
     fetchIbkrAccountSummary,
@@ -1347,19 +1348,24 @@ interface ProviderCandidate {
 function resolveCandidates(preferredModel?: string): ProviderCandidate[] {
     const groqKey = process.env.GROQ_API_KEY;
     const openRouterKey = process.env.OPENROUTER_API_KEY;
+    const geminiKey = process.env.GEMINI_API_KEY;
     const list: ProviderCandidate[] = [];
 
-    // Localhost Ollama check
+    // Localhost Ollama check (Only enabled on localhost; strictly omitted in cloud hosting)
     if (preferredModel?.includes('ollama')) {
-        list.push({
-            name: 'Localhost Ollama',
-            url: 'http://localhost:11434/v1/chat/completions',
-            model: process.env.OLLAMA_MODEL || 'llama3.1'
-        });
-        return list;
+        if (!isCloudHosting()) {
+            list.push({
+                name: 'Localhost Ollama',
+                url: 'http://localhost:11434/v1/chat/completions',
+                model: process.env.OLLAMA_MODEL || 'llama3.1'
+            });
+            return list;
+        } else {
+            console.log('[Copilot Engine] Local Ollama model is disabled in cloud hosting. Seamlessly routing query to cloud frontier models.');
+        }
     }
 
-    // If Groq is available, openai/gpt-oss-120b is ultra-fast, robust, and excels at tool calling
+    // 1. If Groq is available, openai/gpt-oss-120b is ultra-fast, robust, and excels at tool calling
     if (groqKey) {
         list.push({
             name: 'Groq (openai/gpt-oss-120b)',
@@ -1369,7 +1375,17 @@ function resolveCandidates(preferredModel?: string): ProviderCandidate[] {
         });
     }
 
-    // OpenRouter candidates
+    // 2. Google AI Studio (Gemini 2.0 Flash) OpenAI-compatible endpoint
+    if (geminiKey) {
+        list.push({
+            name: 'Google AI Studio (Gemini 2.0 Flash)',
+            url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+            model: 'gemini-2.0-flash',
+            apiKey: geminiKey
+        });
+    }
+
+    // 3. OpenRouter candidates
     if (openRouterKey) {
         const orHeaders = {
             'HTTP-Referer': 'https://tradecompass.internal',
@@ -1377,7 +1393,7 @@ function resolveCandidates(preferredModel?: string): ProviderCandidate[] {
         };
 
         // If user explicitly picked an OpenRouter model other than discontinued llama-3.3 free
-        if (preferredModel && preferredModel !== 'auto' && !preferredModel.includes('llama-3.3-70b-instruct:free')) {
+        if (preferredModel && preferredModel !== 'auto' && !preferredModel.includes('llama-3.3-70b-instruct:free') && !preferredModel.includes('ollama')) {
             list.push({
                 name: `OpenRouter (${preferredModel})`,
                 url: 'https://openrouter.ai/api/v1/chat/completions',

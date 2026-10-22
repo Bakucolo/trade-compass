@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Bell, CreditCard, Lock, Moon, Palette, User, Sparkles, Key, Check, Eye, EyeOff, Loader2, Send } from 'lucide-react';
+import { Bell, CreditCard, Lock, Moon, Palette, User, Sparkles, Key, Check, Eye, EyeOff, Loader2, Send, Cloud, Laptop, Server } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Switch } from './ui/switch';
 import { Badge } from './ui/badge';
 import { useTheme, THEME_PRESETS } from '@/services/themeService';
+import { useHostingEnvironment, useSwitchHostingMode, isClientCloud } from '@/services/environmentService';
 import { ThemeStylingModal } from './ThemeStylingModal';
 import { TelegramTopicsModal } from './TelegramTopicsModal';
 import { cn } from '@/lib/utils';
@@ -21,6 +22,10 @@ export function SettingsPage() {
   const [hasOpenrouter, setHasOpenrouter] = useState(false);
   const [isSavingKeys, setIsSavingKeys] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  const { data: envData } = useHostingEnvironment();
+  const { mutate: switchHostingMode, isPending: isSwitching } = useSwitchHostingMode();
+  const isCloud = Boolean(envData?.isCloud ?? isClientCloud());
 
   // Fetch configured key status
   useEffect(() => {
@@ -176,6 +181,127 @@ export function SettingsPage() {
             </Button>
           </div>
         </form>
+      </div>
+
+      {/* Hosting Architecture & Feature Separation Hub */}
+      <div className="glass-card rounded-xl p-6 border border-sky-500/20 bg-sky-950/10 space-y-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400">
+              <Cloud className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg font-semibold text-foreground">Hosting Architecture & Feature Routing</h2>
+                {isCloud ? (
+                  <Badge className="bg-sky-500/20 text-sky-300 border-sky-500/40 text-[10px] font-mono">
+                    🌐 Cloud Production (Active)
+                  </Badge>
+                ) : (
+                  <Badge className="bg-indigo-500/20 text-indigo-300 border-indigo-500/40 text-[10px] font-mono">
+                    💻 Localhost Mode
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Separation of cloud-native 24/7 services and machine-local features
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => switchHostingMode(isCloud ? 'local' : 'cloud')}
+              disabled={isSwitching}
+              className="text-xs font-semibold gap-1.5 border-sky-500/40 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20"
+            >
+              {isCloud ? <Laptop className="w-3.5 h-3.5" /> : <Cloud className="w-3.5 h-3.5" />}
+              <span>Switch to {isCloud ? 'Localhost Mode' : 'Cloud Mode'}</span>
+            </Button>
+          </div>
+        </div>
+
+        {/* Feature Matrix Breakdown */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+          {/* Cloud Version Card */}
+          <div className="p-4 rounded-xl bg-card/60 border border-border/80 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 font-semibold text-xs text-sky-300">
+                <Cloud className="w-4 h-4 text-sky-400" />
+                <span>Cloud Version (Active Online 24/7)</span>
+              </div>
+              <Badge className="bg-sky-500/15 text-sky-300 border-sky-500/30 text-[10px]">
+                Always-On
+              </Badge>
+            </div>
+            <ul className="text-[11px] space-y-1.5 text-muted-foreground">
+              <li className="flex items-center gap-1.5 text-foreground/90">
+                <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span><b>Cloud AI Models:</b> Google Gemini 2.5 Flash, Groq LPUs (300+ tok/s), OpenRouter</span>
+              </li>
+              <li className="flex items-center gap-1.5 text-foreground/90">
+                <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span><b>24/7 Telegram Operations:</b> Ingestion daemon, topic alerts & mobile research</span>
+              </li>
+              <li className="flex items-center gap-1.5 text-foreground/90">
+                <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span><b>Live Broker APIs:</b> Tastytrade & Trading 212 cloud execution</span>
+              </li>
+              <li className="flex items-center gap-1.5 text-foreground/90">
+                <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span><b>Institutional Reports:</b> Server-side PDF dossiers with vector price charts</span>
+              </li>
+            </ul>
+          </div>
+
+          {/* Localhost Workstation Card */}
+          <div className="p-4 rounded-xl bg-card/60 border border-border/80 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 font-semibold text-xs text-indigo-300">
+                <Laptop className="w-4 h-4 text-indigo-400" />
+                <span>Localhost Workstation Mode</span>
+              </div>
+              <Badge variant="outline" className={cn("text-[10px]", isCloud ? "text-slate-400 border-slate-700 bg-slate-900/60" : "text-indigo-300 border-indigo-500/30")}>
+                {isCloud ? 'Disabled Online' : 'Available'}
+              </Badge>
+            </div>
+            <ul className="text-[11px] space-y-1.5 text-muted-foreground">
+              <li className="flex items-center gap-1.5">
+                <span className={cn("w-3.5 h-3.5 flex items-center justify-center font-bold text-xs shrink-0", isCloud ? "text-slate-500" : "text-indigo-400")}>
+                  {isCloud ? '—' : '✓'}
+                </span>
+                <span className={isCloud ? "text-muted-foreground/80 line-through" : "text-foreground/90"}>
+                  <b>Local Ollama Models:</b> On-device `llama3.1` (localhost:11434)
+                </span>
+              </li>
+              <li className="flex items-center gap-1.5">
+                <span className={cn("w-3.5 h-3.5 flex items-center justify-center font-bold text-xs shrink-0", isCloud ? "text-slate-500" : "text-indigo-400")}>
+                  {isCloud ? '—' : '✓'}
+                </span>
+                <span className={isCloud ? "text-muted-foreground/80 line-through" : "text-foreground/90"}>
+                  <b>Python LangGraph Worker:</b> Local `hybrid_finance_agent.py` script
+                </span>
+              </li>
+              <li className="flex items-center gap-1.5">
+                <span className={cn("w-3.5 h-3.5 flex items-center justify-center font-bold text-xs shrink-0", isCloud ? "text-amber-400" : "text-indigo-400")}>
+                  {isCloud ? '!' : '✓'}
+                </span>
+                <span className="text-foreground/90">
+                  <b>IBKR Client Portal:</b> Connects to desktop gateway (`localhost:5000`)
+                </span>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div className="text-[11px] text-muted-foreground bg-card/40 rounded-lg p-2.5 border border-border/30 flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-sky-400 shrink-0" />
+          <span>
+            <b>Cloud-First Architecture:</b> In Cloud mode, local Ollama models and local python scripts are automatically bypassed to ensure 100% cloud uptime, ultra-low memory usage, and instant sub-second AI responses via Google Gemini & Groq.
+          </span>
+        </div>
       </div>
 
       {/* Profile Section */}

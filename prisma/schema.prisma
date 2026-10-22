@@ -443,3 +443,24 @@ model StockScorecardRecord {
   @@index([analyzedAt])
 }
 
+model ExecutionReminder {
+  id              String    @id @default(uuid())
+  symbol          String    // e.g. "AAPL"
+  task            String    // e.g. "Roll call spread", "Buy 100 shares"
+  remindAt        DateTime  // Target scheduled timestamp
+  status          String    @default("PENDING") // "PENDING" | "TRIGGERED" | "CANCELLED"
+  chatId          String?
+  messageThreadId Int?
+  senderLabel     String?   @default("Telegram")
+  sourceMessage   String?
+  notes           String?
+  triggeredAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status])
+  @@index([remindAt])
+  @@index([symbol])
+  @@index([createdAt])
+}
+

@@ -308,8 +308,8 @@ export function AgentActivityDrawer({ isOpen, onClose }: AgentActivityDrawerProp
                   3. Groq LPUs (Tertiary)
                 </Badge>
                 <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
-                <Badge className="bg-indigo-500/20 text-indigo-300 border-indigo-500/40">
-                  4. Ollama (Offline Local)
+                <Badge className={cn("border", allowancesReport?.isCloud ? "bg-slate-800/40 text-slate-400 border-slate-700/40 opacity-70" : "bg-indigo-500/20 text-indigo-300 border-indigo-500/40")}>
+                  4. Ollama ({allowancesReport?.isCloud ? 'Disabled in Cloud' : 'Offline Local'})
                 </Badge>
               </div>
             </div>
@@ -371,6 +371,11 @@ export function AgentActivityDrawer({ isOpen, onClose }: AgentActivityDrawerProp
                               >
                                 {provider.tier}
                               </Badge>
+                              {provider.isCloudDisabled && (
+                                <Badge variant="outline" className="text-[10px] py-0 px-1 text-slate-400 border-slate-600 bg-slate-900/60 font-mono">
+                                  Disabled on Cloud
+                                </Badge>
+                              )}
                               {!hasKey && provider.providerId !== 'ollama' && (
                                 <Badge variant="outline" className="text-[10px] py-0 px-1 text-rose-400 border-rose-500/40">
                                   No Key
@@ -493,7 +498,7 @@ export function AgentActivityDrawer({ isOpen, onClose }: AgentActivityDrawerProp
             <div className="p-3 rounded-lg bg-blue-950/20 border border-blue-500/30 text-[11px] text-blue-200/90 flex items-start gap-2">
               <Sparkles className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
               <div>
-                <b className="text-blue-300">Intelligent Free-Tier Routing:</b> When OpenRouter hits its free tier rate limit or quota, requests automatically failover to Google Gemini (1,500 free daily requests), followed by Groq (14,400 free daily requests at 300+ tokens/sec), and finally your local Ollama server.
+                <b className="text-blue-300">Intelligent Free-Tier Routing:</b> When OpenRouter hits its free tier rate limit or quota, requests automatically failover to Google Gemini (1,500 free daily requests), followed by Groq (14,400 free daily requests at 300+ tokens/sec){allowancesReport?.isCloud ? ' (running 100% in Cloud mode; local Ollama is safely disabled).' : ', and finally your local Ollama server.'}
               </div>
             </div>
           </TabsContent>

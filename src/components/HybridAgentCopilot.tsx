@@ -43,13 +43,16 @@ import {
   Eye,
   Palette,
   Type,
-  StretchHorizontal
+  StretchHorizontal,
+  Cloud,
+  Laptop
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { createThoughtLog } from '@/services/thoughtLogService';
+import { useHostingEnvironment, isClientCloud } from '@/services/environmentService';
 import { CopilotPrintModal, CopilotPrintableData } from './CopilotPrintModal';
 import { DraftOrderCard } from './DraftOrderCard';
 import { OptionChainCard } from './OptionChainCard';
@@ -205,7 +208,7 @@ export const COPILOT_MODELS: CopilotModelOption[] = [
     id: 'ollama',
     name: 'Ollama (Llama 3.1 Local)',
     badge: 'Offline Local',
-    desc: '100% private offline execution via local Ollama engine',
+    desc: '100% private offline execution via local Ollama engine (Available on Localhost)',
     isLocal: true
   }
 ];
@@ -244,6 +247,9 @@ const SUGGESTED_QUERIES = [
 ];
 
 export function HybridAgentCopilot({ isOpen, onOpenChange, onNavigateToLog }: HybridAgentCopilotProps) {
+  const { data: envData } = useHostingEnvironment();
+  const isCloud = Boolean(envData?.isCloud ?? isClientCloud());
+
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
@@ -256,8 +262,38 @@ export function HybridAgentCopilot({ isOpen, onOpenChange, onNavigateToLog }: Hy
   const [isLoading, setIsLoading] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>(() => {
-    return localStorage.getItem('tradeflow_copilot_model') || 'auto';
+    const saved = localStorage.getItem('tradeflow_copilot_model') || 'auto';
+    return (isClientCloud() && saved === 'ollama') ? 'auto' : saved;
   });
+
+  // Auto-switch away from Ollama in Cloud Hosting Mode
+  useEffect(() => {
+    if (isCloud && selectedModel === 'ollama') {
+      setSelectedModel('auto');
+      localStorage.setItem('tradeflow_copilot_model', 'auto');
+      toast.info('Cloud Mode Active: Routed to Cloud Cascade', {
+        description: 'Local Ollama is disabled in cloud hosting. Using high-speed cloud frontier models.'
+      });
+    }
+  }, [isCloud, selectedModel]);
+
+  // Adapt welcome message dynamically for Cloud vs Localhost
+  useEffect(() => {
+    if (isCloud) {
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id === 'welcome') {
+            return {
+              ...m,
+              text: "👋 **Hello! I'm your Cloud Financial Copilot.**\n\nI dynamically route requests through ultra-fast cloud frontier models (**Google Gemini 2.5 Flash**, **Groq LPUs at 300+ tok/s**, and **OpenRouter**) for instant ticker lookups, fundamental/technical analysis, and live multi-broker execution.\n\n⚡ **Interactive Trading:** Ask me to draft orders (e.g. *“Draft a limit buy for 10 AAPL at $220”*), inspect your Tastytrade balances, or fetch option chains.\n\n👁️ **Reading Comfort:** Use the **Eye-Care** icon in the header to dim text brightness, switch to warm amber night-shift tones, or scale font size."
+            };
+          }
+          return m;
+        })
+      );
+    }
+  }, [isCloud]);
+
   const [savedMessageIds, setSavedMessageIds] = useState<Set<string>>(new Set());
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
   const [printModalData, setPrintModalData] = useState<CopilotPrintableData | null>(null);
@@ -584,6 +620,17 @@ export function HybridAgentCopilot({ isOpen, onOpenChange, onNavigateToLog }: Hy
 
               {/* Right: Model Selector, Eye-Care Controls & Fullscreen Toggle */}
               <div className="flex items-center gap-2 flex-wrap mr-8 sm:mr-6">
+                {/* Hosting Environment Badge */}
+                {isCloud ? (
+                  <Badge className="bg-sky-500/15 text-sky-300 border-sky-500/30 text-[10px] hidden md:flex items-center gap-1 font-mono">
+                    <Cloud className="w-3 h-3" /> Cloud AI Active
+                  </Badge>
+                ) : (
+                  <Badge className="bg-indigo-500/15 text-indigo-300 border-indigo-500/30 text-[10px] hidden md:flex items-center gap-1 font-mono">
+                    <Laptop className="w-3 h-3" /> Localhost Mode
+                  </Badge>
+                )}
+
                 {/* AI Model Selector */}
                 <div className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 rounded-xl px-2.5 py-1 text-xs shadow-inner">
                   <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
@@ -594,11 +641,19 @@ export function HybridAgentCopilot({ isOpen, onOpenChange, onNavigateToLog }: Hy
                     aria-label="Select AI Model"
                     className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer font-medium pr-1 py-0.5"
                   >
-                    {COPILOT_MODELS.map((m) => (
-                      <option key={m.id} value={m.id} className="bg-slate-950 text-slate-100">
-                        {m.name} ({m.badge})
-                      </option>
-                    ))}
+                    {COPILOT_MODELS.map((m) => {
+                      const isOptionDisabled = isCloud && Boolean(m.isLocal);
+                      return (
+                        <option
+                          key={m.id}
+                          value={m.id}
+                          disabled={isOptionDisabled}
+                          className="bg-slate-950 text-slate-100 disabled:text-slate-500"
+                        >
+                          {m.name} ({isOptionDisabled ? 'Unavailable in Cloud' : m.badge})
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
 

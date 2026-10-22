@@ -66,6 +66,7 @@ import { PrismaClient } from '@prisma/client';
 import { fetchTastyPositions, fetchTastyBalances, fetchTastyAccountInfo, getTastyConfigSummary } from './services/tastytradeService';
 import { fetchTrading212Cash, fetchTrading212AccountInfo, fetchTrading212Portfolio, getTrading212LastError } from './services/trading212Service';
 import { executeApprovedDraft, cancelDraft, getDraftOrder, getAllDraftOrders, runTastyCopilotAgent } from './services/tastytradeToolService';
+import { isCloudHosting, getHostingEnvironmentInfo, setHostingMode } from './services/environmentService';
 import {
   startIbkrTickleDaemon,
   stopIbkrTickleDaemon,
@@ -220,6 +221,13 @@ import { SYMBOL_ALIASES, resolveYahooFinanceSymbol, getCanonicalCompanyName } fr
 import { KNOWN_COMPANY_NAMES, getKnownCompanyName } from './services/commonTickers';
 import { analyzeImpliedExpectations } from './services/impliedExpectationsService';
 export { SYMBOL_ALIASES, resolveYahooFinanceSymbol, getCanonicalCompanyName };
+import {
+  checkAndDispatchDueReminders,
+  getExecutionReminders,
+  createExecutionReminder,
+  cancelExecutionReminder,
+  parseExecutionReminder,
+} from './services/executionReminderService';
 import {
   generateAndSendDailyReport,
   fetchComprehensiveReportData,
@@ -5299,6 +5307,31 @@ async function runHybridFinancialAgent(query: string, model?: string) {
   });
 }
 
+// GET /api/environment - Hosting Environment & Feature Separation Hub
+app.get('/api/environment', (req, res) => {
+  try {
+    const info = getHostingEnvironmentInfo(req);
+    res.json(info);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/settings/hosting-mode - Toggle Cloud vs Localhost Hosting Mode
+app.post('/api/settings/hosting-mode', (req, res) => {
+  try {
+    const { mode } = req.body || {};
+    if (mode !== 'cloud' && mode !== 'local') {
+      return res.status(400).json({ error: 'Valid mode ("cloud" | "local") is required.' });
+    }
+    setHostingMode(mode);
+    const updated = getHostingEnvironmentInfo(req);
+    res.json({ success: true, message: `Hosting mode switched to ${mode}.`, environment: updated });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // POST /api/agent/hybrid-query - Run query through Tool-Calling Copilot Agent with Tastytrade integration
 app.post('/api/agent/hybrid-query', async (req, res) => {
   try {
@@ -5307,15 +5340,28 @@ app.post('/api/agent/hybrid-query', async (req, res) => {
       return res.status(400).json({ error: 'Query parameter is required.' });
     }
 
-    logToFile(`[Copilot Engine] Incoming query (Broker: ${broker || 'tastytrade'}, Model: ${model || 'auto'}): "${query.trim().slice(0, 60)}..."`);
+    const isCloud = isCloudHosting();
+    let effectiveModel = model;
+    if (isCloud && typeof model === 'string' && model.toLowerCase().includes('ollama')) {
+      logToFile('[Copilot Engine] Local Ollama model requested in cloud hosting. Auto-routing to cloud frontier cascade.');
+      effectiveModel = 'auto';
+    }
+
+    logToFile(`[Copilot Engine] Incoming query (Broker: ${broker || 'tastytrade'}, Model: ${effectiveModel || 'auto'}, Cloud: ${isCloud}): "${query.trim().slice(0, 60)}..."`);
 
     // Execute through multi-turn function calling engine with active broker tools
     try {
-      const result = await runTastyCopilotAgent(query, model, history, broker || 'tastytrade');
+      const result = await runTastyCopilotAgent(query, effectiveModel, history, broker || 'tastytrade');
       return res.json(result);
     } catch (agentErr: any) {
+      if (isCloud) {
+        logToFile(`[Copilot Engine] Tool-calling error: ${agentErr.message}. Cloud mode active; skipping local Python LangGraph/Ollama fallback.`);
+        return res.status(502).json({
+          error: `Copilot error: ${agentErr.message}. Local Ollama is disabled in cloud hosting. Please verify your cloud AI API keys (Google Gemini / Groq / OpenRouter) in Settings.`,
+        });
+      }
       logToFile(`[Copilot Engine] Tool-calling engine note: ${agentErr.message}. Attempting python hybrid fallback.`);
-      const result = await runHybridFinancialAgent(query, model);
+      const result = await runHybridFinancialAgent(query, effectiveModel);
       return res.json(result);
     }
   } catch (error: any) {
@@ -8891,6 +8937,70 @@ app.get('/api/management/planned-trades/preview-pdf', async (req, res) => {
   }
 });
 
+// ==========================================
+// EXECUTION REMINDERS API
+// ==========================================
+app.get('/api/management/execution-reminders', async (req, res) => {
+  try {
+    const { status, symbol } = req.query;
+    const reminders = await getExecutionReminders({
+      status: status ? String(status) : undefined,
+      symbol: symbol ? String(symbol) : undefined,
+    }, prisma);
+    res.json(reminders);
+  } catch (error: any) {
+    console.error('Error fetching execution reminders:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/management/execution-reminders', async (req, res) => {
+  try {
+    const { symbol, task, remindAt, text, notes } = req.body;
+    let targetSymbol = symbol;
+    let targetTask = task;
+    let targetDate = remindAt ? new Date(remindAt) : null;
+
+    if (text && (!targetSymbol || !targetTask || !targetDate)) {
+      const parsed = parseExecutionReminder(text);
+      if (parsed) {
+        targetSymbol = targetSymbol || parsed.symbol;
+        targetTask = targetTask || parsed.task;
+        targetDate = targetDate || parsed.remindAt;
+      }
+    }
+
+    if (!targetSymbol || !targetTask || !targetDate) {
+      return res.status(400).json({ error: 'Missing required fields: symbol, task, and remindAt' });
+    }
+
+    const created = await createExecutionReminder({
+      symbol: targetSymbol,
+      task: targetTask,
+      remindAt: targetDate,
+      senderLabel: 'Web UI',
+      sourceMessage: text || `${targetSymbol} ${targetTask}`,
+      notes,
+    }, prisma);
+
+    res.status(201).json(created);
+  } catch (error: any) {
+    console.error('Error creating execution reminder:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/management/execution-reminders/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await cancelExecutionReminder(id, prisma);
+    res.json(result);
+  } catch (error: any) {
+    console.error('Error cancelling execution reminder:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Static frontend asset serving in production (when dist/ exists)
 const distPath = path.join(process.cwd(), 'dist');
 if (fs.existsSync(distPath)) {
@@ -9039,6 +9149,16 @@ const server = app.listen(port, () => {
 
   // Start IBKR Client Portal session heartbeat (Tickle Daemon: 2-3 minute intervals)
   startIbkrTickleDaemon();
+
+  // Initial and periodic check for scheduled Execution Reminders (every 10 seconds)
+  checkAndDispatchDueReminders(prisma).catch(e => console.error('Initial Execution Reminder dispatch error:', e));
+  setInterval(async () => {
+    try {
+      await checkAndDispatchDueReminders(prisma);
+    } catch (e) {
+      console.error('Periodic Execution Reminder dispatch error:', e);
+    }
+  }, 10000);
 });
 
 server.on('error', (err: any) => {
