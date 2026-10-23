@@ -3,6 +3,7 @@ import {
   consumeTelegramBuffer,
   saveSymbolsToWatchlist,
   BufferedTelegramMessage,
+  clearPersistedDedupKeysForTest,
 } from '../../server/services/telegramBufferConsumerService';
 
 describe('Telegram Ideas Topic Ingestion & Direct Watchlist Option', () => {
@@ -10,6 +11,7 @@ describe('Telegram Ideas Topic Ingestion & Direct Watchlist Option', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
+    clearPersistedDedupKeysForTest();
     process.env = { ...originalEnv };
     process.env.TELEGRAM_BUFFER_URL = 'https://telegram-thought-buffer.workers.dev/consume';
     process.env.TELEGRAM_BUFFER_SECRET = 'tradecompass_secret_consume_token_2026';
@@ -19,6 +21,7 @@ describe('Telegram Ideas Topic Ingestion & Direct Watchlist Option', () => {
   });
 
   afterEach(() => {
+    clearPersistedDedupKeysForTest();
     global.fetch = originalFetch;
     process.env = originalEnv;
     vi.restoreAllMocks();

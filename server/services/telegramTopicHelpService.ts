@@ -213,12 +213,29 @@ export function getIdeasTopicHelp(): string {
 
 Check and log market thoughts, earnings catalysts, macro theses, and watch opportunities:
 
-📋 *1. Check Recent Ideas*
-• \`ideas\` (or \`recent ideas\`, \`list\`, \`recent\`)
-  _Displays the latest market theses, catalysts, and tracked stocks logged in Trade Compass._
-• \`ideas AAPL\` or \`ideas NVDA\` — Filter logged theses for a specific ticker.
+📋 *1. Retrieve Logged Ideas & Theses*
+• \`list\` (or \`list all\`, \`ideas\`)
+  _Displays all recorded market theses and catalysts._
+• \`list week\` (or \`week\`, \`ideas week\`)
+  _Retrieves ideas and catalysts logged in the last 7 days._
+• \`list month\` (or \`month\`, \`ideas month\`)
+  _Retrieves ideas and catalysts logged in the last 30 days._
+• \`list year\` (or \`year\`, \`ideas year\`)
+  _Retrieves ideas and catalysts logged in the last 365 days._
+• \`ideas AAPL\` or \`list NVDA month\`
+  _Filters ideas specifically for a given ticker and timeframe._
 
-🧠 *2. Log New Market Ideas*
+📄 *2. Downloadable Styled PDF Dossiers*
+• \`list pdf\` or \`pdf\`
+  _Generates and sends an institutional, nicely styled multi-page PDF dossier of all ideas._
+• \`list month pdf\` (or \`month pdf\`)
+  _Generates a PDF dossier of ideas from the last month._
+• \`list week pdf\` (or \`week pdf\`)
+  _Generates a PDF dossier of ideas from the last week._
+• \`list year pdf\` (or \`year pdf\`)
+  _Generates a PDF dossier of ideas from the last year._
+
+🧠 *3. Log New Market Ideas*
 • *Earnings Catalysts*: \`Bullish into AMD earnings given datacenter GPU upside.\`
 • *Macro Theses*: \`Watching crude oil $USO curve backwardation, energy supply shock potential.\`
 • *Trade Ideas*: \`Long $CCJ uranium pure-play on nuclear utility contract renewals.\`

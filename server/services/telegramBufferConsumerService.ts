@@ -239,6 +239,7 @@ export const topicNameByThreadId = new Map<number, string>([
   [391, 'Macro'],
   [406, 'Trade'],
   [499, 'Set alerts'],
+  [564, 'Ticker'],
 ]);
 
 /**
@@ -1260,7 +1261,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       const configuredBalancesThreadId = process.env.TELEGRAM_BALANCES_THREAD_ID ? Number(process.env.TELEGRAM_BALANCES_THREAD_ID) : undefined;
       const configuredMacroThreadId = process.env.TELEGRAM_MACRO_THREAD_ID ? Number(process.env.TELEGRAM_MACRO_THREAD_ID) : undefined;
       const configuredTradeThreadId = process.env.TELEGRAM_TRADE_THREAD_ID ? Number(process.env.TELEGRAM_TRADE_THREAD_ID) : 406;
-      const configuredTickerThreadId = process.env.TELEGRAM_TICKER_THREAD_ID ? Number(process.env.TELEGRAM_TICKER_THREAD_ID) : undefined;
+      const configuredTickerThreadId = process.env.TELEGRAM_TICKER_THREAD_ID ? Number(process.env.TELEGRAM_TICKER_THREAD_ID) : 564;
 
       const msgThreadNum = msg.messageThreadId !== undefined ? Number(msg.messageThreadId) : undefined;
       const isExplicitAppThread = msgThreadNum !== undefined && msgThreadNum === configuredAppThreadId;
@@ -1304,7 +1305,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       if (resolvedTopicName && /^trades?$/i.test(resolvedTopicName.trim()) && msgThreadNum !== undefined && !process.env.TELEGRAM_TRADE_THREAD_ID) {
         setTelegramTradeThreadId(msgThreadNum);
       }
-      if (resolvedTopicName && /^tickers?$/i.test(resolvedTopicName.trim()) && msgThreadNum !== undefined && !process.env.TELEGRAM_TICKER_THREAD_ID) {
+      if (resolvedTopicName && /tickers?/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_TICKER_THREAD_ID) {
         setTelegramTickerThreadId(msgThreadNum);
       }
 
@@ -1497,7 +1498,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       ));
 
       const isTickerTopic = isExplicitTickerThread || (!isExplicitAppThread && !isSetAlertTopic && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isNotesTopic && !isPositionsTopic && !isBalancesTopic && !isMacroTopic && !isTradeTopic && Boolean(
-        (resolvedTopicName && /^tickers?$/i.test(resolvedTopicName.trim())) ||
+        (resolvedTopicName && /tickers?/i.test(resolvedTopicName)) ||
         contentText.toLowerCase().startsWith('#ticker') ||
         contentText.toLowerCase().startsWith('#tickers') ||
         contentText.match(/#(?:topic:)?tickers?\b/i) ||
