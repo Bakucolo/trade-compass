@@ -8,6 +8,8 @@ import {
   hasReminderBeenSent,
   markReminderAsSent,
   clearRemindersCacheForTesting,
+  parseCalendarTimeframe,
+  filterEarningsByTimeframe,
 } from '../../server/services/telegramCalendarTopicService';
 import {
   topicNameByThreadId,
@@ -260,6 +262,251 @@ describe('Telegram Calendar Topic & Earnings Reminders Suite', () => {
       expect(sentPdfs.length).toBe(1);
       expect(sentPdfs[0].filename).toContain('TradeCompass_Earnings_Calendar');
       expect(sentPdfs[0].caption).toContain('Portfolio Earnings Calendar Dossier');
+    });
+
+    it('should correctly parse calendar timeframe keywords', () => {
+      expect(parseCalendarTimeframe('week').timeframe).toBe('WEEK');
+      expect(parseCalendarTimeframe('this week').timeframe).toBe('WEEK');
+      expect(parseCalendarTimeframe('7d').timeframe).toBe('WEEK');
+      expect(parseCalendarTimeframe('next week').timeframe).toBe('NEXT_WEEK');
+      expect(parseCalendarTimeframe('month').timeframe).toBe('MONTH');
+      expect(parseCalendarTimeframe('this month').timeframe).toBe('MONTH');
+      expect(parseCalendarTimeframe('30d').timeframe).toBe('MONTH');
+      expect(parseCalendarTimeframe('year').timeframe).toBe('YEAR');
+      expect(parseCalendarTimeframe('today').timeframe).toBe('TODAY');
+      expect(parseCalendarTimeframe('calendar').timeframe).toBe('ALL');
+      expect(parseCalendarTimeframe('calendar').isExplicitFilter).toBe(false);
+    });
+
+    it('should filter earnings by week when user sends week', async () => {
+      vi.spyOn(earningsService, 'fetchEarningsData').mockResolvedValueOnce({
+        items: [
+          {
+            symbol: 'NVDA',
+            resolvedSymbol: 'NVDA',
+            companyName: 'NVIDIA Corporation',
+            price: 140,
+            dayChangePercent: 2.5,
+            currency: 'USD',
+            earningsDate: '2026-11-03T21:00:00.000Z',
+            earningsDateFormatted: 'Nov 3, 2026',
+            daysUntil: 3,
+            timing: 'AMC',
+            isEstimate: false,
+            epsEstimate: 0.75,
+            epsLow: 0.7,
+            epsHigh: 0.8,
+            revenueEstimate: 33000000000,
+            revenueLow: null,
+            revenueHigh: null,
+            exDividendDate: null,
+            dividendDate: null,
+            isPortfolioHolding: true,
+            portfolioMarketValue: 7000,
+            portfolioQuantity: 50,
+            portfolioDayPnL: 150,
+            isWatchlist: false,
+          },
+          {
+            symbol: 'MSFT',
+            resolvedSymbol: 'MSFT',
+            companyName: 'Microsoft Corporation',
+            price: 430,
+            dayChangePercent: 0.5,
+            currency: 'USD',
+            earningsDate: '2026-11-20T21:00:00.000Z',
+            earningsDateFormatted: 'Nov 20, 2026',
+            daysUntil: 20,
+            timing: 'AMC',
+            isEstimate: false,
+            epsEstimate: 3.1,
+            epsLow: null,
+            epsHigh: null,
+            revenueEstimate: 65000000000,
+            revenueLow: null,
+            revenueHigh: null,
+            exDividendDate: null,
+            dividendDate: null,
+            isPortfolioHolding: true,
+            portfolioMarketValue: 12000,
+            portfolioQuantity: 30,
+            portfolioDayPnL: 80,
+            isWatchlist: false,
+          },
+        ],
+        summary: {
+          totalMonitored: 2,
+          portfolioCount: 2,
+          watchlistCount: 0,
+          reportingThisWeek: 1,
+          reportingNextWeek: 0,
+          reportingThisMonth: 2,
+          nextReportingHolding: null,
+          totalPortfolioValueAtRisk: 19000,
+        },
+        timestamp: new Date().toISOString(),
+      });
+
+      const result = await handleCalendarTopicMessage({
+        text: 'week',
+        chatId: '-1003872409872',
+        messageThreadId: 607,
+        prisma: mockPrisma,
+        senderLabel: '@Trader',
+      });
+
+      expect(result.handled).toBe(true);
+      expect(result.actionTaken).toBe('UPCOMING_SCHEDULE');
+      expect(result.timeframe).toBe('WEEK');
+      expect(result.itemsCount).toBe(1);
+      expect(sentMessages.length).toBe(1);
+      expect(sentMessages[0].text).toContain('Trade Compass — Earnings Calendar (This Week (Next 7 Days))');
+      expect(sentMessages[0].text).toContain('$NVDA');
+      expect(sentMessages[0].text).not.toContain('$MSFT');
+    });
+
+    it('should filter earnings by month and generate filtered PDF when user sends month pdf', async () => {
+      vi.spyOn(earningsService, 'fetchEarningsData').mockResolvedValueOnce({
+        items: [
+          {
+            symbol: 'NVDA',
+            resolvedSymbol: 'NVDA',
+            companyName: 'NVIDIA Corporation',
+            price: 140,
+            dayChangePercent: 2.5,
+            currency: 'USD',
+            earningsDate: '2026-11-03T21:00:00.000Z',
+            earningsDateFormatted: 'Nov 3, 2026',
+            daysUntil: 3,
+            timing: 'AMC',
+            isEstimate: false,
+            epsEstimate: 0.75,
+            epsLow: null,
+            epsHigh: null,
+            revenueEstimate: 33000000000,
+            revenueLow: null,
+            revenueHigh: null,
+            exDividendDate: null,
+            dividendDate: null,
+            isPortfolioHolding: true,
+            portfolioMarketValue: 7000,
+            portfolioQuantity: 50,
+            portfolioDayPnL: 150,
+            isWatchlist: false,
+          },
+          {
+            symbol: 'TSLA',
+            resolvedSymbol: 'TSLA',
+            companyName: 'Tesla Inc.',
+            price: 250,
+            dayChangePercent: -1.2,
+            currency: 'USD',
+            earningsDate: '2027-01-25T21:00:00.000Z',
+            earningsDateFormatted: 'Jan 25, 2027',
+            daysUntil: 80,
+            timing: 'AMC',
+            isEstimate: false,
+            epsEstimate: 0.65,
+            epsLow: null,
+            epsHigh: null,
+            revenueEstimate: 26000000000,
+            revenueLow: null,
+            revenueHigh: null,
+            exDividendDate: null,
+            dividendDate: null,
+            isPortfolioHolding: true,
+            portfolioMarketValue: 5000,
+            portfolioQuantity: 20,
+            portfolioDayPnL: -100,
+            isWatchlist: false,
+          },
+        ],
+        summary: {
+          totalMonitored: 2,
+          portfolioCount: 2,
+          watchlistCount: 0,
+          reportingThisWeek: 1,
+          reportingNextWeek: 0,
+          reportingThisMonth: 1,
+          nextReportingHolding: null,
+          totalPortfolioValueAtRisk: 12000,
+        },
+        timestamp: new Date().toISOString(),
+      });
+
+      const result = await handleCalendarTopicMessage({
+        text: 'month pdf',
+        chatId: '-1003872409872',
+        messageThreadId: 607,
+        prisma: mockPrisma,
+        senderLabel: '@Trader',
+      });
+
+      expect(result.handled).toBe(true);
+      expect(result.actionTaken).toBe('PDF_REPORT');
+      expect(result.timeframe).toBe('MONTH');
+      expect(result.itemsCount).toBe(1);
+      expect(sentPdfs.length).toBe(1);
+      expect(sentPdfs[0].filename).toContain('TradeCompass_Earnings_Calendar_MONTH');
+      expect(sentPdfs[0].caption).toContain('Trade Compass — Earnings Calendar (This Month (Next 30 Days))');
+    });
+
+    it('should return clear notice when no holdings report within a requested timeframe (e.g. today)', async () => {
+      vi.spyOn(earningsService, 'fetchEarningsData').mockResolvedValueOnce({
+        items: [
+          {
+            symbol: 'NVDA',
+            resolvedSymbol: 'NVDA',
+            companyName: 'NVIDIA Corporation',
+            price: 140,
+            dayChangePercent: 2.5,
+            currency: 'USD',
+            earningsDate: '2026-11-18T21:00:00.000Z',
+            earningsDateFormatted: 'Nov 18, 2026',
+            daysUntil: 7,
+            timing: 'AMC',
+            isEstimate: false,
+            epsEstimate: 0.75,
+            epsLow: null,
+            epsHigh: null,
+            revenueEstimate: 33000000000,
+            revenueLow: null,
+            revenueHigh: null,
+            exDividendDate: null,
+            dividendDate: null,
+            isPortfolioHolding: true,
+            portfolioMarketValue: 7000,
+            portfolioQuantity: 50,
+            portfolioDayPnL: 150,
+            isWatchlist: false,
+          },
+        ],
+        summary: {
+          totalMonitored: 1,
+          portfolioCount: 1,
+          watchlistCount: 0,
+          reportingThisWeek: 1,
+          reportingNextWeek: 0,
+          reportingThisMonth: 1,
+          nextReportingHolding: null,
+          totalPortfolioValueAtRisk: 7000,
+        },
+        timestamp: new Date().toISOString(),
+      });
+
+      const result = await handleCalendarTopicMessage({
+        text: 'today',
+        chatId: '-1003872409872',
+        messageThreadId: 607,
+        prisma: mockPrisma,
+        senderLabel: '@Trader',
+      });
+
+      expect(result.handled).toBe(true);
+      expect(result.actionTaken).toBe('UPCOMING_SCHEDULE');
+      expect(result.itemsCount).toBe(0);
+      expect(sentMessages.length).toBe(1);
+      expect(sentMessages[0].text).toContain('No portfolio holdings have scheduled earnings within *Today*');
     });
 
     it('should display specific stock earnings catalyst when querying a ticker like NVDA', async () => {

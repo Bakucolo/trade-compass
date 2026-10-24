@@ -439,7 +439,7 @@ This Telegram group has dedicated topics tailored to your trading workflows:
 • 💡 *App*: Check backlog (\`roadmap\`, \`ideas\`) and submit feature ideas and bug reports (\`[UI] Add dark mode\`).
 • 🌐 *Macro*: Query the full institutional dossier (\`macro\`, \`report\`), specific items (\`regime\`, \`yields\`, \`volatility\`, \`pillars\`, \`scenarios\`, \`allocations\`, \`catalysts\`, \`gold\`), or write \`pdf\` for a styled PDF document!
 • 📊 *Ticker*: Query deep fundamentals, technicals & stage analysis for any stock (\`AAPL\`, \`$NVDA\`), or write \`pdf\` (\`AAPL pdf\`) for a styled PDF dossier with historical vector price chart!
-• 📅 *Calendar*: Automated 1-week and 1-day advance earnings reminders for open positions, upcoming portfolio schedule (\`calendar\`, \`earnings\`), single-stock dates (\`AAPL\`), and executive schedule PDFs (\`calendar pdf\`)!
+• 📅 *Calendar*: Automated 1-week and 1-day advance earnings reminders for open positions, timeframe filters (\`week\`, \`month\`), upcoming portfolio schedule (\`calendar\`, \`earnings\`), single-stock dates (\`AAPL\`), and executive schedule PDFs (\`week pdf\`, \`month pdf\`)!
 
 ⚙️ *Topics Operations:*
 • Send \`topics\` in any topic for the full Live Topic Dashboard & Status Control Center!
@@ -461,17 +461,20 @@ You will automatically receive high-signal alerts in this topic:
 • *Previous Day (1 Day Out)*: Imminent notice before reporting tomorrow (BMO or AMC) with Wall Street expectations and defense checklist.
 • *Day-Of Announcement*: Reminder on reporting day to track IV crush and price action.
 
-📋 *2. Interactive Calendar Commands*
-• \`calendar\` or \`earnings\` (or \`upcoming\`, \`list\`)
-  _Displays a chronological schedule of upcoming earnings across your portfolio holdings grouped by This Week (within 7 days), Next Week (8-14 days), and This Month._
-• \`scan\` or \`check\`
-  _Triggers an immediate audit of all open positions and dispatches any eligible 1-week or 1-day reminders right now._
-• \`AAPL\` or \`$NVDA\` (or \`PLTR earnings\`)
-  _Instant earnings timing (BMO/AMC), days countdown, EPS consensus & range, and your portfolio market exposure if held._
+📋 *2. Interactive Calendar & Timeframe Commands*
+• \`week\` (or \`this week\`, \`7d\`) — Upcoming earnings reporting within the next 7 days.
+• \`next week\` — Upcoming earnings reporting in 8 to 14 days.
+• \`month\` (or \`this month\`, \`30d\`) — Upcoming earnings reporting within the next 30 days.
+• \`year\` — Upcoming earnings over the next 12 months.
+• \`today\` — Positions reporting today (BMO or AMC).
+• \`calendar\` or \`earnings\` (or \`upcoming\`, \`list\`) — Full chronological schedule grouped across all tiers.
+• \`scan\` or \`check\` — Immediate audit of open positions to dispatch any due reminders now.
+• \`AAPL\` or \`$NVDA\` (or \`PLTR earnings\`) — Instant earnings timing, days countdown, Wall Street EPS consensus & range, and portfolio exposure.
 
-📄 *3. Executive PDF Earnings Calendar Dossier*
-• \`calendar pdf\` or \`earnings pdf\` (or write \`pdf\` here)
-  _Generates an institutional PDF dossier featuring summary capital at risk, timeline breakdown, Wall Street estimates, and defense guidance for every holding._
+📄 *3. Executive PDF Earnings Calendar Dossiers*
+• \`calendar pdf\` or \`pdf\` — Institutional PDF dossier of your full upcoming schedule.
+• \`week pdf\` (or \`pdf week\`) — PDF dossier focused specifically on holdings reporting this week.
+• \`month pdf\` (or \`pdf month\`) — PDF dossier focused on holdings reporting within the next 30 days.
 
 💡 _Reminders are automatically deduplicated so you never receive duplicate notifications for the same earnings cycle._`;
 }

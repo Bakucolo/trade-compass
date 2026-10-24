@@ -26,6 +26,16 @@ export type CalendarTopicAction =
   | 'SCAN_DISPATCH'
   | 'INVALID_INPUT';
 
+export type CalendarTimeframe = 'TODAY' | 'WEEK' | 'NEXT_WEEK' | 'MONTH' | 'YEAR' | 'ALL';
+
+export interface CalendarTimeframeInfo {
+  timeframe: CalendarTimeframe;
+  timeframeLabel: string;
+  minDays: number;
+  maxDays: number;
+  isExplicitFilter: boolean;
+}
+
 export interface CalendarTopicResult {
   handled: boolean;
   replyText: string;
@@ -33,6 +43,105 @@ export interface CalendarTopicResult {
   pdfGenerated?: boolean;
   symbol?: string | null;
   itemsCount?: number;
+  timeframe?: CalendarTimeframe;
+  timeframeLabel?: string;
+}
+
+/**
+ * Parses user input for timeframe keywords (week, month, year, today, next week)
+ */
+export function parseCalendarTimeframe(text: string): CalendarTimeframeInfo {
+  const lower = (text || '').toLowerCase().trim();
+
+  // 1. TODAY
+  if (/\b(?:today|tonight)\b/i.test(lower)) {
+    return {
+      timeframe: 'TODAY',
+      timeframeLabel: 'Today',
+      minDays: 0,
+      maxDays: 0,
+      isExplicitFilter: true,
+    };
+  }
+
+  // 2. NEXT WEEK (8 - 14 days out)
+  if (/\b(?:next\s+week)\b/i.test(lower)) {
+    return {
+      timeframe: 'NEXT_WEEK',
+      timeframeLabel: 'Next Week (8 – 14 Days Out)',
+      minDays: 8,
+      maxDays: 14,
+      isExplicitFilter: true,
+    };
+  }
+
+  // 3. THIS WEEK / WEEK (0 - 7 days out)
+  if (/\b(?:weeks?|weekly|7d|7\s*days?|this\s+week)\b/i.test(lower)) {
+    return {
+      timeframe: 'WEEK',
+      timeframeLabel: 'This Week (Next 7 Days)',
+      minDays: 0,
+      maxDays: 7,
+      isExplicitFilter: true,
+    };
+  }
+
+  // 4. THIS MONTH / MONTH (0 - 30 days out)
+  if (/\b(?:months?|monthly|30d|30\s*days?|this\s+month)\b/i.test(lower)) {
+    return {
+      timeframe: 'MONTH',
+      timeframeLabel: 'This Month (Next 30 Days)',
+      minDays: 0,
+      maxDays: 30,
+      isExplicitFilter: true,
+    };
+  }
+
+  // 5. THIS YEAR / YEAR (0 - 365 days out)
+  if (/\b(?:years?|yearly|annual|annually|365d|this\s+year)\b/i.test(lower)) {
+    return {
+      timeframe: 'YEAR',
+      timeframeLabel: 'Next 12 Months',
+      minDays: 0,
+      maxDays: 365,
+      isExplicitFilter: true,
+    };
+  }
+
+  return {
+    timeframe: 'ALL',
+    timeframeLabel: 'All Upcoming Dates',
+    minDays: 0,
+    maxDays: 365,
+    isExplicitFilter: false,
+  };
+}
+
+/**
+ * Filters earnings items by target timeframe
+ */
+export function filterEarningsByTimeframe(
+  items: EarningsItem[],
+  timeframe: CalendarTimeframe
+): EarningsItem[] {
+  return items.filter((it) => {
+    if (it.daysUntil === null || it.daysUntil === undefined || isNaN(it.daysUntil)) return false;
+    switch (timeframe) {
+      case 'TODAY':
+        return it.daysUntil === 0;
+      case 'NEXT_WEEK':
+        return it.daysUntil >= 8 && it.daysUntil <= 14;
+      case 'WEEK':
+        return it.daysUntil >= 0 && it.daysUntil <= 7;
+      case 'MONTH':
+        return it.daysUntil >= 0 && it.daysUntil <= 30;
+      case 'YEAR':
+        return it.daysUntil >= 0 && it.daysUntil <= 365;
+      case 'ALL':
+      default:
+        return it.daysUntil >= 0;
+    }
+  });
 }
 
 export type EarningsReminderType = '1_WEEK' | '1_DAY' | 'DAY_OF';
@@ -504,7 +613,8 @@ export async function checkAndDispatchEarningsReminders(
  */
 export async function generateCalendarDossierPdf(
   items: EarningsItem[],
-  summary: any
+  summary: any,
+  timeframeLabel?: string
 ): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
     const doc = new PDFDocument({
@@ -534,9 +644,13 @@ export async function generateCalendarDossierPdf(
     };
 
     // Header Banner
+    const titleText = timeframeLabel
+      ? `Trade Compass • Earnings Calendar (${timeframeLabel})`
+      : 'Trade Compass • Portfolio Earnings Calendar & Catalysts Dossier';
+
     doc.rect(36, 36, 523, 54).fill(colors.primaryNavy);
-    doc.fillColor(colors.white).fontSize(14).font('Helvetica-Bold')
-      .text('Trade Compass • Portfolio Earnings Calendar & Catalysts Dossier', 48, 48);
+    doc.fillColor(colors.white).fontSize(13).font('Helvetica-Bold')
+      .text(titleText, 48, 48);
     doc.fillColor(colors.accentCyan).fontSize(8).font('Helvetica')
       .text(
         `Generated: ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} • Monitored Positions & Watchlist Catalysts`,
@@ -549,14 +663,16 @@ export async function generateCalendarDossierPdf(
     doc.rect(36, curY, 523, 44).fill(colors.cardBg);
     doc.rect(36, curY, 523, 44).strokeColor(colors.cardBorder).lineWidth(1).stroke();
 
+    const periodValueAtRisk = items.reduce((sum, it) => sum + (it.portfolioMarketValue || 0), 0);
+
     const metricCols = [
-      { label: 'MONITORED HOLDINGS', val: `${summary?.portfolioCount || 0}` },
+      { label: timeframeLabel ? 'SCHEDULED HOLDINGS' : 'MONITORED HOLDINGS', val: `${items.length}` },
       { label: 'THIS WEEK (7D)', val: `${summary?.reportingThisWeek || 0}` },
       { label: 'NEXT WEEK (14D)', val: `${summary?.reportingNextWeek || 0}` },
       { label: 'THIS MONTH (30D)', val: `${summary?.reportingThisMonth || 0}` },
       {
-        label: 'CAPITAL AT RISK (30D)',
-        val: formatLargeNumber(summary?.totalPortfolioValueAtRisk || 0),
+        label: timeframeLabel ? 'PERIOD CAPITAL AT RISK' : 'CAPITAL AT RISK (30D)',
+        val: formatLargeNumber(periodValueAtRisk || summary?.totalPortfolioValueAtRisk || 0),
       },
     ];
 
@@ -575,14 +691,11 @@ export async function generateCalendarDossierPdf(
     const portfolioUpcoming = items.filter(
       (it) => it.isPortfolioHolding && it.daysUntil !== null && it.daysUntil >= 0
     );
-    const watchlistUpcoming = items.filter(
-      (it) => it.isWatchlist && !it.isPortfolioHolding && it.daysUntil !== null && it.daysUntil >= 0
-    );
 
-    const displayList = portfolioUpcoming.length > 0 ? portfolioUpcoming : items.slice(0, 15);
+    const displayList = portfolioUpcoming.length > 0 ? portfolioUpcoming : items.filter((it) => it.daysUntil !== null && it.daysUntil >= 0).slice(0, 15);
 
     doc.fillColor(colors.primaryNavy).fontSize(10).font('Helvetica-Bold')
-      .text('Upcoming Earnings Announcement Schedule', 36, curY);
+      .text(`Upcoming Earnings Schedule${timeframeLabel ? ` — ${timeframeLabel}` : ''}`, 36, curY);
     curY += 16;
 
     if (displayList.length === 0) {
@@ -674,27 +787,12 @@ export async function generateCalendarDossierPdf(
  */
 export function formatCalendarScheduleMessage(
   items: EarningsItem[],
-  summary: any
+  summary: any,
+  timeframeInfo?: CalendarTimeframeInfo
 ): string {
+  const isExplicit = Boolean(timeframeInfo?.isExplicitFilter);
   const portfolioItems = items.filter((it) => it.isPortfolioHolding && it.daysUntil !== null && it.daysUntil >= 0);
-  const displayItems = portfolioItems.length > 0 ? portfolioItems : items.filter((it) => it.daysUntil !== null && it.daysUntil >= 0).slice(0, 10);
-
-  if (displayItems.length === 0) {
-    return (
-      `📅 *Trade Compass — Earnings Calendar*\n\n` +
-      `No upcoming earnings dates are currently detected for your active portfolio holdings.\n\n` +
-      `💡 _Send any ticker symbol (e.g. \`AAPL\`, \`NVDA\`, \`PLTR\`) to look up earnings dates on demand, or send \`scan\` to trigger a fresh portfolio audit._`
-    );
-  }
-
-  // Group items by proximity
-  const thisWeek = displayItems.filter((it) => it.daysUntil !== null && it.daysUntil <= 7);
-  const nextWeek = displayItems.filter((it) => it.daysUntil !== null && it.daysUntil > 7 && it.daysUntil <= 14);
-  const thisMonth = displayItems.filter((it) => it.daysUntil !== null && it.daysUntil > 14 && it.daysUntil <= 30);
-  const later = displayItems.filter((it) => it.daysUntil !== null && it.daysUntil > 30);
-
-  let msg = `📅 *Trade Compass — Portfolio Earnings Calendar*\n\n`;
-  msg += `Monitored Holdings: *${summary?.portfolioCount || displayItems.length}* | Capital at Risk (30D): *${formatLargeNumber(summary?.totalPortfolioValueAtRisk || 0)}*\n\n`;
+  const displayItems = portfolioItems.length > 0 ? portfolioItems : items.filter((it) => it.daysUntil !== null && it.daysUntil >= 0).slice(0, 15);
 
   const formatItemRow = (it: EarningsItem): string => {
     const timingBadge = it.timing === 'BMO' ? 'BMO 🌅' : it.timing === 'AMC' ? 'AMC 🌆' : 'Time TBD';
@@ -713,6 +811,47 @@ export function formatCalendarScheduleMessage(
 
     return `• *$${it.symbol}* (${it.companyName}): \`${it.earningsDateFormatted}\` (${timingBadge}) — ${dayLabel}${posText}${epsText}`;
   };
+
+  if (isExplicit && timeframeInfo) {
+    const label = timeframeInfo.timeframeLabel;
+    if (displayItems.length === 0) {
+      return (
+        `📅 *Trade Compass — Earnings Calendar (${label})*\n\n` +
+        `No portfolio holdings have scheduled earnings within *${label}*.\n\n` +
+        `💡 _Send \`calendar\` to view all upcoming dates, or send any stock ticker (e.g. \`AAPL\`, \`NVDA\`) for on-demand earnings dates._`
+      );
+    }
+
+    const periodValue = displayItems.reduce((sum, it) => sum + (it.portfolioMarketValue || 0), 0);
+    let msg = `📅 *Trade Compass — Earnings Calendar (${label})*\n\n`;
+    msg += `Scheduled Holdings: *${displayItems.length}* | Capital at Risk: *${formatLargeNumber(periodValue)}*\n\n`;
+
+    const sorted = [...displayItems].sort((a, b) => (a.daysUntil ?? 999) - (b.daysUntil ?? 999));
+    sorted.forEach((it) => {
+      msg += `${formatItemRow(it)}\n`;
+    });
+
+    msg += `\n🔔 _Automated reminders are dispatched 1 week and 1 day prior to each announcement._\n`;
+    msg += `📄 _Send \`${timeframeInfo.timeframe.toLowerCase()} pdf\` to export this schedule as a styled PDF dossier._`;
+    return msg;
+  }
+
+  if (displayItems.length === 0) {
+    return (
+      `📅 *Trade Compass — Earnings Calendar*\n\n` +
+      `No upcoming earnings dates are currently detected for your active portfolio holdings.\n\n` +
+      `💡 _Send any ticker symbol (e.g. \`AAPL\`, \`NVDA\`, \`PLTR\`) to look up earnings dates on demand, or send \`scan\` to trigger a fresh portfolio audit._`
+    );
+  }
+
+  // Group items by proximity
+  const thisWeek = displayItems.filter((it) => it.daysUntil !== null && it.daysUntil <= 7);
+  const nextWeek = displayItems.filter((it) => it.daysUntil !== null && it.daysUntil > 7 && it.daysUntil <= 14);
+  const thisMonth = displayItems.filter((it) => it.daysUntil !== null && it.daysUntil > 14 && it.daysUntil <= 30);
+  const later = displayItems.filter((it) => it.daysUntil !== null && it.daysUntil > 30);
+
+  let msg = `📅 *Trade Compass — Portfolio Earnings Calendar*\n\n`;
+  msg += `Monitored Holdings: *${summary?.portfolioCount || displayItems.length}* | Capital at Risk (30D): *${formatLargeNumber(summary?.totalPortfolioValueAtRisk || 0)}*\n\n`;
 
   if (thisWeek.length > 0) {
     msg += `🚨 *Imminent (Within 7 Days — Action Required):*\n`;
@@ -810,6 +949,14 @@ export function formatSingleTickerEarningsMessage(item: EarningsItem): string {
   return msg;
 }
 
+const CALENDAR_KEYWORDS = new Set([
+  'CALENDAR', 'EARNINGS', 'UPCOMING', 'LIST', 'SCHEDULE', 'ALL',
+  'PORTFOLIO', 'HELP', 'SCAN', 'PDF', 'DOSSIER', 'DOCUMENT', 'REPORT',
+  'WEEK', 'WEEKS', 'WEEKLY', 'MONTH', 'MONTHS', 'MONTHLY',
+  'YEAR', 'YEARS', 'YEARLY', 'TODAY', 'TONIGHT', 'NEXT',
+  'DAY', 'DAYS', 'CHECK', 'REFRESH', 'DISPATCH'
+]);
+
 /**
  * Main dispatcher for Telegram messages inside the Calendar topic
  */
@@ -881,23 +1028,43 @@ export async function handleCalendarTopicMessage({
     };
   }
 
-  // 3. PDF Report Request (e.g. "pdf", "calendar pdf", "earnings pdf", "list pdf")
+  // 3. Timeframe parsing (week, month, next week, year, today)
+  const timeframeInfo = parseCalendarTimeframe(lower);
+
+  // 4. PDF Report Request (e.g. "pdf", "calendar pdf", "week pdf", "month pdf", "earnings pdf")
   const isPdfRequested = /\b(?:pdf|dossier|document|report)\b/i.test(lower);
 
   if (isPdfRequested) {
     try {
-      logToFile(`[TelegramCalendar] Generating executive Earnings Calendar PDF requested by ${senderLabel}...`);
+      logToFile(`[TelegramCalendar] Generating executive Earnings Calendar PDF (${timeframeInfo.timeframeLabel}) requested by ${senderLabel}...`);
       const earningsData = await fetchEarningsData(prisma);
-      const pdfBuffer = await generateCalendarDossierPdf(earningsData.items, earningsData.summary);
+      let targetItems = earningsData.items;
+      if (timeframeInfo.isExplicitFilter) {
+        targetItems = filterEarningsByTimeframe(targetItems, timeframeInfo.timeframe);
+      }
+      const pdfBuffer = await generateCalendarDossierPdf(
+        targetItems,
+        earningsData.summary,
+        timeframeInfo.isExplicitFilter ? timeframeInfo.timeframeLabel : undefined
+      );
 
-      const filename = `TradeCompass_Earnings_Calendar_${new Date().toISOString().slice(0, 10)}.pdf`;
-      const caption =
-        `📅 *Trade Compass — Portfolio Earnings Calendar Dossier*\n\n` +
-        `Attached is your institutional PDF schedule of upcoming earnings catalysts for active portfolio holdings.\n` +
-        `• *Monitored Holdings:* ${earningsData.summary.portfolioCount}\n` +
-        `• *Reporting within 7 Days:* ${earningsData.summary.reportingThisWeek}\n` +
-        `• *Capital at Risk (30 Days):* ${formatLargeNumber(earningsData.summary.totalPortfolioValueAtRisk)}\n\n` +
-        `💡 _Automated 1-week and 1-day alerts will continue to arrive directly in this topic._`;
+      const timeframeSlug = timeframeInfo.isExplicitFilter ? `_${timeframeInfo.timeframe}` : '';
+      const filename = `TradeCompass_Earnings_Calendar${timeframeSlug}_${new Date().toISOString().slice(0, 10)}.pdf`;
+
+      const periodAtRisk = targetItems.reduce((sum, it) => sum + (it.portfolioMarketValue || 0), 0);
+      const caption = timeframeInfo.isExplicitFilter
+        ? `📅 *Trade Compass — Earnings Calendar (${timeframeInfo.timeframeLabel})*\n\n` +
+          `Attached is your institutional PDF dossier of earnings catalysts for active portfolio holdings.\n` +
+          `• *Period:* ${timeframeInfo.timeframeLabel}\n` +
+          `• *Holdings Reporting:* ${targetItems.length}\n` +
+          `• *Capital at Risk:* ${formatLargeNumber(periodAtRisk)}\n\n` +
+          `💡 _Automated 1-week and 1-day alerts will continue to arrive directly in this topic._`
+        : `📅 *Trade Compass — Portfolio Earnings Calendar Dossier*\n\n` +
+          `Attached is your institutional PDF schedule of upcoming earnings catalysts for active portfolio holdings.\n` +
+          `• *Monitored Holdings:* ${earningsData.summary.portfolioCount}\n` +
+          `• *Reporting within 7 Days:* ${earningsData.summary.reportingThisWeek}\n` +
+          `• *Capital at Risk (30 Days):* ${formatLargeNumber(earningsData.summary.totalPortfolioValueAtRisk)}\n\n` +
+          `💡 _Automated 1-week and 1-day alerts will continue to arrive directly in this topic._`;
 
       if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
         await sendPdfReportToTelegram(pdfBuffer, filename, caption, {
@@ -911,64 +1078,73 @@ export async function handleCalendarTopicMessage({
         actionTaken: 'PDF_REPORT',
         replyText: caption,
         pdfGenerated: true,
-        itemsCount: earningsData.items.length,
+        itemsCount: targetItems.length,
+        timeframe: timeframeInfo.timeframe,
+        timeframeLabel: timeframeInfo.timeframeLabel,
       };
     } catch (pdfErr: any) {
       logToFile(`[TelegramCalendar] PDF generation error: ${pdfErr.message}. Falling back to text summary.`);
     }
   }
 
-  // 4. Check for Specific Ticker query (e.g. "AAPL", "$NVDA", "PLTR earnings")
-  const extracted = extractSymbolsFromText(clean);
-  const specificSymbol = extracted.length > 0 ? extracted[0] : null;
+  // 5. Check for Specific Ticker query (e.g. "AAPL", "$NVDA", "PLTR earnings")
+  // Only execute single-ticker lookup if NOT an explicit timeframe command (e.g., "week", "month")
+  if (!timeframeInfo.isExplicitFilter) {
+    const extracted = extractSymbolsFromText(clean);
+    const specificSymbol = extracted.length > 0 ? extracted[0].toUpperCase() : null;
 
-  if (specificSymbol && !/^(?:CALENDAR|EARNINGS|UPCOMING|LIST|SCHEDULE|ALL|PORTFOLIO|HELP|SCAN|PDF)$/i.test(specificSymbol)) {
-    logToFile(`[TelegramCalendar] Looking up single ticker earnings for $${specificSymbol}...`);
-    const singleItem = await lookupSymbolEarnings(specificSymbol);
+    if (specificSymbol && !CALENDAR_KEYWORDS.has(specificSymbol)) {
+      logToFile(`[TelegramCalendar] Looking up single ticker earnings for $${specificSymbol}...`);
+      const singleItem = await lookupSymbolEarnings(specificSymbol);
 
-    if (singleItem && singleItem.earningsDate) {
-      // Check if held in portfolio
-      const holding = await prisma.holding.findFirst({
-        where: {
-          OR: [
-            { symbol: { equals: specificSymbol } },
-            { underlyingSymbol: { equals: specificSymbol } },
-          ],
-          quantity: { not: 0 },
-        },
-      });
+      if (singleItem && singleItem.earningsDate) {
+        // Check if held in portfolio
+        const holding = await prisma.holding.findFirst({
+          where: {
+            OR: [
+              { symbol: { equals: specificSymbol } },
+              { underlyingSymbol: { equals: specificSymbol } },
+            ],
+            quantity: { not: 0 },
+          },
+        });
 
-      if (holding) {
-        singleItem.isPortfolioHolding = true;
-        singleItem.portfolioMarketValue = Math.abs(holding.marketValue || 0);
-        singleItem.portfolioQuantity = holding.quantity;
-        singleItem.portfolioDayPnL = holding.dayPnL;
+        if (holding) {
+          singleItem.isPortfolioHolding = true;
+          singleItem.portfolioMarketValue = Math.abs(holding.marketValue || 0);
+          singleItem.portfolioQuantity = holding.quantity;
+          singleItem.portfolioDayPnL = holding.dayPnL;
+        }
+
+        const tickerMsg = formatSingleTickerEarningsMessage(singleItem);
+
+        if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
+          await sendTelegramMessage({
+            text: tickerMsg,
+            chatId,
+            messageThreadId,
+            parseMode: 'Markdown',
+          }).catch((e: any) => logToFile(`[TelegramCalendar] Single ticker send error: ${e.message}`));
+        }
+
+        return {
+          handled: true,
+          actionTaken: 'TICKER_EARNINGS',
+          symbol: specificSymbol,
+          replyText: tickerMsg,
+        };
       }
-
-      const tickerMsg = formatSingleTickerEarningsMessage(singleItem);
-
-      if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
-        await sendTelegramMessage({
-          text: tickerMsg,
-          chatId,
-          messageThreadId,
-          parseMode: 'Markdown',
-        }).catch((e: any) => logToFile(`[TelegramCalendar] Single ticker send error: ${e.message}`));
-      }
-
-      return {
-        handled: true,
-        actionTaken: 'TICKER_EARNINGS',
-        symbol: specificSymbol,
-        replyText: tickerMsg,
-      };
     }
   }
 
-  // 5. Default: Full Upcoming Earnings Calendar Schedule
-  logToFile(`[TelegramCalendar] Fetching upcoming portfolio earnings schedule...`);
+  // 6. Upcoming Earnings Calendar Schedule (filtered by timeframe if specified or full schedule)
+  logToFile(`[TelegramCalendar] Fetching upcoming portfolio earnings schedule (Timeframe: ${timeframeInfo.timeframeLabel})...`);
   const earningsData = await fetchEarningsData(prisma);
-  const replyText = formatCalendarScheduleMessage(earningsData.items, earningsData.summary);
+  let targetItems = earningsData.items;
+  if (timeframeInfo.isExplicitFilter) {
+    targetItems = filterEarningsByTimeframe(targetItems, timeframeInfo.timeframe);
+  }
+  const replyText = formatCalendarScheduleMessage(targetItems, earningsData.summary, timeframeInfo);
 
   if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
     await sendTelegramMessage({
@@ -983,6 +1159,8 @@ export async function handleCalendarTopicMessage({
     handled: true,
     actionTaken: 'UPCOMING_SCHEDULE',
     replyText,
-    itemsCount: earningsData.items.length,
+    itemsCount: targetItems.length,
+    timeframe: timeframeInfo.timeframe,
+    timeframeLabel: timeframeInfo.timeframeLabel,
   };
 }
