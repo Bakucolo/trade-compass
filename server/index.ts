@@ -228,6 +228,7 @@ import {
   cancelExecutionReminder,
   parseExecutionReminder,
 } from './services/executionReminderService';
+import { checkAndDispatchEarningsReminders } from './services/telegramCalendarTopicService';
 import {
   generateAndSendDailyReport,
   fetchComprehensiveReportData,
@@ -9159,6 +9160,16 @@ const server = app.listen(port, () => {
       console.error('Periodic Execution Reminder dispatch error:', e);
     }
   }, 10000);
+
+  // Initial and periodic check for scheduled 1-Week and 1-Day Earnings Reminders (every 30 minutes)
+  checkAndDispatchEarningsReminders(prisma).catch(e => console.error('Initial Earnings Reminder dispatch error:', e));
+  setInterval(async () => {
+    try {
+      await checkAndDispatchEarningsReminders(prisma);
+    } catch (e) {
+      console.error('Periodic Earnings Reminder dispatch error:', e);
+    }
+  }, 30 * 60 * 1000);
 });
 
 server.on('error', (err: any) => {

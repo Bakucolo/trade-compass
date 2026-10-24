@@ -13,6 +13,7 @@ import {
   setTelegramTradeThreadId,
   setTelegramSetAlertThreadId,
   setTelegramTickerThreadId,
+  setTelegramCalendarThreadId,
 } from './telegramBufferConsumerService';
 
 const logToFile = (msg: string) => console.log(msg);
@@ -109,6 +110,11 @@ export function setGenericTopicThreadId(topicName: string, threadId: string | nu
     case 'QUOTE':
     case 'QUOTES':
       return setTelegramTickerThreadId(threadIdStr);
+    case 'CALENDAR':
+    case 'CALENDARS':
+    case 'EARNINGS':
+    case 'EARNING':
+      return setTelegramCalendarThreadId(threadIdStr);
     case 'ALERTS':
     case 'ALERT':
       envKey = 'TELEGRAM_ALERTS_THREAD_ID';
@@ -314,6 +320,11 @@ Live status, telemetry & commands across all 11 integrated topics:
 • Intelligence: *Deep Fundamentals, Multiples, Piotroski & Altman Z, Stage Analysis & Vector Price Charts*
 • Commands: \`AAPL\`, \`$NVDA\`, \`PLTR\`, \`AAPL pdf\`, \`pdf MSFT\`
 
+📅 *13. Calendar & Earnings Reminders*
+• Status: ${formatThread(status.calendarThreadId)}
+• Intelligence: *Automated 1-Week & 1-Day Earnings Alerts, Chronological Schedule & Executive PDF Dossiers*
+• Commands: \`calendar\`, \`earnings\`, \`upcoming\`, \`scan\`, \`AAPL\`, \`calendar pdf\`
+
 ───────────────────────
 ⚙️ *Management Shortcuts:*
 • Update Topic Thread: \`set topic [name] [threadId]\` (e.g. \`set topic set_alert 499\`)
@@ -346,7 +357,7 @@ export async function handleTopicsManagementMessage({
 
     const replyText = success
       ? `✅ *Topic Thread Updated!*\n\n• Topic: *${topicTarget.toUpperCase()}*\n• Assigned Thread ID: \`${threadNum}\`\n• Status: Persisted to configuration.\n\n_Send \`topics\` to verify the full topic directory._`
-      : `⚠️ *Could not update topic thread.*\n\nSupported topic names: \`trade\`, \`balances\`, \`macro\`, \`positions\`, \`watchlist\`, \`notes\`, \`execution\`, \`set_alert\`, \`alerts\`, \`ideas\`, \`app\`, \`ticker\`.\nExample: \`set topic set_alert 499\``;
+      : `⚠️ *Could not update topic thread.*\n\nSupported topic names: \`trade\`, \`balances\`, \`macro\`, \`positions\`, \`watchlist\`, \`notes\`, \`execution\`, \`set_alert\`, \`alerts\`, \`ideas\`, \`app\`, \`ticker\`, \`calendar\`.\nExample: \`set topic calendar 607\``;
 
     if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
       await sendTelegramMessage({
@@ -383,6 +394,7 @@ export async function handleTopicsManagementMessage({
     else if (topicTarget === 'TRADE' || topicTarget === 'TRADES' || topicTarget === 'OPTIONS' || topicTarget === 'OPTION') targetThread = status.tradeThreadId ? Number(status.tradeThreadId) : undefined;
     else if (topicTarget === 'IDEAS') targetThread = process.env.TELEGRAM_IDEAS_THREAD_ID ? Number(process.env.TELEGRAM_IDEAS_THREAD_ID) : undefined;
     else if (topicTarget === 'TICKER' || topicTarget === 'TICKERS' || topicTarget === 'STOCK' || topicTarget === 'STOCKS') targetThread = status.tickerThreadId ? Number(status.tickerThreadId) : undefined;
+    else if (topicTarget === 'CALENDAR' || topicTarget === 'CALENDARS' || topicTarget === 'EARNINGS') targetThread = status.calendarThreadId ? Number(status.calendarThreadId) : undefined;
 
     const pingText = `🔔 *Telegram Topic Connectivity Test*\n\n✅ Verification ping successfully delivered to *${topicTarget}* topic (Thread: \`${targetThread || 'Default'}\`).\n\n_Trade Compass Assistant is live and listening!_`;
 

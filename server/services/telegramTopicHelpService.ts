@@ -13,6 +13,7 @@ export type TelegramTopicType =
   | 'MACRO'
   | 'TRADE'
   | 'TICKER'
+  | 'CALENDAR'
   | 'GENERAL';
 
 /**
@@ -438,11 +439,41 @@ This Telegram group has dedicated topics tailored to your trading workflows:
 • 💡 *App*: Check backlog (\`roadmap\`, \`ideas\`) and submit feature ideas and bug reports (\`[UI] Add dark mode\`).
 • 🌐 *Macro*: Query the full institutional dossier (\`macro\`, \`report\`), specific items (\`regime\`, \`yields\`, \`volatility\`, \`pillars\`, \`scenarios\`, \`allocations\`, \`catalysts\`, \`gold\`), or write \`pdf\` for a styled PDF document!
 • 📊 *Ticker*: Query deep fundamentals, technicals & stage analysis for any stock (\`AAPL\`, \`$NVDA\`), or write \`pdf\` (\`AAPL pdf\`) for a styled PDF dossier with historical vector price chart!
+• 📅 *Calendar*: Automated 1-week and 1-day advance earnings reminders for open positions, upcoming portfolio schedule (\`calendar\`, \`earnings\`), single-stock dates (\`AAPL\`), and executive schedule PDFs (\`calendar pdf\`)!
 
 ⚙️ *Topics Operations:*
 • Send \`topics\` in any topic for the full Live Topic Dashboard & Status Control Center!
 • Send \`set topic [name] [threadId]\` to map or update topic thread routing!
 • Type \`help\` inside any topic to get the full detailed instruction manual for that topic.`;
+}
+
+/**
+ * Returns formatted instructions for CALENDAR topic
+ */
+export function getCalendarTopicHelp(): string {
+  return `📅 *Calendar Topic — Instructions & Commands*
+
+Track upcoming corporate earnings catalysts and receive automated advance reminders for all active portfolio positions:
+
+🔔 *1. Automated Earnings Alerts (Always Armed)*
+You will automatically receive high-signal alerts in this topic:
+• *1 Week in Advance (7 Days Out)*: Early notice with current position exposure (shares/contracts, market value, unrealized P&L), Wall Street consensus EPS & revenue estimates, and tactical defense options (rolling options, trimming, trailing stops).
+• *Previous Day (1 Day Out)*: Imminent notice before reporting tomorrow (BMO or AMC) with Wall Street expectations and defense checklist.
+• *Day-Of Announcement*: Reminder on reporting day to track IV crush and price action.
+
+📋 *2. Interactive Calendar Commands*
+• \`calendar\` or \`earnings\` (or \`upcoming\`, \`list\`)
+  _Displays a chronological schedule of upcoming earnings across your portfolio holdings grouped by This Week (within 7 days), Next Week (8-14 days), and This Month._
+• \`scan\` or \`check\`
+  _Triggers an immediate audit of all open positions and dispatches any eligible 1-week or 1-day reminders right now._
+• \`AAPL\` or \`$NVDA\` (or \`PLTR earnings\`)
+  _Instant earnings timing (BMO/AMC), days countdown, EPS consensus & range, and your portfolio market exposure if held._
+
+📄 *3. Executive PDF Earnings Calendar Dossier*
+• \`calendar pdf\` or \`earnings pdf\` (or write \`pdf\` here)
+  _Generates an institutional PDF dossier featuring summary capital at risk, timeline breakdown, Wall Street estimates, and defense guidance for every holding._
+
+💡 _Reminders are automatically deduplicated so you never receive duplicate notifications for the same earnings cycle._`;
 }
 
 /**
@@ -501,6 +532,8 @@ export function getHelpMessageForTopic(topic: TelegramTopicType): string {
       return getMacroTopicHelp();
     case 'TICKER':
       return getTickerTopicHelp();
+    case 'CALENDAR':
+      return getCalendarTopicHelp();
     case 'GENERAL':
     default:
       return getGeneralTopicDirectoryHelp();

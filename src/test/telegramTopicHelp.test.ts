@@ -9,6 +9,8 @@ import {
   getExecutionTopicHelp,
   getIdeasTopicHelp,
   getAlertsTopicHelp,
+  getSetAlertTopicHelp,
+  getCalendarTopicHelp,
   getAppTopicHelp,
   getGeneralTopicDirectoryHelp,
 } from '../../server/services/telegramTopicHelpService';
@@ -121,9 +123,22 @@ describe('Telegram Topic Help Service', () => {
     it('ALERTS topic help provides complete instructions', () => {
       const msg = getAlertsTopicHelp();
       expect(msg).toContain('Alerts Topic');
+      expect(msg).toContain('Live Alert Notifications');
+      expect(msg).toContain('Setting & Managing Alerts');
+    });
+
+    it('SET_ALERT topic help provides complete instructions', () => {
+      const msg = getSetAlertTopicHelp();
+      expect(msg).toContain('Set Alert Topic');
       expect(msg).toContain('Alert NVDA above $145');
       expect(msg).toContain('Direction Detection');
-      expect(msg).toContain('Instant Dispatch');
+    });
+
+    it('CALENDAR topic help provides complete instructions', () => {
+      const msg = getCalendarTopicHelp();
+      expect(msg).toContain('Calendar Topic');
+      expect(msg).toContain('1 Week in Advance (7 Days Out)');
+      expect(msg).toContain('Previous Day (1 Day Out)');
     });
 
     it('APP topic help provides complete instructions', () => {

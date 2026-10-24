@@ -28,6 +28,7 @@ import { handleIdeasTopicMessage } from './telegramIdeasTopicService';
 import { handleMacroTopicMessage } from './telegramMacroQueryService';
 import { handleTradeTopicMessage } from './telegramTradeTopicService';
 import { handleTickerTopicMessage } from './telegramTickerTopicService';
+import { handleCalendarTopicMessage } from './telegramCalendarTopicService';
 
 const logToFile = (msg: string) => console.log(msg);
 
@@ -240,6 +241,7 @@ export const topicNameByThreadId = new Map<number, string>([
   [406, 'Trade'],
   [499, 'Set alerts'],
   [564, 'Ticker'],
+  [607, 'Calendar'],
 ]);
 
 /**
@@ -1262,6 +1264,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       const configuredMacroThreadId = process.env.TELEGRAM_MACRO_THREAD_ID ? Number(process.env.TELEGRAM_MACRO_THREAD_ID) : undefined;
       const configuredTradeThreadId = process.env.TELEGRAM_TRADE_THREAD_ID ? Number(process.env.TELEGRAM_TRADE_THREAD_ID) : 406;
       const configuredTickerThreadId = process.env.TELEGRAM_TICKER_THREAD_ID ? Number(process.env.TELEGRAM_TICKER_THREAD_ID) : 564;
+      const configuredCalendarThreadId = process.env.TELEGRAM_CALENDAR_THREAD_ID ? Number(process.env.TELEGRAM_CALENDAR_THREAD_ID) : 607;
 
       const msgThreadNum = msg.messageThreadId !== undefined ? Number(msg.messageThreadId) : undefined;
       const isExplicitAppThread = msgThreadNum !== undefined && msgThreadNum === configuredAppThreadId;
@@ -1276,6 +1279,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       const isExplicitMacroThread = configuredMacroThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredMacroThreadId;
       const isExplicitTradeThread = configuredTradeThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredTradeThreadId;
       const isExplicitTickerThread = configuredTickerThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredTickerThreadId;
+      const isExplicitCalendarThread = configuredCalendarThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredCalendarThreadId;
 
       const resolvedTopicName = msg.topicName || (msgThreadNum !== undefined ? topicNameByThreadId.get(msgThreadNum) : undefined);
 
@@ -1283,7 +1287,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         topicNameByThreadId.set(msgThreadNum, resolvedTopicName);
       }
 
-      // Auto-discover and persist Watchlist, Notes, Positions, Balances, Macro, Trade, Ticker & Set Alert thread IDs if not yet configured
+      // Auto-discover and persist Watchlist, Notes, Positions, Balances, Macro, Trade, Ticker, Calendar & Set Alert thread IDs if not yet configured
       if (resolvedTopicName && /set\s*alert/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_SET_ALERT_THREAD_ID) {
         setTelegramSetAlertThreadId(msgThreadNum);
       }
@@ -1307,6 +1311,9 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       }
       if (resolvedTopicName && /tickers?/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_TICKER_THREAD_ID) {
         setTelegramTickerThreadId(msgThreadNum);
+      }
+      if (resolvedTopicName && /calendars?|earnings?/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_CALENDAR_THREAD_ID) {
+        setTelegramCalendarThreadId(msgThreadNum);
       }
 
       // Topic created status message handling
@@ -1510,7 +1517,20 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         setTelegramTickerThreadId(msgThreadNum);
       }
 
-      const isAppTopic = isExplicitAppThread || (!isSetAlertTopic && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isNotesTopic && !isPositionsTopic && !isBalancesTopic && !isMacroTopic && !isTradeTopic && !isTickerTopic && Boolean(
+      const isCalendarTopic = isExplicitCalendarThread || (!isExplicitAppThread && !isSetAlertTopic && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isNotesTopic && !isPositionsTopic && !isBalancesTopic && !isMacroTopic && !isTradeTopic && !isTickerTopic && Boolean(
+        (resolvedTopicName && /calendars?|earnings?/i.test(resolvedTopicName)) ||
+        contentText.toLowerCase().startsWith('#calendar') ||
+        contentText.toLowerCase().startsWith('#earnings') ||
+        contentText.match(/#(?:topic:)?(?:calendar|earnings)\b/i) ||
+        (configuredCalendarThreadId !== undefined && msgThreadNum === configuredCalendarThreadId)
+      ));
+
+      // Auto-discover and persist TELEGRAM_CALENDAR_THREAD_ID if not yet configured
+      if (isCalendarTopic && msgThreadNum !== undefined && !process.env.TELEGRAM_CALENDAR_THREAD_ID) {
+        setTelegramCalendarThreadId(msgThreadNum);
+      }
+
+      const isAppTopic = isExplicitAppThread || (!isSetAlertTopic && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isNotesTopic && !isPositionsTopic && !isBalancesTopic && !isMacroTopic && !isTradeTopic && !isTickerTopic && !isCalendarTopic && Boolean(
         (resolvedTopicName && resolvedTopicName.toLowerCase().includes('app')) ||
         contentText.toLowerCase().startsWith('#app') ||
         contentText.toLowerCase().includes('#app-idea') ||
@@ -1541,6 +1561,10 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
           topicType = 'TICKER';
           topicFolder = 'Research';
           targetThreadId = msgThreadNum || configuredTickerThreadId;
+        } else if (isCalendarTopic) {
+          topicType = 'CALENDAR';
+          topicFolder = 'Calendar';
+          targetThreadId = msgThreadNum || configuredCalendarThreadId;
         } else if (isPositionsTopic) {
           topicType = 'POSITIONS';
           topicFolder = 'Positions';
@@ -2147,6 +2171,43 @@ Output strictly valid JSON matching this schema:
       }
 
       // ==========================================
+      // CALENDAR TOPIC HANDLER
+      // ==========================================
+      if (isCalendarTopic) {
+        const targetThreadId = msgThreadNum || configuredCalendarThreadId;
+        logToFile(`[TelegramBuffer] 📅 Processing Calendar request in thread ${targetThreadId}: "${contentText}"`);
+
+        const calendarResult = await handleCalendarTopicMessage({
+          text: contentText,
+          chatId: targetChatId,
+          messageThreadId: targetThreadId,
+          prisma,
+          senderLabel,
+        });
+
+        if (calendarResult.handled) {
+          logToFile(`[TelegramBuffer] 📅 Calendar topic action (${calendarResult.actionTaken}) handled for ${senderLabel}`);
+          const savedLog = await (prisma as any).thoughtLog.create({
+            data: {
+              title: `📅 Calendar: ${calendarResult.symbol ? `$${calendarResult.symbol}` : calendarResult.actionTaken}`,
+              content: contentText.trim(),
+              folder: 'Calendar',
+              tags: `Telegram, Calendar, Earnings, ${calendarResult.actionTaken}, ${senderLabel}`,
+              symbols: calendarResult.symbol || null,
+              sentiment: 'NEUTRAL',
+              isPinned: false,
+              isFulfilled: true,
+              agentOutput: calendarResult.replyText,
+              agentActionType: 'ADD_CONTEXT',
+              createdAt: new Date(msg.timestamp),
+            },
+          });
+          createdLogs.push({ id: savedLog.id, title: savedLog.title, symbols: savedLog.symbols });
+          continue;
+        }
+      }
+
+      // ==========================================
       // SET ALERT TOPIC HANDLER
       // ==========================================
       if (isSetAlertTopic) {
@@ -2548,6 +2609,7 @@ export function getTelegramBufferStatus() {
     macroThreadId: process.env.TELEGRAM_MACRO_THREAD_ID || null,
     tradeThreadId: process.env.TELEGRAM_TRADE_THREAD_ID || null,
     tickerThreadId: process.env.TELEGRAM_TICKER_THREAD_ID || null,
+    calendarThreadId: process.env.TELEGRAM_CALENDAR_THREAD_ID || null,
     lastSyncTimestamp,
     lastSyncCount,
   };
@@ -2798,6 +2860,26 @@ export function setTelegramTickerThreadId(threadId: string | number): boolean {
     return false;
   }
 }
+
+/**
+ * Explicitly update and persist TELEGRAM_CALENDAR_THREAD_ID to environment & .env.local
+ */
+export function setTelegramCalendarThreadId(threadId: string | number): boolean {
+  try {
+    const threadIdStr = String(threadId).trim();
+    process.env.TELEGRAM_CALENDAR_THREAD_ID = threadIdStr;
+    if (threadIdStr) {
+      topicNameByThreadId.set(Number(threadIdStr), 'Calendar');
+    }
+    logToFile(`[TelegramBuffer] Updated TELEGRAM_CALENDAR_THREAD_ID=${threadIdStr}`);
+    persistThreadIdToEnv('TELEGRAM_CALENDAR_THREAD_ID', threadIdStr);
+    return true;
+  } catch (e: any) {
+    logToFile(`[TelegramBuffer] Error setting calendar thread ID: ${e.message}`);
+    return false;
+  }
+}
+
 
 
 

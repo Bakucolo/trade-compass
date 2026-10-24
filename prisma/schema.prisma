@@ -464,3 +464,19 @@ model ExecutionReminder {
   @@index([createdAt])
 }
 
+model EarningsReminderLog {
+  id              String   @id @default(uuid())
+  symbol          String   // e.g. "AAPL"
+  earningsDate    String   // ISO date string e.g. "2026-11-18"
+  reminderType    String   // "1_WEEK" | "1_DAY" | "DAY_OF"
+  sentAt          DateTime @default(now())
+  chatId          String?
+  messageThreadId Int?
+  messageText     String?
+
+  @@unique([symbol, earningsDate, reminderType])
+  @@index([symbol])
+  @@index([sentAt])
+}
+
+
