@@ -14,6 +14,7 @@ import {
   setTelegramSetAlertThreadId,
   setTelegramTickerThreadId,
   setTelegramCalendarThreadId,
+  setTelegramCopilotThreadId,
 } from './telegramBufferConsumerService';
 
 const logToFile = (msg: string) => console.log(msg);
@@ -115,6 +116,11 @@ export function setGenericTopicThreadId(topicName: string, threadId: string | nu
     case 'EARNINGS':
     case 'EARNING':
       return setTelegramCalendarThreadId(threadIdStr);
+    case 'COPILOT':
+    case 'AI_COPILOT':
+    case 'AI':
+    case 'COPILOTS':
+      return setTelegramCopilotThreadId(threadIdStr);
     case 'ALERTS':
     case 'ALERT':
       envKey = 'TELEGRAM_ALERTS_THREAD_ID';
@@ -324,6 +330,11 @@ Live status, telemetry & commands across all 11 integrated topics:
 • Status: ${formatThread(status.calendarThreadId)}
 • Intelligence: *Automated 1-Week & 1-Day Earnings Alerts, Chronological Schedule & Executive PDF Dossiers*
 • Commands: \`calendar\`, \`earnings\`, \`upcoming\`, \`scan\`, \`AAPL\`, \`calendar pdf\`
+
+🤖 *14. AI Copilot*
+• Status: ${formatThread(status.copilotThreadId)}
+• Intelligence: *Quantitative Multi-Factor Financial AI, Multi-Broker Telemetry, Option Chains & Human-in-the-Loop Safe Execution*
+• Commands: Ask any financial/trading question, \`draft limit buy 10 AAPL @ 220\`, \`broker ibkr\`, \`broker tasty\`, \`status\`, \`pdf\`, \`reset\`
 
 ───────────────────────
 ⚙️ *Management Shortcuts:*

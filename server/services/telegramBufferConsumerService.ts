@@ -29,6 +29,7 @@ import { handleMacroTopicMessage } from './telegramMacroQueryService';
 import { handleTradeTopicMessage } from './telegramTradeTopicService';
 import { handleTickerTopicMessage } from './telegramTickerTopicService';
 import { handleCalendarTopicMessage } from './telegramCalendarTopicService';
+import { handleCopilotTopicMessage } from './telegramCopilotTopicService';
 
 const logToFile = (msg: string) => console.log(msg);
 
@@ -242,6 +243,7 @@ export const topicNameByThreadId = new Map<number, string>([
   [499, 'Set alerts'],
   [564, 'Ticker'],
   [607, 'Calendar'],
+  [624, 'AI Copilot'],
 ]);
 
 /**
@@ -1265,6 +1267,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       const configuredTradeThreadId = process.env.TELEGRAM_TRADE_THREAD_ID ? Number(process.env.TELEGRAM_TRADE_THREAD_ID) : 406;
       const configuredTickerThreadId = process.env.TELEGRAM_TICKER_THREAD_ID ? Number(process.env.TELEGRAM_TICKER_THREAD_ID) : 564;
       const configuredCalendarThreadId = process.env.TELEGRAM_CALENDAR_THREAD_ID ? Number(process.env.TELEGRAM_CALENDAR_THREAD_ID) : 607;
+      const configuredCopilotThreadId = process.env.TELEGRAM_COPILOT_THREAD_ID ? Number(process.env.TELEGRAM_COPILOT_THREAD_ID) : 624;
 
       const msgThreadNum = msg.messageThreadId !== undefined ? Number(msg.messageThreadId) : undefined;
       const isExplicitAppThread = msgThreadNum !== undefined && msgThreadNum === configuredAppThreadId;
@@ -1280,6 +1283,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       const isExplicitTradeThread = configuredTradeThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredTradeThreadId;
       const isExplicitTickerThread = configuredTickerThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredTickerThreadId;
       const isExplicitCalendarThread = configuredCalendarThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredCalendarThreadId;
+      const isExplicitCopilotThread = configuredCopilotThreadId !== undefined && msgThreadNum !== undefined && msgThreadNum === configuredCopilotThreadId;
 
       const resolvedTopicName = msg.topicName || (msgThreadNum !== undefined ? topicNameByThreadId.get(msgThreadNum) : undefined);
 
@@ -1287,7 +1291,7 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         topicNameByThreadId.set(msgThreadNum, resolvedTopicName);
       }
 
-      // Auto-discover and persist Watchlist, Notes, Positions, Balances, Macro, Trade, Ticker, Calendar & Set Alert thread IDs if not yet configured
+      // Auto-discover and persist Watchlist, Notes, Positions, Balances, Macro, Trade, Ticker, Calendar, Copilot & Set Alert thread IDs if not yet configured
       if (resolvedTopicName && /set\s*alert/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_SET_ALERT_THREAD_ID) {
         setTelegramSetAlertThreadId(msgThreadNum);
       }
@@ -1314,6 +1318,9 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       }
       if (resolvedTopicName && /calendars?|earnings?/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_CALENDAR_THREAD_ID) {
         setTelegramCalendarThreadId(msgThreadNum);
+      }
+      if (resolvedTopicName && /(?:copilot|ai[\s_-]*copilot)/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_COPILOT_THREAD_ID) {
+        setTelegramCopilotThreadId(msgThreadNum);
       }
 
       // Topic created status message handling
@@ -1530,7 +1537,20 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         setTelegramCalendarThreadId(msgThreadNum);
       }
 
-      const isAppTopic = isExplicitAppThread || (!isSetAlertTopic && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isNotesTopic && !isPositionsTopic && !isBalancesTopic && !isMacroTopic && !isTradeTopic && !isTickerTopic && !isCalendarTopic && Boolean(
+      const isCopilotTopic = isExplicitCopilotThread || (!isExplicitAppThread && !isSetAlertTopic && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isNotesTopic && !isPositionsTopic && !isBalancesTopic && !isMacroTopic && !isTradeTopic && !isTickerTopic && !isCalendarTopic && Boolean(
+        (resolvedTopicName && /(?:copilot|ai[\s_-]*copilot)/i.test(resolvedTopicName)) ||
+        contentText.toLowerCase().startsWith('#copilot') ||
+        contentText.toLowerCase().startsWith('#ai') ||
+        contentText.match(/#(?:topic:)?(?:copilot|ai[_-]?copilot)\b/i) ||
+        (configuredCopilotThreadId !== undefined && msgThreadNum === configuredCopilotThreadId)
+      ));
+
+      // Auto-discover and persist TELEGRAM_COPILOT_THREAD_ID if not yet configured
+      if (isCopilotTopic && msgThreadNum !== undefined && !process.env.TELEGRAM_COPILOT_THREAD_ID) {
+        setTelegramCopilotThreadId(msgThreadNum);
+      }
+
+      const isAppTopic = isExplicitAppThread || (!isSetAlertTopic && !isAlertsTopic && !isIdeasTopic && !isExecutionTopic && !isWatchlistTopic && !isNotesTopic && !isPositionsTopic && !isBalancesTopic && !isMacroTopic && !isTradeTopic && !isTickerTopic && !isCalendarTopic && !isCopilotTopic && Boolean(
         (resolvedTopicName && resolvedTopicName.toLowerCase().includes('app')) ||
         contentText.toLowerCase().startsWith('#app') ||
         contentText.toLowerCase().includes('#app-idea') ||
@@ -1565,6 +1585,10 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
           topicType = 'CALENDAR';
           topicFolder = 'Calendar';
           targetThreadId = msgThreadNum || configuredCalendarThreadId;
+        } else if (isCopilotTopic) {
+          topicType = 'COPILOT';
+          topicFolder = 'Research';
+          targetThreadId = msgThreadNum || configuredCopilotThreadId;
         } else if (isPositionsTopic) {
           topicType = 'POSITIONS';
           topicFolder = 'Positions';
@@ -2208,6 +2232,46 @@ Output strictly valid JSON matching this schema:
       }
 
       // ==========================================
+      // AI COPILOT TOPIC HANDLER
+      // ==========================================
+      if (isCopilotTopic) {
+        const targetThreadId = msgThreadNum || configuredCopilotThreadId || 624;
+        logToFile(`[TelegramBuffer] 🤖 Processing AI Copilot request in thread ${targetThreadId}: "${contentText}"`);
+
+        const copilotResult = await handleCopilotTopicMessage({
+          text: contentText,
+          chatId: targetChatId,
+          messageThreadId: targetThreadId,
+          prisma,
+          senderLabel,
+          timestamp: msg.timestamp,
+        });
+
+        if (copilotResult.handled) {
+          logToFile(`[TelegramBuffer] 🤖 AI Copilot action (${copilotResult.actionTaken}) handled for ${senderLabel}`);
+          const snippet = contentText.length > 50 ? contentText.slice(0, 47) + '...' : contentText;
+          const savedLog = await (prisma as any).thoughtLog.create({
+            data: {
+              title: `🤖 AI Copilot: ${snippet}`,
+              content: `User query: "${contentText}"\n\n${copilotResult.replyText}`,
+              folder: 'Research',
+              tags: `Telegram, Copilot, AI, ${copilotResult.actionTaken}, ${senderLabel}`,
+              symbols: copilotResult.symbol || null,
+              sentiment: 'NEUTRAL',
+              isPinned: false,
+              isFulfilled: true,
+              agentOutput: copilotResult.replyText,
+              agentActionType: 'ADD_CONTEXT',
+              marketDataJson: null,
+              createdAt: new Date(msg.timestamp),
+            },
+          });
+          createdLogs.push({ id: savedLog.id, title: savedLog.title, symbols: savedLog.symbols });
+          continue;
+        }
+      }
+
+      // ==========================================
       // SET ALERT TOPIC HANDLER
       // ==========================================
       if (isSetAlertTopic) {
@@ -2610,6 +2674,7 @@ export function getTelegramBufferStatus() {
     tradeThreadId: process.env.TELEGRAM_TRADE_THREAD_ID || null,
     tickerThreadId: process.env.TELEGRAM_TICKER_THREAD_ID || null,
     calendarThreadId: process.env.TELEGRAM_CALENDAR_THREAD_ID || null,
+    copilotThreadId: process.env.TELEGRAM_COPILOT_THREAD_ID || null,
     lastSyncTimestamp,
     lastSyncCount,
   };
@@ -2879,6 +2944,26 @@ export function setTelegramCalendarThreadId(threadId: string | number): boolean 
     return false;
   }
 }
+
+/**
+ * Explicitly update and persist TELEGRAM_COPILOT_THREAD_ID to environment & .env.local
+ */
+export function setTelegramCopilotThreadId(threadId: string | number): boolean {
+  try {
+    const threadIdStr = String(threadId).trim();
+    process.env.TELEGRAM_COPILOT_THREAD_ID = threadIdStr;
+    if (threadIdStr) {
+      topicNameByThreadId.set(Number(threadIdStr), 'AI Copilot');
+    }
+    logToFile(`[TelegramBuffer] Updated TELEGRAM_COPILOT_THREAD_ID=${threadIdStr}`);
+    persistThreadIdToEnv('TELEGRAM_COPILOT_THREAD_ID', threadIdStr);
+    return true;
+  } catch (e: any) {
+    logToFile(`[TelegramBuffer] Error setting copilot thread ID: ${e.message}`);
+    return false;
+  }
+}
+
 
 
 

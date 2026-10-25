@@ -14,6 +14,7 @@ export type TelegramTopicType =
   | 'TRADE'
   | 'TICKER'
   | 'CALENDAR'
+  | 'COPILOT'
   | 'GENERAL';
 
 /**
@@ -440,6 +441,7 @@ This Telegram group has dedicated topics tailored to your trading workflows:
 • 🌐 *Macro*: Query the full institutional dossier (\`macro\`, \`report\`), specific items (\`regime\`, \`yields\`, \`volatility\`, \`pillars\`, \`scenarios\`, \`allocations\`, \`catalysts\`, \`gold\`), or write \`pdf\` for a styled PDF document!
 • 📊 *Ticker*: Query deep fundamentals, technicals & stage analysis for any stock (\`AAPL\`, \`$NVDA\`), or write \`pdf\` (\`AAPL pdf\`) for a styled PDF dossier with historical vector price chart!
 • 📅 *Calendar*: Automated 1-week and 1-day advance earnings reminders for open positions, timeframe filters (\`week\`, \`month\`), upcoming portfolio schedule (\`calendar\`, \`earnings\`), single-stock dates (\`AAPL\`), and executive schedule PDFs (\`week pdf\`, \`month pdf\`)!
+• 🤖 *AI Copilot*: Multi-factor quantitative financial intelligence, multi-broker telemetry & buying power (\`broker ibkr\`, \`broker tasty\`), live option chains, human-in-the-loop safe draft orders (\`draft limit buy 10 AAPL @ 220\`), and executive PDF dossiers!
 
 ⚙️ *Topics Operations:*
 • Send \`topics\` in any topic for the full Live Topic Dashboard & Status Control Center!
@@ -507,6 +509,47 @@ Add \`pdf\` to any ticker inquiry (or write \`pdf\` after checking a stock) to r
 }
 
 /**
+ * Returns formatted instructions for COPILOT topic
+ */
+export function getCopilotTopicHelp(): string {
+  return `🤖 *AI Copilot Topic — Quantitative Financial Intelligence*
+
+Interact directly with the Trade Compass AI Copilot to analyze markets, inspect multi-broker telemetry, price options, and stage safe trade drafts:
+
+💬 *1. Conversational Financial Intelligence*
+Ask any complex financial, macro, or options question in natural language:
+• \`What are the major support and resistance levels for TSLA?\`
+• \`Analyze Apple's revenue growth, valuation multiples, and margin trajectory.\`
+• \`Explain the risk profile of an Iron Condor vs Bull Put Spread.\`
+• \`What is the current macro outlook for the 2s10s yield curve inversion?\`
+
+🏛️ *2. Multi-Broker Telemetry & Risk*
+Inspect balances, buying power, and positions across connected brokers:
+• \`What are my open positions and total market value?\`
+• \`Check my Tastytrade buying power and margin cushion.\`
+• \`Compare buying power between Tastytrade and Interactive Brokers.\`
+• \`broker ibkr\` — Switch active gateway to Interactive Brokers.
+• \`broker tasty\` — Switch active gateway to Tastytrade.
+
+🛡️ *3. Safe Draft Orders (Human-in-the-Loop)*
+Ask the Copilot to draft equity or option orders:
+• \`Draft a limit buy for 10 AAPL @ $220\`
+• \`Draft a cash secured put for NVDA 130P Jan 17\`
+• \`Draft order 50 MSFT at market\`
+_All orders are safely staged as drafts in Trade Compass. Per security policies, live execution strictly requires your manual confirmation in the app!_
+
+📄 *4. Executive PDF Quantitative Briefings*
+Add \`pdf\` to any inquiry to receive a styled institutional PDF dossier:
+• \`NVDA valuation and AI datacenter thesis pdf\`
+• \`Macro liquidity and yield curve regime pdf\`
+• \`pdf\` _(generates PDF for your most recent inquiry)_
+
+⚙️ *5. Session & Memory Controls*
+• \`reset\` or \`clear\` — Reset the conversational history in this topic.
+• \`status\` — Check active broker gateway, routing cascade, and context depth.`;
+}
+
+/**
  * Resolves the help instructions for a given topic
  */
 export function getHelpMessageForTopic(topic: TelegramTopicType): string {
@@ -537,6 +580,8 @@ export function getHelpMessageForTopic(topic: TelegramTopicType): string {
       return getTickerTopicHelp();
     case 'CALENDAR':
       return getCalendarTopicHelp();
+    case 'COPILOT':
+      return getCopilotTopicHelp();
     case 'GENERAL':
     default:
       return getGeneralTopicDirectoryHelp();
