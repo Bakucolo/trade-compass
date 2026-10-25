@@ -1365,23 +1365,35 @@ function resolveCandidates(preferredModel?: string): ProviderCandidate[] {
         }
     }
 
-    // 1. If Groq is available, openai/gpt-oss-120b is ultra-fast, robust, and excels at tool calling
+    // 1. Google AI Studio (Gemini 3.5 Flash & 3.8 Flash) - Generous quotas, rapid response, native tool calling
+    if (geminiKey) {
+        list.push({
+            name: 'Google AI Studio (Gemini 3.5 Flash)',
+            url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+            model: 'gemini-3.5-flash',
+            apiKey: geminiKey
+        });
+        list.push({
+            name: 'Google AI Studio (Gemini 3.8 Flash)',
+            url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+            model: 'gemini-3.8-flash',
+            apiKey: geminiKey
+        });
+        list.push({
+            name: 'Google AI Studio (Gemini Flash Latest)',
+            url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+            model: 'gemini-flash-latest',
+            apiKey: geminiKey
+        });
+    }
+
+    // 2. If Groq is available, openai/gpt-oss-120b is ultra-fast and excels at tool calling
     if (groqKey) {
         list.push({
             name: 'Groq (openai/gpt-oss-120b)',
             url: 'https://api.groq.com/openai/v1/chat/completions',
             model: 'openai/gpt-oss-120b',
             apiKey: groqKey
-        });
-    }
-
-    // 2. Google AI Studio (Gemini 2.0 Flash) OpenAI-compatible endpoint
-    if (geminiKey) {
-        list.push({
-            name: 'Google AI Studio (Gemini 2.0 Flash)',
-            url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-            model: 'gemini-2.0-flash',
-            apiKey: geminiKey
         });
     }
 
@@ -1403,16 +1415,23 @@ function resolveCandidates(preferredModel?: string): ProviderCandidate[] {
             });
         }
 
-        // Dedicated free financial model on OpenRouter
+        // Active free models on OpenRouter supporting function calling tools
         list.push({
-            name: 'OpenRouter (inclusionai/ling-3.0-flash-fin:free)',
+            name: 'OpenRouter (nvidia/nemotron-3-super-120b-a12b:free)',
             url: 'https://openrouter.ai/api/v1/chat/completions',
-            model: 'inclusionai/ling-3.0-flash-fin:free',
+            model: 'nvidia/nemotron-3-super-120b-a12b:free',
             apiKey: openRouterKey,
             extraHeaders: orHeaders
         });
 
-        // Additional free OpenRouter model fallback
+        list.push({
+            name: 'OpenRouter (google/gemma-4-26b-a4b-it:free)',
+            url: 'https://openrouter.ai/api/v1/chat/completions',
+            model: 'google/gemma-4-26b-a4b-it:free',
+            apiKey: openRouterKey,
+            extraHeaders: orHeaders
+        });
+
         list.push({
             name: 'OpenRouter (google/gemma-4-31b-it:free)',
             url: 'https://openrouter.ai/api/v1/chat/completions',
@@ -1428,7 +1447,7 @@ function resolveCandidates(preferredModel?: string): ProviderCandidate[] {
 async function executeLLMCallWithCascade(
     candidates: ProviderCandidate[],
     messages: any[],
-    tools: any[] = TASTYTRADE_TOOLS
+    tools?: any[]
 ): Promise<{ choice: any; modelName: string }> {
     let lastError: any = null;
 
@@ -1445,16 +1464,20 @@ async function executeLLMCallWithCascade(
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 20000);
 
+            const payload: any = {
+                model: cand.model,
+                messages,
+                temperature: 0.1
+            };
+            if (tools && Array.isArray(tools) && tools.length > 0) {
+                payload.tools = tools;
+                payload.tool_choice = 'auto';
+            }
+
             const res = await fetch(cand.url, {
                 method: 'POST',
                 headers,
-                body: JSON.stringify({
-                    model: cand.model,
-                    messages,
-                    tools,
-                    tool_choice: 'auto',
-                    temperature: 0.1
-                }),
+                body: JSON.stringify(payload),
                 signal: controller.signal
             });
             clearTimeout(timeoutId);
@@ -1632,7 +1655,7 @@ SECURITY & OPERATIONAL DIRECTIVES:
             choice = llmRes.choice;
             usedModel = llmRes.modelName;
         } catch (cascadeErr: any) {
-            console.warn(`[Tool Engine] All cascade candidates failed: ${cascadeErr.message}`);
+            console.warn(`[Tool Engine] All cascade candidates failed with tools: ${cascadeErr.message}`);
 
             // If user was asking to draft an order, invoke heuristic fallback
             const heuristicDraft = tryHeuristicDraftOrder(cleanQuery, activeBroker);
@@ -1642,7 +1665,15 @@ SECURITY & OPERATIONAL DIRECTIVES:
                 finalAssistantText = `I have drafted your order for **${heuristicDraft.quantity} shares of ${heuristicDraft.symbol}** at **$${heuristicDraft.price?.toFixed(2)}** on **${activeBroker.toUpperCase()}**.\n\nPer security requirements, please review the parameters and click **Approve Trade** below to submit to the exchange.`;
                 break;
             }
-            throw cascadeErr;
+
+            // Fallback attempt: if tool calling fails due to provider constraints, answer conversationally without tools
+            try {
+                const directRes = await executeLLMCallWithCascade(candidates, messages);
+                choice = directRes.choice;
+                usedModel = directRes.modelName;
+            } catch {
+                throw cascadeErr;
+            }
         }
 
         if (!choice) break;

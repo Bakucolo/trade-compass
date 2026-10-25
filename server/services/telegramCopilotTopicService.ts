@@ -471,10 +471,15 @@ export async function handleCopilotTopicMessage({
     };
   } catch (err: any) {
     logToFile(`[TelegramCopilot] Agent error: ${err.message}`);
+    const isRateLimit = /429|rate[- ]?limit|quota|demand|temporarily/i.test(err.message || '');
+    const userHint = isRateLimit
+      ? 'The upstream frontier models are temporarily experiencing high volume. Please wait a few seconds and retry.'
+      : 'Please verify your API keys in Settings, or try asking in a slightly different way.';
+
     const errMsg =
       `⚠️ *Trade Compass Copilot Notice*\n\n` +
-      `The agent encountered an issue while processing your request: \`${err.message}\`\n\n` +
-      `💡 _Please verify your API keys in Settings, or try asking in a slightly different way. Send \`reset\` to clear conversational context._`;
+      `The agent encountered a temporary delay: ${isRateLimit ? '_Upstream provider rate limit reached._' : `\`${err.message}\``}\n\n` +
+      `💡 _${userHint} Send \`reset\` to clear conversational context._`;
 
     if (token && chatId) {
       await sendTelegramMessage({
