@@ -27,6 +27,7 @@ import {
   Gauge,
   Wheat,
   LayoutGrid,
+  LayoutList,
   Maximize2,
 } from 'lucide-react';
 import { CommodityHeatmapModal } from './CommodityHeatmapModal';
@@ -88,6 +89,7 @@ export function CommoditiesForwardCurveCard({
   const [activeCatalogCategory, setActiveCatalogCategory] = useState<'all' | CommodityCategory>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedRatioId, setSelectedRatioId] = useState<string | null>(null);
+  const [catalogViewMode, setCatalogViewMode] = useState<'grid' | 'list'>('grid');
 
   const activeCurve = useMemo(() => {
     if (!data?.forwardCurves) return null;
@@ -728,7 +730,39 @@ export function CommoditiesForwardCurveCard({
             </Badge>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            {/* Grid / List Format Toggle */}
+            <div className="flex items-center bg-background/60 p-0.5 rounded-xl border border-border/60">
+              <button
+                type="button"
+                onClick={() => setCatalogViewMode('grid')}
+                className={cn(
+                  'p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer',
+                  catalogViewMode === 'grid'
+                    ? 'bg-primary text-primary-foreground shadow-xs'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+                title="Grid Format"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Grid</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCatalogViewMode('list')}
+                className={cn(
+                  'p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer',
+                  catalogViewMode === 'list'
+                    ? 'bg-primary text-primary-foreground shadow-xs'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+                title="List Format"
+              >
+                <LayoutList className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">List</span>
+              </button>
+            </div>
+
             <Button
               variant="outline"
               size="sm"
@@ -776,108 +810,244 @@ export function CommoditiesForwardCurveCard({
             })}
           </div>
 
-          {/* Commodity Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {filteredCommodities.map((item) => {
-              const isUp = item.change >= 0;
-              const isBackwardation = item.curveStructure === 'BACKWARDATION';
+          {/* Commodity Items: Grid Format or List Format */}
+          {catalogViewMode === 'grid' ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              {filteredCommodities.map((item) => {
+                const isUp = item.change >= 0;
+                const isBackwardation = item.curveStructure === 'BACKWARDATION';
 
-              return (
-                <div
-                  key={item.id}
-                  className="p-4 rounded-xl bg-background/50 border border-border/50 hover:border-primary/40 transition-all hover:shadow-md space-y-3 group"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-black text-sm text-foreground">{item.symbol}</span>
-                        <Badge variant="outline" className="text-[9px] font-mono px-1.5 py-0 border-border/60 text-muted-foreground">
-                          {item.exchange}
-                        </Badge>
+                return (
+                  <div
+                    key={item.id}
+                    className="p-4 rounded-xl bg-background/50 border border-border/50 hover:border-primary/40 transition-all hover:shadow-md space-y-3 group"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-black text-sm text-foreground">{item.symbol}</span>
+                          <Badge variant="outline" className="text-[9px] font-mono px-1.5 py-0 border-border/60 text-muted-foreground">
+                            {item.exchange}
+                          </Badge>
+                        </div>
+                        <h5 className="text-xs font-bold text-foreground/90 mt-0.5">{item.name}</h5>
                       </div>
-                      <h5 className="text-xs font-bold text-foreground/90 mt-0.5">{item.name}</h5>
+
+                      <div className="text-right">
+                        <div className="text-base font-mono font-black text-foreground">
+                          ${item.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          <span className="text-[10px] text-muted-foreground font-sans font-normal ml-1">
+                            {item.unit}
+                          </span>
+                        </div>
+                        <div
+                          className={cn(
+                            'text-xs font-mono font-bold flex items-center justify-end',
+                            isUp ? 'text-emerald-400' : 'text-rose-400'
+                          )}
+                        >
+                          {isUp ? '+' : ''}
+                          {item.change.toFixed(2)} ({item.changePercent.toFixed(2)}%)
+                        </div>
+                      </div>
                     </div>
 
-                    <div className="text-right">
-                      <div className="text-base font-mono font-black text-foreground">
-                        ${item.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        <span className="text-[10px] text-muted-foreground font-sans font-normal ml-1">
-                          {item.unit}
+                    {/* 52-Week Range Bar */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[10px] font-mono text-muted-foreground">
+                        <span>52W L: ${item.fiftyTwoWeekLow.toFixed(2)}</span>
+                        <span>52W H: ${item.fiftyTwoWeekHigh.toFixed(2)}</span>
+                      </div>
+                      <div className="h-1.5 w-full bg-border/40 rounded-full overflow-hidden relative">
+                        <div
+                          className="h-full bg-gradient-to-r from-cyan-500 to-amber-500 rounded-full"
+                          style={{ width: `${item.range52wPercent}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Curve Structure & Roll Yield Badge */}
+                    <div className="flex items-center justify-between text-[11px] pt-1 border-t border-border/40">
+                      <div className="flex items-center gap-1.5">
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            'text-[9px] font-mono font-bold px-1.5 py-0 border',
+                            isBackwardation
+                              ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                              : 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                          )}
+                        >
+                          {isBackwardation ? 'Backwardation' : 'Contango'}
+                        </Badge>
+                        <span className="text-[10px] font-mono text-muted-foreground">
+                          Prompt Spread: {item.promptSpread > 0 ? '+' : ''}${item.promptSpread.toFixed(2)}
                         </span>
                       </div>
-                      <div
-                        className={cn(
-                          'text-xs font-mono font-bold flex items-center justify-end',
-                          isUp ? 'text-emerald-400' : 'text-rose-400'
-                        )}
-                      >
-                        {isUp ? '+' : ''}
-                        {item.change.toFixed(2)} ({item.changePercent.toFixed(2)}%)
-                      </div>
-                    </div>
-                  </div>
 
-                  {/* 52-Week Range Bar */}
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-[10px] font-mono text-muted-foreground">
-                      <span>52W L: ${item.fiftyTwoWeekLow.toFixed(2)}</span>
-                      <span>52W H: ${item.fiftyTwoWeekHigh.toFixed(2)}</span>
-                    </div>
-                    <div className="h-1.5 w-full bg-border/40 rounded-full overflow-hidden relative">
-                      <div
-                        className="h-full bg-gradient-to-r from-cyan-500 to-amber-500 rounded-full"
-                        style={{ width: `${item.range52wPercent}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Curve Structure & Roll Yield Badge */}
-                  <div className="flex items-center justify-between text-[11px] pt-1 border-t border-border/40">
-                    <div className="flex items-center gap-1.5">
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          'text-[9px] font-mono font-bold px-1.5 py-0 border',
-                          isBackwardation
-                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
-                            : 'bg-amber-500/15 text-amber-300 border-amber-500/40'
-                        )}
-                      >
-                        {isBackwardation ? 'Backwardation' : 'Contango'}
-                      </Badge>
-                      <span className="text-[10px] font-mono text-muted-foreground">
-                        Prompt Spread: {item.promptSpread > 0 ? '+' : ''}${item.promptSpread.toFixed(2)}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setSelectedCurveId(item.id)}
-                        className="h-6 px-2 text-[10px] text-primary hover:text-primary hover:bg-primary/10 gap-1"
-                        title={`View ${item.shortName} Forward Curve`}
-                      >
-                        <LineChartIcon className="w-3 h-3" />
-                        <span>Curve</span>
-                      </Button>
-                      {onNavigateToGraphs && (
+                      <div className="flex items-center gap-1">
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => onNavigateToGraphs(item.symbol)}
-                          className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
-                          title="Open Chart"
+                          onClick={() => setSelectedCurveId(item.id)}
+                          className="h-6 px-2 text-[10px] text-primary hover:text-primary hover:bg-primary/10 gap-1"
+                          title={`View ${item.shortName} Forward Curve`}
                         >
-                          <ExternalLink className="w-3 h-3" />
+                          <LineChartIcon className="w-3 h-3" />
+                          <span>Curve</span>
                         </Button>
-                      )}
+                        {onNavigateToGraphs && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => onNavigateToGraphs(item.symbol)}
+                            className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                            title="Open Chart"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          ) : (
+            /* List Format: High-density financial data table */
+            <div className="rounded-2xl border border-border/60 bg-background/40 backdrop-blur-xl overflow-hidden shadow-md">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-900/90 text-[11px] font-bold uppercase tracking-wider text-muted-foreground border-b border-border/50">
+                    <tr>
+                      <th className="py-3 px-4">Commodity / Ticker</th>
+                      <th className="py-3 px-4">Exchange</th>
+                      <th className="py-3 px-4">Category</th>
+                      <th className="py-3 px-4 text-right">Price</th>
+                      <th className="py-3 px-4 text-right">Day Change</th>
+                      <th className="py-3 px-4 text-center">Structure</th>
+                      <th className="py-3 px-4 text-right">Prompt Spread</th>
+                      <th className="py-3 px-4 text-center min-w-[130px]">52-Week Range</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/30 font-mono">
+                    {filteredCommodities.map((item) => {
+                      const isUp = item.change >= 0;
+                      const isBackwardation = item.curveStructure === 'BACKWARDATION';
+
+                      return (
+                        <tr
+                          key={item.id}
+                          className="hover:bg-accent/30 transition-colors group cursor-pointer"
+                          onClick={() => setSelectedCurveId(item.id)}
+                        >
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-black text-sm text-foreground group-hover:text-amber-400 transition-colors">
+                                {item.symbol}
+                              </span>
+                              <span className="text-xs font-bold text-foreground/90 font-sans truncate max-w-[170px]" title={item.name}>
+                                {item.name}
+                              </span>
+                            </div>
+                          </td>
+
+                          <td className="py-3 px-4 text-muted-foreground font-mono text-[11px]">
+                            {item.exchange}
+                          </td>
+
+                          <td className="py-3 px-4 text-muted-foreground font-sans capitalize text-xs">
+                            {item.category.replace('_', ' ')}
+                          </td>
+
+                          <td className="py-3 px-4 text-right font-black text-foreground">
+                            ${item.price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            <span className="text-[10px] text-muted-foreground font-sans font-normal ml-1">
+                              {item.unit}
+                            </span>
+                          </td>
+
+                          <td className="py-3 px-4 text-right">
+                            <span className={cn(
+                              'inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold',
+                              isUp ? 'text-emerald-400 bg-emerald-500/10' : 'text-rose-400 bg-rose-500/10'
+                            )}>
+                              {isUp ? '+' : ''}{item.change.toFixed(2)} ({isUp ? '+' : ''}{item.changePercent.toFixed(2)}%)
+                            </span>
+                          </td>
+
+                          <td className="py-3 px-4 text-center">
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                'text-[9px] font-mono font-bold px-1.5 py-0 border',
+                                isBackwardation
+                                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                                  : 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                              )}
+                            >
+                              {isBackwardation ? 'Backwardation' : 'Contango'}
+                            </Badge>
+                          </td>
+
+                          <td className="py-3 px-4 text-right text-xs">
+                            <span className={cn(
+                              'font-bold',
+                              item.promptSpread <= 0 ? 'text-emerald-400' : 'text-amber-400'
+                            )}>
+                              {item.promptSpread > 0 ? '+' : ''}${item.promptSpread.toFixed(2)}
+                            </span>
+                          </td>
+
+                          <td className="py-3 px-4 text-center">
+                            <div className="space-y-1 max-w-[120px] mx-auto">
+                              <div className="h-1.5 w-full bg-border/40 rounded-full overflow-hidden relative">
+                                <div
+                                  className="h-full bg-gradient-to-r from-cyan-500 to-amber-500 rounded-full"
+                                  style={{ width: `${item.range52wPercent}%` }}
+                                />
+                              </div>
+                              <div className="flex justify-between text-[9px] text-muted-foreground">
+                                <span>${item.fiftyTwoWeekLow.toFixed(1)}</span>
+                                <span>${item.fiftyTwoWeekHigh.toFixed(1)}</span>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="py-3 px-4 text-right font-sans" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setSelectedCurveId(item.id)}
+                                className="h-7 px-2 text-xs font-bold text-amber-300 hover:text-amber-200 hover:bg-amber-950/40 gap-1 rounded-lg"
+                                title={`Inspect ${item.shortName} Term Curve`}
+                              >
+                                <LineChartIcon className="w-3 h-3" />
+                                <span className="hidden sm:inline">Curve</span>
+                              </Button>
+                              {onNavigateToGraphs && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => onNavigateToGraphs(item.symbol)}
+                                  className="h-7 w-7 text-muted-foreground hover:text-amber-300 rounded-lg"
+                                  title={`View ${item.symbol} in Graphs`}
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {filteredCommodities.length === 0 && (
             <div className="p-8 text-center text-xs text-muted-foreground bg-background/30 rounded-xl border border-dashed border-border/60">

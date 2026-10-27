@@ -544,10 +544,10 @@ export function SectorsAndIndustriesCard({
                   "px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5",
                   viewMode === 'LEADERBOARD_BARS' ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:text-foreground"
                 )}
-                title="Ranked Alpha Bar Chart & Table"
+                title="Ranked Alpha Bar Chart & Detailed List Table"
               >
                 <BarChart3 className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Rankings</span>
+                <span className="hidden sm:inline">Rankings (List)</span>
               </button>
 
               <button

@@ -26,6 +26,9 @@ import {
   Info,
   Building2,
   ShieldCheck,
+  LayoutGrid,
+  LayoutList,
+  Table as TableIcon,
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from './ui/card';
 import { Button } from './ui/button';
@@ -115,6 +118,9 @@ const CATEGORY_TABS: { id: MacroCategoryTab; label: string; icon: React.Componen
   { id: 'energy', label: 'Energy & Petroleum', icon: Flame },
 ];
 
+export type MacroSectionsViewFormat = 'LIST' | 'GRID';
+const MACRO_SECTIONS_VIEW_FORMAT_KEY = 'macro_page_sections_view_format_v1';
+
 export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigateToTrades }: MacroPageProps) {
   const { data: macroData, isLoading, refetch, isFetching } = useMacroOverview();
   const { data: dossiers = [] } = useMacroDossiers(10);
@@ -124,6 +130,25 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
 
   // All sections collapsed by default on initial view
   const [expandedSections, setExpandedSections] = useState<Set<MacroSectionId>>(() => new Set());
+
+  // Grid or List view format for Macro Sections
+  const [sectionsViewFormat, setSectionsViewFormat] = useState<MacroSectionsViewFormat>(() => {
+    try {
+      const saved = localStorage.getItem(MACRO_SECTIONS_VIEW_FORMAT_KEY);
+      if (saved === 'GRID' || saved === 'LIST') return saved;
+    } catch (e) {}
+    return 'LIST';
+  });
+
+  const handleViewFormatChange = (format: MacroSectionsViewFormat) => {
+    setSectionsViewFormat(format);
+    try {
+      localStorage.setItem(MACRO_SECTIONS_VIEW_FORMAT_KEY, format);
+    } catch (e) {}
+  };
+
+  // Asset Catalog Grid or List view format
+  const [assetCatalogViewMode, setAssetCatalogViewMode] = useState<'grid' | 'list'>('grid');
 
   // Draggable section order with localStorage persistence
   const [sectionOrder, setSectionOrder] = useState<MacroSectionId[]>(loadSavedSectionOrder);
@@ -618,18 +643,52 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
               })}
             </div>
 
-            {/* Search Input */}
-            <div className="w-full md:w-64 shrink-0">
-              <Input
-                placeholder="Search macro or FRED ticker..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-9 text-xs bg-slate-900/80 border-slate-700/50 rounded-xl"
-              />
+            {/* Search Input & View Format Switcher */}
+            <div className="flex items-center gap-2.5 shrink-0 flex-wrap sm:flex-nowrap">
+              {/* Grid / List Format Toggle */}
+              <div className="flex items-center bg-slate-900/90 p-0.5 rounded-xl border border-border/60">
+                <button
+                  type="button"
+                  onClick={() => setAssetCatalogViewMode('grid')}
+                  className={cn(
+                    "p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer",
+                    assetCatalogViewMode === 'grid'
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                  title="Grid Format"
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Grid</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAssetCatalogViewMode('list')}
+                  className={cn(
+                    "p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer",
+                    assetCatalogViewMode === 'list'
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                  title="List Format"
+                >
+                  <LayoutList className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">List</span>
+                </button>
+              </div>
+
+              <div className="w-full sm:w-56 md:w-64">
+                <Input
+                  placeholder="Search macro or FRED ticker..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="h-9 text-xs bg-slate-900/80 border-slate-700/50 rounded-xl"
+                />
+              </div>
             </div>
           </div>
 
-          {/* Macro Asset Cards Grid */}
+          {/* Macro Asset Content: Grid Format or List Format */}
           {isLoading ? (
             <div className="py-24 text-center text-xs text-muted-foreground flex flex-col items-center justify-center gap-3">
               <RefreshCw className="w-6 h-6 animate-spin text-primary" />
@@ -639,7 +698,7 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
             <div className="p-12 text-center text-xs text-muted-foreground border border-dashed border-border/40 rounded-2xl">
               No macro assets found matching "{searchQuery}".
             </div>
-          ) : (
+          ) : assetCatalogViewMode === 'grid' ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {activeItems.map((item) => {
                 const isPositive = item.change >= 0;
@@ -750,6 +809,134 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
                   </Card>
                 );
               })}
+            </div>
+          ) : (
+            /* List Format: High-density financial data table */
+            <div className="rounded-2xl border border-border/60 bg-card/60 backdrop-blur-xl overflow-hidden shadow-md">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-900/90 text-[11px] font-bold uppercase tracking-wider text-muted-foreground border-b border-border/50">
+                    <tr>
+                      <th className="py-3 px-4">Instrument / Ticker</th>
+                      <th className="py-3 px-4">Category</th>
+                      <th className="py-3 px-4 text-right">Price / Value</th>
+                      <th className="py-3 px-4 text-right">Day Change</th>
+                      <th className="py-3 px-4 text-center min-w-[140px]">52-Week Range</th>
+                      <th className="py-3 px-4 text-center">Source</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/30">
+                    {activeItems.map((item) => {
+                      const isPositive = item.change >= 0;
+                      const isFred = item.source === 'FRED';
+                      const rangeSpan = (item.fiftyTwoWeekHigh - item.fiftyTwoWeekLow) || 1;
+                      const currentPositionPct = Math.min(100, Math.max(0, ((item.price - item.fiftyTwoWeekLow) / rangeSpan) * 100));
+
+                      return (
+                        <tr
+                          key={item.symbol}
+                          className="hover:bg-accent/30 transition-colors group cursor-pointer"
+                          onClick={() => setChartModalSymbol(item)}
+                        >
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2.5">
+                              <div className={cn(
+                                "w-7 h-7 rounded-lg border flex items-center justify-center font-mono font-bold text-[11px] shrink-0",
+                                isFred ? "bg-purple-950/40 border-purple-500/30 text-purple-300" : "bg-slate-900/80 border-white/5 text-cyan-400"
+                              )}>
+                                {item.symbol.slice(0, 3)}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono font-bold text-foreground group-hover:text-primary transition-colors">
+                                    {item.symbol}
+                                  </span>
+                                  <Badge variant="outline" className={cn(
+                                    "text-[8.5px] px-1 py-0 font-semibold border",
+                                    isFred ? "border-purple-500/40 text-purple-300 bg-purple-500/10" : "border-white/10 text-muted-foreground"
+                                  )}>
+                                    {isFred ? 'FRED' : item.assetType}
+                                  </Badge>
+                                </div>
+                                <span className="text-[11px] text-muted-foreground truncate block max-w-[200px]" title={item.name}>
+                                  {item.name}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="py-3 px-4">
+                            <span className="capitalize text-muted-foreground text-xs font-sans">
+                              {item.category.replace('_', ' ')}
+                            </span>
+                          </td>
+
+                          <td className="py-3 px-4 text-right font-mono font-bold text-foreground text-sm">
+                            {formatPrice(item)}
+                          </td>
+
+                          <td className="py-3 px-4 text-right font-mono">
+                            <span className={cn(
+                              "inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md text-xs font-bold",
+                              isPositive ? "text-emerald-400 bg-emerald-500/10" : "text-rose-400 bg-rose-500/10"
+                            )}>
+                              {isPositive ? '+' : ''}{item.change.toFixed(2)} ({isPositive ? '+' : ''}{item.changePercent.toFixed(2)}%)
+                            </span>
+                          </td>
+
+                          <td className="py-3 px-4 text-center">
+                            <div className="space-y-1 max-w-[130px] mx-auto">
+                              <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden relative">
+                                <div
+                                  className="h-full bg-gradient-to-r from-cyan-500 to-amber-500 rounded-full"
+                                  style={{ width: `${currentPositionPct}%` }}
+                                />
+                              </div>
+                              <div className="flex justify-between text-[9px] font-mono text-muted-foreground">
+                                <span>{item.fiftyTwoWeekLow < 1000 ? item.fiftyTwoWeekLow.toFixed(1) : (item.fiftyTwoWeekLow / 1000).toFixed(0) + 'k'}</span>
+                                <span>{item.fiftyTwoWeekHigh < 1000 ? item.fiftyTwoWeekHigh.toFixed(1) : (item.fiftyTwoWeekHigh / 1000).toFixed(0) + 'k'}</span>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="py-3 px-4 text-center">
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-900 border border-border/50 text-muted-foreground">
+                              {item.source || 'Yahoo'}
+                            </span>
+                          </td>
+
+                          <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setChartModalSymbol(item)}
+                                className="h-7 px-2 text-xs font-bold text-cyan-300 hover:bg-cyan-950/40 hover:text-cyan-200 rounded-lg gap-1"
+                                title={`Interactive Chart for ${item.symbol}`}
+                              >
+                                <Maximize2 className="w-3 h-3" />
+                                <span className="hidden sm:inline">Chart</span>
+                              </Button>
+                              {onNavigateToGraphs && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => onNavigateToGraphs(item.symbol)}
+                                  className="h-7 w-7 text-muted-foreground hover:text-foreground rounded-lg"
+                                  title="Open in Graphs page"
+                                >
+                                  <LineChart className="w-3 h-3" />
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
@@ -923,6 +1110,38 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
         </div>
 
         <div className="flex items-center gap-2 self-end sm:self-center flex-wrap">
+          {/* Format Selector: List vs Grid */}
+          <div className="flex items-center bg-slate-900/90 p-0.5 rounded-xl border border-border/60 shadow-xs">
+            <button
+              type="button"
+              onClick={() => handleViewFormatChange('LIST')}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                sectionsViewFormat === 'LIST'
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+              title="List Format: Stacked accordion view"
+            >
+              <LayoutList className="w-3.5 h-3.5" />
+              <span>List Format</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleViewFormatChange('GRID')}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                sectionsViewFormat === 'GRID'
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+              title="Grid Format: Responsive multi-column dashboard grid"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>Grid Format</span>
+            </button>
+          </div>
+
           {isOrderModified && (
             <Button
               variant="outline"
@@ -957,148 +1176,344 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
         </div>
       </div>
 
-      {/* ================= DRAGGABLE & COLLAPSIBLE SECTIONS LIST ================= */}
-      <div className="space-y-3.5">
-        {sectionOrder.map((sectionId, index) => {
-          const config = sectionConfigs[sectionId];
-          if (!config) return null;
+      {/* ================= DRAGGABLE & COLLAPSIBLE SECTIONS (LIST OR GRID FORMAT) ================= */}
+      {sectionsViewFormat === 'LIST' ? (
+        <div className="space-y-3.5">
+          {sectionOrder.map((sectionId, index) => {
+            const config = sectionConfigs[sectionId];
+            if (!config) return null;
 
-          const isExpanded = expandedSections.has(sectionId);
-          const isDragged = draggedSectionId === sectionId;
-          const isDragOver = dragOverSectionId === sectionId;
-          const SectionIcon = config.icon;
+            const isExpanded = expandedSections.has(sectionId);
+            const isDragged = draggedSectionId === sectionId;
+            const isDragOver = dragOverSectionId === sectionId;
+            const SectionIcon = config.icon;
 
-          return (
-            <div
-              key={sectionId}
-              draggable
-              onDragStart={(e) => handleDragStart(e, sectionId)}
-              onDragOver={(e) => handleDragOver(e, sectionId)}
-              onDragEnd={handleDragEnd}
-              onDrop={(e) => handleDrop(e, sectionId)}
-              className={cn(
-                "transition-all duration-200 rounded-3xl",
-                isDragged && "opacity-40 scale-[0.99] ring-2 ring-dashed ring-cyan-400",
-                isDragOver && "border-t-4 border-t-cyan-400 ring-2 ring-cyan-400/80 shadow-cyan-500/20 shadow-xl"
-              )}
-            >
-              {/* Sleek Accordion Section Bar */}
+            return (
               <div
-                onClick={() => toggleSection(sectionId)}
+                key={sectionId}
+                draggable
+                onDragStart={(e) => handleDragStart(e, sectionId)}
+                onDragOver={(e) => handleDragOver(e, sectionId)}
+                onDragEnd={handleDragEnd}
+                onDrop={(e) => handleDrop(e, sectionId)}
                 className={cn(
-                  "w-full p-3.5 sm:p-4 rounded-2xl border transition-all cursor-pointer select-none flex flex-col md:flex-row md:items-center justify-between gap-3 group shadow-sm",
-                  isExpanded
-                    ? "bg-card/90 border-cyan-500/40 shadow-md mb-3"
-                    : "bg-card/60 hover:bg-card/85 border-border/70 hover:border-cyan-500/40"
+                  "transition-all duration-200 rounded-3xl",
+                  isDragged && "opacity-40 scale-[0.99] ring-2 ring-dashed ring-cyan-400",
+                  isDragOver && "border-t-4 border-t-cyan-400 ring-2 ring-cyan-400/80 shadow-cyan-500/20 shadow-xl"
                 )}
               >
-                {/* Left: Drag Handle, Rank, Icon, Title */}
-                <div className="flex items-center gap-3 min-w-0">
-                  {/* Drag Grip & Move Controls */}
-                  <div
-                    className="flex items-center gap-1.5 shrink-0"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div
-                      className="text-muted-foreground/40 hover:text-cyan-400 cursor-grab active:cursor-grabbing p-1 transition-colors"
-                      title="Drag to reorder section"
-                    >
-                      <GripVertical className="w-4 h-4" />
-                    </div>
-
-                    {/* Micro Move Up / Down Buttons */}
-                    <div className="flex flex-col gap-0.5">
-                      <button
-                        type="button"
-                        disabled={index === 0}
-                        onClick={(e) => handleMoveSection(sectionId, 'UP', e)}
-                        className="w-4 h-3 flex items-center justify-center text-muted-foreground/40 hover:text-cyan-400 disabled:opacity-20 disabled:hover:text-muted-foreground/40 transition-colors"
-                        title="Move Section Up"
-                      >
-                        <ChevronUp className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={index === sectionOrder.length - 1}
-                        onClick={(e) => handleMoveSection(sectionId, 'DOWN', e)}
-                        className="w-4 h-3 flex items-center justify-center text-muted-foreground/40 hover:text-cyan-400 disabled:opacity-20 disabled:hover:text-muted-foreground/40 transition-colors"
-                        title="Move Section Down"
-                      >
-                        <ChevronDown className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    {/* Rank Number */}
-                    <span className="w-6 h-6 rounded-lg bg-slate-900/90 border border-border/60 text-[10px] font-mono font-bold text-muted-foreground flex items-center justify-center shrink-0">
-                      #{index + 1}
-                    </span>
-                  </div>
-
-                  {/* Category Icon */}
-                  <div className={cn(
-                    "w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 shadow-inner",
-                    config.iconColorClasses
-                  )}>
-                    <SectionIcon className="w-4 h-4" />
-                  </div>
-
-                  {/* Title & Subtitle */}
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="text-xs sm:text-sm font-black text-foreground tracking-tight group-hover:text-cyan-300 transition-colors">
-                        {config.title}
-                      </h3>
-                      <Badge variant="outline" className="text-[9px] font-mono border-white/10 text-muted-foreground">
-                        {config.badge}
-                      </Badge>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
-                      {config.subtitle}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Right: Telemetry Preview & Expand Toggle */}
-                <div className="flex items-center gap-3 shrink-0 self-end md:self-center pl-10 md:pl-0">
-                  {/* Telemetry Preview Pill (shown when collapsed) */}
-                  {!isExpanded && config.preview && (
-                    <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-950/60 border border-border/50 text-[11px] font-mono text-cyan-300 shadow-inner">
-                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                      <span>{config.preview}</span>
-                    </div>
+                {/* Sleek Accordion Section Bar */}
+                <div
+                  onClick={() => toggleSection(sectionId)}
+                  className={cn(
+                    "w-full p-3.5 sm:p-4 rounded-2xl border transition-all cursor-pointer select-none flex flex-col md:flex-row md:items-center justify-between gap-3 group shadow-sm",
+                    isExpanded
+                      ? "bg-card/90 border-cyan-500/40 shadow-md mb-3"
+                      : "bg-card/60 hover:bg-card/85 border-border/70 hover:border-cyan-500/40"
                   )}
+                >
+                  {/* Left: Drag Handle, Rank, Icon, Title */}
+                  <div className="flex items-center gap-3 min-w-0">
+                    {/* Drag Grip & Move Controls */}
+                    <div
+                      className="flex items-center gap-1.5 shrink-0"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div
+                        className="text-muted-foreground/40 hover:text-cyan-400 cursor-grab active:cursor-grabbing p-1 transition-colors"
+                        title="Drag to reorder section"
+                      >
+                        <GripVertical className="w-4 h-4" />
+                      </div>
 
-                  {/* Expand/Collapse Button */}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className={cn(
-                      "h-8 px-3 rounded-xl text-xs font-bold gap-1.5 transition-all border pointer-events-none",
-                      isExpanded
-                        ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/40 group-hover:bg-cyan-500/25"
-                        : "bg-slate-900/60 text-muted-foreground border-border/60 group-hover:text-foreground group-hover:bg-accent/40"
+                      {/* Micro Move Up / Down Buttons */}
+                      <div className="flex flex-col gap-0.5">
+                        <button
+                          type="button"
+                          disabled={index === 0}
+                          onClick={(e) => handleMoveSection(sectionId, 'UP', e)}
+                          className="w-4 h-3 flex items-center justify-center text-muted-foreground/40 hover:text-cyan-400 disabled:opacity-20 disabled:hover:text-muted-foreground/40 transition-colors"
+                          title="Move Section Up"
+                        >
+                          <ChevronUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={index === sectionOrder.length - 1}
+                          onClick={(e) => handleMoveSection(sectionId, 'DOWN', e)}
+                          className="w-4 h-3 flex items-center justify-center text-muted-foreground/40 hover:text-cyan-400 disabled:opacity-20 disabled:hover:text-muted-foreground/40 transition-colors"
+                          title="Move Section Down"
+                        >
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      {/* Rank Number */}
+                      <span className="w-6 h-6 rounded-lg bg-slate-900/90 border border-border/60 text-[10px] font-mono font-bold text-muted-foreground flex items-center justify-center shrink-0">
+                        #{index + 1}
+                      </span>
+                    </div>
+
+                    {/* Category Icon */}
+                    <div className={cn(
+                      "w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 shadow-inner",
+                      config.iconColorClasses
+                    )}>
+                      <SectionIcon className="w-4 h-4" />
+                    </div>
+
+                    {/* Title & Subtitle */}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-xs sm:text-sm font-black text-foreground tracking-tight group-hover:text-cyan-300 transition-colors">
+                          {config.title}
+                        </h3>
+                        <Badge variant="outline" className="text-[9px] font-mono border-white/10 text-muted-foreground">
+                          {config.badge}
+                        </Badge>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
+                        {config.subtitle}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Right: Telemetry Preview & Expand Toggle */}
+                  <div className="flex items-center gap-3 shrink-0 self-end md:self-center pl-10 md:pl-0">
+                    {/* Telemetry Preview Pill (shown when collapsed) */}
+                    {!isExpanded && config.preview && (
+                      <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-xl bg-slate-950/60 border border-border/50 text-[11px] font-mono text-cyan-300 shadow-inner">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                        <span>{config.preview}</span>
+                      </div>
                     )}
-                  >
-                    <span>{isExpanded ? 'Collapse' : 'Expand'}</span>
-                    {isExpanded ? (
-                      <ChevronUp className="w-3.5 h-3.5" />
-                    ) : (
-                      <ChevronDown className="w-3.5 h-3.5" />
-                    )}
-                  </Button>
+
+                    {/* Expand/Collapse Button */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={cn(
+                        "h-8 px-3 rounded-xl text-xs font-bold gap-1.5 transition-all border pointer-events-none",
+                        isExpanded
+                          ? "bg-cyan-500/15 text-cyan-300 border-cyan-500/40 group-hover:bg-cyan-500/25"
+                          : "bg-slate-900/60 text-muted-foreground border-border/60 group-hover:text-foreground group-hover:bg-accent/40"
+                      )}
+                    >
+                      <span>{isExpanded ? 'Collapse' : 'Expand'}</span>
+                      {isExpanded ? (
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      )}
+                    </Button>
+                  </div>
                 </div>
+
+                {/* Section Full Content (Rendered when expanded) */}
+                {isExpanded && (
+                  <div className="mb-6 animate-in fade-in slide-in-from-top-2 duration-200">
+                    {config.renderContent()}
+                  </div>
+                )}
               </div>
+            );
+          })}
+        </div>
+      ) : (
+        /* Grid Format: Responsive multi-column dashboard grid */
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {sectionOrder.map((sectionId, index) => {
+            const config = sectionConfigs[sectionId];
+            if (!config) return null;
 
-              {/* Section Full Content (Rendered when expanded) */}
-              {isExpanded && (
-                <div className="mb-6 animate-in fade-in slide-in-from-top-2 duration-200">
-                  {config.renderContent()}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+            const isExpanded = expandedSections.has(sectionId);
+            const isDragged = draggedSectionId === sectionId;
+            const isDragOver = dragOverSectionId === sectionId;
+            const SectionIcon = config.icon;
+
+            return (
+              <div
+                key={sectionId}
+                draggable
+                onDragStart={(e) => handleDragStart(e, sectionId)}
+                onDragOver={(e) => handleDragOver(e, sectionId)}
+                onDragEnd={handleDragEnd}
+                onDrop={(e) => handleDrop(e, sectionId)}
+                className={cn(
+                  "transition-all duration-200 rounded-3xl",
+                  isExpanded ? "col-span-1 md:col-span-2 xl:col-span-3" : "col-span-1",
+                  isDragged && "opacity-40 scale-[0.98] ring-2 ring-dashed ring-cyan-400",
+                  isDragOver && "ring-2 ring-cyan-400 shadow-cyan-500/20 shadow-xl"
+                )}
+              >
+                {!isExpanded ? (
+                  /* Collapsed Grid Card */
+                  <div
+                    onClick={() => toggleSection(sectionId)}
+                    className="h-full flex flex-col justify-between p-4 sm:p-5 rounded-2xl bg-card/65 hover:bg-card/90 border border-border/70 hover:border-cyan-500/40 backdrop-blur-xl shadow-md transition-all cursor-pointer select-none group"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="text-muted-foreground/40 hover:text-cyan-400 cursor-grab active:cursor-grabbing p-1 transition-colors"
+                            onClick={(e) => e.stopPropagation()}
+                            title="Drag to reorder section"
+                          >
+                            <GripVertical className="w-3.5 h-3.5" />
+                          </div>
+                          <span className="w-6 h-6 rounded-lg bg-slate-900/90 border border-border/60 text-[10px] font-mono font-bold text-muted-foreground flex items-center justify-center">
+                            #{index + 1}
+                          </span>
+                          <Badge variant="outline" className="text-[9px] font-mono border-white/10 text-muted-foreground">
+                            {config.badge}
+                          </Badge>
+                        </div>
+
+                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            disabled={index === 0}
+                            onClick={(e) => handleMoveSection(sectionId, 'UP', e)}
+                            className="w-5 h-5 flex items-center justify-center text-muted-foreground/50 hover:text-cyan-400 disabled:opacity-20 transition-colors"
+                            title="Move Section Up"
+                          >
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={index === sectionOrder.length - 1}
+                            onClick={(e) => handleMoveSection(sectionId, 'DOWN', e)}
+                            className="w-5 h-5 flex items-center justify-center text-muted-foreground/50 hover:text-cyan-400 disabled:opacity-20 transition-colors"
+                            title="Move Section Down"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <div className={cn(
+                          "w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-inner mt-0.5",
+                          config.iconColorClasses
+                        )}>
+                          <SectionIcon className="w-5 h-5" />
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="text-sm font-black text-foreground tracking-tight group-hover:text-cyan-300 transition-colors line-clamp-2">
+                            {config.title}
+                          </h3>
+                          <p className="text-[11px] text-muted-foreground line-clamp-2 mt-1 leading-snug">
+                            {config.subtitle}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 pt-3 border-t border-border/40 space-y-2.5">
+                      {config.preview && (
+                        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-950/60 border border-border/50 text-[10px] font-mono text-cyan-300">
+                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse shrink-0" />
+                          <span className="truncate">{config.preview}</span>
+                        </div>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full h-8 text-xs font-bold gap-1.5 bg-slate-900/60 text-muted-foreground border border-border/60 group-hover:text-cyan-300 group-hover:border-cyan-500/40 group-hover:bg-cyan-500/10 transition-all pointer-events-none"
+                      >
+                        <span>Expand Section</span>
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Expanded Grid Item (Full Width) */
+                  <div className="space-y-3">
+                    <div
+                      onClick={() => toggleSection(sectionId)}
+                      className="w-full p-3.5 sm:p-4 rounded-2xl border transition-all cursor-pointer select-none flex flex-col md:flex-row md:items-center justify-between gap-3 bg-card/90 border-cyan-500/40 shadow-md group"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className="flex items-center gap-1.5 shrink-0"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div
+                            className="text-muted-foreground/40 hover:text-cyan-400 cursor-grab active:cursor-grabbing p-1 transition-colors"
+                            title="Drag to reorder section"
+                          >
+                            <GripVertical className="w-4 h-4" />
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <button
+                              type="button"
+                              disabled={index === 0}
+                              onClick={(e) => handleMoveSection(sectionId, 'UP', e)}
+                              className="w-4 h-3 flex items-center justify-center text-muted-foreground/40 hover:text-cyan-400 disabled:opacity-20 transition-colors"
+                              title="Move Section Up"
+                            >
+                              <ChevronUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={index === sectionOrder.length - 1}
+                              onClick={(e) => handleMoveSection(sectionId, 'DOWN', e)}
+                              className="w-4 h-3 flex items-center justify-center text-muted-foreground/40 hover:text-cyan-400 disabled:opacity-20 transition-colors"
+                              title="Move Section Down"
+                            >
+                              <ChevronDown className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                          <span className="w-6 h-6 rounded-lg bg-slate-900/90 border border-border/60 text-[10px] font-mono font-bold text-muted-foreground flex items-center justify-center shrink-0">
+                            #{index + 1}
+                          </span>
+                        </div>
+
+                        <div className={cn(
+                          "w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 shadow-inner",
+                          config.iconColorClasses
+                        )}>
+                          <SectionIcon className="w-4 h-4" />
+                        </div>
+
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="text-xs sm:text-sm font-black text-foreground tracking-tight group-hover:text-cyan-300 transition-colors">
+                              {config.title}
+                            </h3>
+                            <Badge variant="outline" className="text-[9px] font-mono border-white/10 text-muted-foreground">
+                              {config.badge}
+                            </Badge>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
+                            {config.subtitle}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 shrink-0 self-end md:self-center pl-10 md:pl-0">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 px-3 rounded-xl text-xs font-bold gap-1.5 transition-all border pointer-events-none bg-cyan-500/15 text-cyan-300 border-cyan-500/40 group-hover:bg-cyan-500/25"
+                        >
+                          <span>Collapse</span>
+                          <ChevronUp className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="mb-6 animate-in fade-in slide-in-from-top-2 duration-200">
+                      {config.renderContent()}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* ================= FULL TRADINGVIEW CHART MODAL FOR MACRO ASSETS ================= */}
       {chartModalSymbol && (

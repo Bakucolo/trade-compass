@@ -184,4 +184,42 @@ describe('MacroPage Collapsible & Draggable Sections', () => {
     fireEvent.click(resetButton);
     expect(screen.queryByRole('button', { name: /Reset Order/i })).toBeNull();
   });
+
+  it('toggles between List Format and Grid Format for macro dashboard sections', () => {
+    renderWithClient(<MacroPage />);
+
+    // Format buttons exist
+    const listBtn = screen.getByRole('button', { name: /List Format/i });
+    const gridBtn = screen.getByRole('button', { name: /Grid Format/i });
+    expect(listBtn).toBeDefined();
+    expect(gridBtn).toBeDefined();
+
+    // Default is List format
+    expect(localStorage.getItem('macro_page_sections_view_format_v1')).toBeNull();
+
+    // Switch to Grid format
+    fireEvent.click(gridBtn);
+    expect(localStorage.getItem('macro_page_sections_view_format_v1')).toBe('GRID');
+
+    // In Grid format, section titles still exist
+    expect(screen.getByText('Commodities Pricing, Forward Curves & Term Structures')).toBeDefined();
+    expect(screen.getByText('Gold Macro Regime & Sovereign Debt Stress Station')).toBeDefined();
+
+    // Expand buttons inside grid cards exist
+    const expandSectionBtns = screen.getAllByRole('button', { name: /Expand Section/i });
+    expect(expandSectionBtns.length).toBe(10);
+
+    // Click to expand Commodities section in Grid mode
+    const commoditiesTitle = screen.getByText('Commodities Pricing, Forward Curves & Term Structures');
+    fireEvent.click(commoditiesTitle);
+
+    // Commodities content rendered
+    expect(screen.getByTestId('commodities-content')).toBeDefined();
+    expect(screen.getByText('1 of 10 Open')).toBeDefined();
+
+    // Switch back to List format
+    fireEvent.click(listBtn);
+    expect(localStorage.getItem('macro_page_sections_view_format_v1')).toBe('LIST');
+    expect(screen.getByTestId('commodities-content')).toBeDefined();
+  });
 });
