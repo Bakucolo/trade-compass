@@ -10,6 +10,8 @@ import {
   clearRemindersCacheForTesting,
   parseCalendarTimeframe,
   filterEarningsByTimeframe,
+  extractTickerForCalendarTopic,
+  CALENDAR_RESERVED_WORDS,
 } from '../../server/services/telegramCalendarTopicService';
 import {
   topicNameByThreadId,
@@ -85,6 +87,9 @@ describe('Telegram Calendar Topic & Earnings Reminders Suite', () => {
           }
           return null;
         }),
+      },
+      watchlist: {
+        findMany: vi.fn().mockResolvedValue([]),
       },
       earningsReminderLog: {
         findUnique: vi.fn().mockResolvedValue(null),
@@ -551,6 +556,275 @@ describe('Telegram Calendar Topic & Earnings Reminders Suite', () => {
       expect(sentMessages[0].text).toContain('NVIDIA Corporation');
       expect(sentMessages[0].text).toContain('Nov 18, 2026');
       expect(sentMessages[0].text).toContain('*EPS Estimate:* $0.75');
+    });
+
+    it('should display earnings for lowercase ticker (e.g. "aapl")', async () => {
+      vi.spyOn(earningsService, 'lookupSymbolEarnings').mockResolvedValueOnce({
+        symbol: 'AAPL',
+        resolvedSymbol: 'AAPL',
+        companyName: 'Apple Inc.',
+        price: 230.5,
+        dayChangePercent: 0.8,
+        currency: 'USD',
+        earningsDate: '2026-11-05T21:30:00.000Z',
+        earningsDateFormatted: 'Nov 5, 2026',
+        daysUntil: 9,
+        timing: 'AMC',
+        isEstimate: false,
+        epsEstimate: 1.62,
+        epsLow: 1.55,
+        epsHigh: 1.7,
+        revenueEstimate: 94000000000,
+        revenueLow: null,
+        revenueHigh: null,
+        peRatio: 33.2,
+        exDividendDate: null,
+        dividendDate: null,
+        isPortfolioHolding: true,
+        portfolioMarketValue: 22000,
+        portfolioQuantity: 100,
+        portfolioDayPnL: 250,
+        isWatchlist: false,
+      });
+
+      const result = await handleCalendarTopicMessage({
+        text: 'aapl',
+        chatId: '-1003872409872',
+        messageThreadId: 607,
+        prisma: mockPrisma,
+        senderLabel: '@Trader',
+      });
+
+      expect(result.handled).toBe(true);
+      expect(result.actionTaken).toBe('TICKER_EARNINGS');
+      expect(result.symbol).toBe('AAPL');
+      expect(sentMessages.length).toBe(1);
+      expect(sentMessages[0].text).toContain('Earnings Catalyst Diagnostic: $AAPL');
+      expect(sentMessages[0].text).toContain('Apple Inc.');
+      expect(sentMessages[0].text).toContain('Nov 5, 2026');
+      expect(sentMessages[0].text).toContain('*EPS Estimate:* $1.62');
+      expect(sentMessages[0].text).toContain('Active Position Exposure');
+    });
+
+    it('should display earnings for cashtag with prefix or question (e.g. "when is earnings for $TSLA?")', async () => {
+      vi.spyOn(earningsService, 'lookupSymbolEarnings').mockResolvedValueOnce({
+        symbol: 'TSLA',
+        resolvedSymbol: 'TSLA',
+        companyName: 'Tesla, Inc.',
+        price: 260.0,
+        dayChangePercent: -1.5,
+        currency: 'USD',
+        earningsDate: '2027-01-28T21:00:00.000Z',
+        earningsDateFormatted: 'Jan 28, 2027',
+        daysUntil: 83,
+        timing: 'AMC',
+        isEstimate: true,
+        epsEstimate: 0.72,
+        epsLow: null,
+        epsHigh: null,
+        revenueEstimate: 28000000000,
+        revenueLow: null,
+        revenueHigh: null,
+        peRatio: 65.4,
+        exDividendDate: null,
+        dividendDate: null,
+        isPortfolioHolding: false,
+        isWatchlist: false,
+      });
+
+      const result = await handleCalendarTopicMessage({
+        text: 'when is earnings for $TSLA?',
+        chatId: '-1003872409872',
+        messageThreadId: 607,
+        prisma: mockPrisma,
+        senderLabel: '@Trader',
+      });
+
+      expect(result.handled).toBe(true);
+      expect(result.actionTaken).toBe('TICKER_EARNINGS');
+      expect(result.symbol).toBe('TSLA');
+      expect(sentMessages.length).toBe(1);
+      expect(sentMessages[0].text).toContain('Earnings Catalyst Diagnostic: $TSLA');
+      expect(sentMessages[0].text).toContain('Tesla, Inc.');
+      expect(sentMessages[0].text).toContain('Jan 28, 2027');
+    });
+
+    it('should display earnings for "PLTR earnings" natural language format', async () => {
+      vi.spyOn(earningsService, 'lookupSymbolEarnings').mockResolvedValueOnce({
+        symbol: 'PLTR',
+        resolvedSymbol: 'PLTR',
+        companyName: 'Palantir Technologies Inc.',
+        price: 45.2,
+        dayChangePercent: 3.4,
+        currency: 'USD',
+        earningsDate: '2026-11-04T21:00:00.000Z',
+        earningsDateFormatted: 'Nov 4, 2026',
+        daysUntil: 8,
+        timing: 'AMC',
+        isEstimate: false,
+        epsEstimate: 0.09,
+        epsLow: null,
+        epsHigh: null,
+        revenueEstimate: 701000000,
+        revenueLow: null,
+        revenueHigh: null,
+        peRatio: 90.1,
+        exDividendDate: null,
+        dividendDate: null,
+        isPortfolioHolding: false,
+        isWatchlist: false,
+      });
+
+      const result = await handleCalendarTopicMessage({
+        text: 'PLTR earnings',
+        chatId: '-1003872409872',
+        messageThreadId: 607,
+        prisma: mockPrisma,
+        senderLabel: '@Trader',
+      });
+
+      expect(result.handled).toBe(true);
+      expect(result.actionTaken).toBe('TICKER_EARNINGS');
+      expect(result.symbol).toBe('PLTR');
+      expect(sentMessages.length).toBe(1);
+      expect(sentMessages[0].text).toContain('Earnings Catalyst Diagnostic: $PLTR');
+      expect(sentMessages[0].text).toContain('Palantir Technologies Inc.');
+      expect(sentMessages[0].text).toContain('Nov 4, 2026');
+    });
+
+    it('should handle unannounced / pending earnings date gracefully without dumping portfolio', async () => {
+      vi.spyOn(earningsService, 'lookupSymbolEarnings').mockResolvedValueOnce({
+        symbol: 'SPY',
+        resolvedSymbol: 'SPY',
+        companyName: 'SPDR S&P 500 ETF Trust',
+        price: 580.0,
+        dayChangePercent: 0.3,
+        currency: 'USD',
+        earningsDate: null,
+        earningsDateFormatted: 'Date Pending',
+        daysUntil: null,
+        timing: 'UNSPECIFIED',
+        isEstimate: false,
+        epsEstimate: null,
+        epsLow: null,
+        epsHigh: null,
+        revenueEstimate: null,
+        revenueLow: null,
+        revenueHigh: null,
+        peRatio: null,
+        exDividendDate: null,
+        dividendDate: null,
+        isPortfolioHolding: false,
+        isWatchlist: false,
+      });
+
+      const result = await handleCalendarTopicMessage({
+        text: 'SPY',
+        chatId: '-1003872409872',
+        messageThreadId: 607,
+        prisma: mockPrisma,
+        senderLabel: '@Trader',
+      });
+
+      expect(result.handled).toBe(true);
+      expect(result.actionTaken).toBe('TICKER_EARNINGS');
+      expect(result.symbol).toBe('SPY');
+      expect(sentMessages.length).toBe(1);
+      expect(sentMessages[0].text).toContain('Earnings Catalyst Diagnostic: $SPY');
+      expect(sentMessages[0].text).toContain('Date Pending / Not Yet Announced');
+      expect(sentMessages[0].text).not.toContain('Trade Compass — Portfolio Earnings Calendar');
+    });
+
+    it('should return helpful notice when queried ticker cannot be found', async () => {
+      vi.spyOn(earningsService, 'lookupSymbolEarnings').mockResolvedValueOnce(null);
+
+      const result = await handleCalendarTopicMessage({
+        text: 'INVALIDSYM',
+        chatId: '-1003872409872',
+        messageThreadId: 607,
+        prisma: mockPrisma,
+        senderLabel: '@Trader',
+      });
+
+      expect(result.handled).toBe(true);
+      expect(result.actionTaken).toBe('INVALID_INPUT');
+      expect(result.symbol).toBe('INVALIDSYM');
+      expect(sentMessages.length).toBe(1);
+      expect(sentMessages[0].text).toContain('Earnings Lookup Notice');
+      expect(sentMessages[0].text).toContain('Unable to retrieve earnings data for *$INVALIDSYM*');
+    });
+
+    it('should generate dedicated single-stock earnings PDF when user queries "AAPL pdf"', async () => {
+      vi.spyOn(earningsService, 'lookupSymbolEarnings').mockResolvedValueOnce({
+        symbol: 'AAPL',
+        resolvedSymbol: 'AAPL',
+        companyName: 'Apple Inc.',
+        price: 230.5,
+        dayChangePercent: 0.8,
+        currency: 'USD',
+        earningsDate: '2026-11-05T21:30:00.000Z',
+        earningsDateFormatted: 'Nov 5, 2026',
+        daysUntil: 9,
+        timing: 'AMC',
+        isEstimate: false,
+        epsEstimate: 1.62,
+        epsLow: 1.55,
+        epsHigh: 1.7,
+        revenueEstimate: 94000000000,
+        revenueLow: null,
+        revenueHigh: null,
+        peRatio: 33.2,
+        exDividendDate: null,
+        dividendDate: null,
+        isPortfolioHolding: true,
+        portfolioMarketValue: 22000,
+        portfolioQuantity: 100,
+        portfolioDayPnL: 250,
+        isWatchlist: false,
+      });
+
+      const result = await handleCalendarTopicMessage({
+        text: 'AAPL pdf',
+        chatId: '-1003872409872',
+        messageThreadId: 607,
+        prisma: mockPrisma,
+        senderLabel: '@Trader',
+      });
+
+      expect(result.handled).toBe(true);
+      expect(result.actionTaken).toBe('PDF_REPORT');
+      expect(result.pdfGenerated).toBe(true);
+      expect(result.symbol).toBe('AAPL');
+      expect(sentPdfs.length).toBe(1);
+      expect(sentPdfs[0].filename).toContain('TradeCompass_Earnings_AAPL');
+      expect(sentPdfs[0].caption).toContain('$AAPL Earnings Dossier');
+    });
+
+    it('should test extractTickerForCalendarTopic extraction accuracy across natural queries', () => {
+      expect(extractTickerForCalendarTopic('AAPL')).toBe('AAPL');
+      expect(extractTickerForCalendarTopic('aapl')).toBe('AAPL');
+      expect(extractTickerForCalendarTopic('$NVDA')).toBe('NVDA');
+      expect(extractTickerForCalendarTopic('$tsla')).toBe('TSLA');
+      expect(extractTickerForCalendarTopic('when is earnings for TSLA?')).toBe('TSLA');
+      expect(extractTickerForCalendarTopic('when does nvda report?')).toBe('NVDA');
+      expect(extractTickerForCalendarTopic('earnings for MSFT')).toBe('MSFT');
+      expect(extractTickerForCalendarTopic('PLTR earnings')).toBe('PLTR');
+      expect(extractTickerForCalendarTopic('calendar for AMD')).toBe('AMD');
+      expect(extractTickerForCalendarTopic('/earnings AAPL')).toBe('AAPL');
+      expect(extractTickerForCalendarTopic('/calendar TSLA')).toBe('TSLA');
+      expect(extractTickerForCalendarTopic('#calendar NVDA')).toBe('NVDA');
+
+      // Reserved words should yield null so they trigger timeframe/command flow
+      expect(extractTickerForCalendarTopic('calendar')).toBeNull();
+      expect(extractTickerForCalendarTopic('week')).toBeNull();
+      expect(extractTickerForCalendarTopic('this week')).toBeNull();
+      expect(extractTickerForCalendarTopic('next week')).toBeNull();
+      expect(extractTickerForCalendarTopic('month')).toBeNull();
+      expect(extractTickerForCalendarTopic('today')).toBeNull();
+      expect(extractTickerForCalendarTopic('pdf')).toBeNull();
+      expect(extractTickerForCalendarTopic('calendar pdf')).toBeNull();
+      expect(extractTickerForCalendarTopic('scan')).toBeNull();
+      expect(extractTickerForCalendarTopic('help')).toBeNull();
     });
 
     it('should run on-demand scan when sending scan or check', async () => {

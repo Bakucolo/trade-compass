@@ -1536,7 +1536,9 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         (resolvedTopicName && /calendars?|earnings?/i.test(resolvedTopicName)) ||
         contentText.toLowerCase().startsWith('#calendar') ||
         contentText.toLowerCase().startsWith('#earnings') ||
-        contentText.match(/#(?:topic:)?(?:calendar|earnings)\b/i) ||
+        contentText.toLowerCase().startsWith('/calendar') ||
+        contentText.toLowerCase().startsWith('/earnings') ||
+        contentText.match(/(?:#|\/)(?:topic:)?(?:calendar|earnings)\b/i) ||
         (configuredCalendarThreadId !== undefined && msgThreadNum === configuredCalendarThreadId)
       ));
 

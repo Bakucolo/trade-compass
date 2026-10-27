@@ -909,11 +909,16 @@ export function formatSingleTickerEarningsMessage(item: EarningsItem): string {
   msg += `*${item.companyName}* | Current Price: *$${item.price.toFixed(2)}* (${item.dayChangePercent >= 0 ? '+' : ''}${item.dayChangePercent.toFixed(2)}%)\n\n`;
 
   msg += `🗓️ *Earnings Timing:*\n`;
-  msg += `• *Scheduled Date:* \`${item.earningsDateFormatted}\`\n`;
-  msg += `• *Session Timing:* \`${timingBadge}\`\n`;
-  msg += `• *Countdown:* *${daysText}*\n`;
-  if (item.isEstimate) {
-    msg += `• _Note: Earnings date is an estimate by consensus consensus._\n`;
+  if (item.earningsDate) {
+    msg += `• *Scheduled Date:* \`${item.earningsDateFormatted}\`\n`;
+    msg += `• *Session Timing:* \`${timingBadge}\`\n`;
+    msg += `• *Countdown:* *${daysText}*\n`;
+    if (item.isEstimate) {
+      msg += `• _Note: Earnings date is an estimate by consensus models._\n`;
+    }
+  } else {
+    msg += `• *Scheduled Date:* \`Date Pending / Not Yet Announced\`\n`;
+    msg += `• *Status:* _No upcoming corporate earnings announcement currently scheduled on record._\n`;
   }
   msg += `\n`;
 
@@ -949,13 +954,104 @@ export function formatSingleTickerEarningsMessage(item: EarningsItem): string {
   return msg;
 }
 
-const CALENDAR_KEYWORDS = new Set([
-  'CALENDAR', 'EARNINGS', 'UPCOMING', 'LIST', 'SCHEDULE', 'ALL',
-  'PORTFOLIO', 'HELP', 'SCAN', 'PDF', 'DOSSIER', 'DOCUMENT', 'REPORT',
-  'WEEK', 'WEEKS', 'WEEKLY', 'MONTH', 'MONTHS', 'MONTHLY',
-  'YEAR', 'YEARS', 'YEARLY', 'TODAY', 'TONIGHT', 'NEXT',
-  'DAY', 'DAYS', 'CHECK', 'REFRESH', 'DISPATCH'
+/**
+ * Reserved words in the Calendar topic that represent commands, timeframes, or common conversational terms
+ */
+export const CALENDAR_RESERVED_WORDS = new Set([
+  // Commands & Help
+  'HELP', 'GUIDE', 'COMMANDS', 'USAGE', 'INFO', 'SCAN', 'CHECK', 'REFRESH', 'DISPATCH',
+  'PDF', 'DOSSIER', 'DOCUMENT', 'REPORT', 'EXPORT',
+  // Timeframe / Schedule keywords
+  'CALENDAR', 'EARNINGS', 'UPCOMING', 'SCHEDULE', 'LIST', 'ALL', 'PORTFOLIO',
+  'TODAY', 'TONIGHT', 'WEEK', 'WEEKS', 'WEEKLY', 'MONTH', 'MONTHS', 'MONTHLY',
+  'YEAR', 'YEARS', 'YEARLY', 'NEXT', 'DAY', 'DAYS', '7D', '30D', '365D',
+  // Common conversational stop words / question words
+  'WHEN', 'WHAT', 'WHICH', 'WHERE', 'HOW', 'WHO', 'WHY',
+  'IS', 'ARE', 'WAS', 'WERE', 'BE', 'BEEN', 'DOES', 'DO', 'DID', 'WILL', 'CAN', 'COULD', 'WOULD', 'SHOULD',
+  'FOR', 'THE', 'A', 'AN', 'OF', 'AT', 'ON', 'IN', 'TO', 'FROM', 'WITH', 'BY', 'ABOUT',
+  'ME', 'MY', 'US', 'OUR', 'YOU', 'YOUR', 'THEM', 'THEIR', 'IT', 'ITS',
+  'TELL', 'SHOW', 'GET', 'GIVE', 'FIND', 'LOOKUP', 'SEE', 'KNOW', 'PLEASE',
+  'DATE', 'DATES', 'TIME', 'TIMING', 'ANNOUNCEMENT', 'ANNOUNCEMENTS', 'REPORT', 'REPORTS', 'REPORTING', 'RELEASE', 'RELEASES', 'CALL', 'CALLS',
+  'SOON', 'THIS', 'ANY', 'COMING', 'ESTIMATE', 'ESTIMATES', 'EARN', 'EXPECTED', 'STATUS',
+  'HELD', 'HOLDING', 'HOLDINGS', 'STOCK', 'STOCKS', 'TICKER', 'TICKERS', 'SHARE', 'SHARES',
+  'POSITION', 'POSITIONS', 'BUY', 'SELL', 'HOLD'
 ]);
+
+/**
+ * Extracts a ticker symbol from freeform user messages inside the Calendar topic.
+ * Handles cashtags ($AAPL, $tsla), standalone tickers (AAPL, tsla),
+ * natural queries ("when is earnings for NVDA", "earnings AAPL", "PLTR date"),
+ * and slash/hash commands (/calendar AAPL, #earnings TSLA).
+ */
+export function extractTickerForCalendarTopic(text: string): string | null {
+  if (!text || typeof text !== 'string') return null;
+
+  // Clean formatting, emojis, command slashes, hashes
+  const clean = text
+    .trim()
+    .replace(/^(?:📅|🗓️|🚨|🔔|💼|⚡|🔍|📊|📈|🏢)\s*/g, '')
+    .replace(/(?:#|\/)(?:topic:)?(?:calendar|earnings|ticker)\b/gi, '')
+    .trim();
+
+  // 1. Explicit cashtag match: $AAPL, $tsla, $BRK.B
+  const cashtagMatch = clean.match(/\$([A-Za-z0-9.\-=]{1,12})\b/);
+  if (cashtagMatch) {
+    const sym = cashtagMatch[1].toUpperCase();
+    if (!CALENDAR_RESERVED_WORDS.has(sym)) {
+      return sym;
+    }
+  }
+
+  // 2. Explicit natural language patterns
+  const prefixPattern = /(?:earnings|calendar|reporting|report|catalyst)\s+(?:date\s+)?(?:for\s+)?\$?([A-Za-z0-9.\-=]{1,12})\b/i;
+  const pMatch = clean.match(prefixPattern);
+  if (pMatch) {
+    const sym = pMatch[1].toUpperCase();
+    if (!CALENDAR_RESERVED_WORDS.has(sym)) {
+      return sym;
+    }
+  }
+
+  const suffixPattern = /\$?([A-Za-z0-9.\-=]{1,12})\s+(?:earnings|calendar|report|catalyst|reporting)\b/i;
+  const sMatch = clean.match(suffixPattern);
+  if (sMatch) {
+    const sym = sMatch[1].toUpperCase();
+    if (!CALENDAR_RESERVED_WORDS.has(sym)) {
+      return sym;
+    }
+  }
+
+  const questionPattern = /(?:when\s+(?:is|does)|what\s+date\s+is|what\s+day\s+is)\s+\$?([A-Za-z0-9.\-=]{1,12})\b/i;
+  const qMatch = clean.match(questionPattern);
+  if (qMatch) {
+    const sym = qMatch[1].toUpperCase();
+    if (!CALENDAR_RESERVED_WORDS.has(sym)) {
+      return sym;
+    }
+  }
+
+  // 3. Single-word query (e.g. "AAPL", "aapl", "nvda", "tsla")
+  const strippedPunctuation = clean.replace(/[^A-Za-z0-9.\-= ]/g, ' ').trim();
+  const tokens = strippedPunctuation.split(/\s+/).filter(Boolean);
+
+  if (tokens.length === 1) {
+    const cand = tokens[0].toUpperCase();
+    if (/^[A-Z0-9.\-=]{1,12}$/.test(cand) && !CALENDAR_RESERVED_WORDS.has(cand)) {
+      return cand;
+    }
+  }
+
+  // 4. Multi-word fallback: filter out reserved words
+  const validCandidates = tokens
+    .map((t) => t.toUpperCase())
+    .filter((t) => /^[A-Z0-9.\-=]{1,12}$/.test(t) && !CALENDAR_RESERVED_WORDS.has(t));
+
+  if (validCandidates.length > 0) {
+    return validCandidates[0];
+  }
+
+  return null;
+}
 
 /**
  * Main dispatcher for Telegram messages inside the Calendar topic
@@ -1028,12 +1124,127 @@ export async function handleCalendarTopicMessage({
     };
   }
 
-  // 3. Timeframe parsing (week, month, next week, year, today)
-  const timeframeInfo = parseCalendarTimeframe(lower);
-
-  // 4. PDF Report Request (e.g. "pdf", "calendar pdf", "week pdf", "month pdf", "earnings pdf")
+  // 3. Check for Specific Ticker query (e.g. "AAPL", "aapl", "$NVDA", "when is PLTR earnings?", "earnings for MSFT")
+  const detectedSymbol = extractTickerForCalendarTopic(clean);
   const isPdfRequested = /\b(?:pdf|dossier|document|report)\b/i.test(lower);
 
+  if (detectedSymbol) {
+    logToFile(`[TelegramCalendar] Looking up single ticker earnings for $${detectedSymbol} requested by ${senderLabel}...`);
+    const singleItem = await lookupSymbolEarnings(detectedSymbol);
+
+    if (singleItem) {
+      // Check if held in portfolio
+      const holding = await prisma.holding.findFirst({
+        where: {
+          OR: [
+            { symbol: { equals: detectedSymbol } },
+            { underlyingSymbol: { equals: detectedSymbol } },
+          ],
+          quantity: { not: 0 },
+        },
+      });
+
+      if (holding) {
+        singleItem.isPortfolioHolding = true;
+        singleItem.portfolioMarketValue = Math.abs(holding.marketValue || 0);
+        singleItem.portfolioQuantity = holding.quantity;
+        singleItem.portfolioDayPnL = holding.dayPnL;
+      }
+
+      // If user also requested a PDF for this ticker (e.g. "AAPL pdf" or "earnings pdf NVDA")
+      if (isPdfRequested) {
+        try {
+          const pdfBuffer = await generateCalendarDossierPdf(
+            [singleItem],
+            {
+              totalMonitored: 1,
+              portfolioCount: singleItem.isPortfolioHolding ? 1 : 0,
+              watchlistCount: 0,
+              reportingThisWeek: singleItem.daysUntil !== null && singleItem.daysUntil >= 0 && singleItem.daysUntil <= 7 ? 1 : 0,
+              reportingNextWeek: singleItem.daysUntil !== null && singleItem.daysUntil >= 8 && singleItem.daysUntil <= 14 ? 1 : 0,
+              reportingThisMonth: singleItem.daysUntil !== null && singleItem.daysUntil >= 0 && singleItem.daysUntil <= 30 ? 1 : 0,
+              nextReportingHolding: singleItem,
+              totalPortfolioValueAtRisk: singleItem.portfolioMarketValue || 0,
+            },
+            `$${detectedSymbol} Earnings Catalyst`
+          );
+          const filename = `TradeCompass_Earnings_${detectedSymbol}_${new Date().toISOString().slice(0, 10)}.pdf`;
+          const caption =
+            `📅 *Trade Compass — $${detectedSymbol} Earnings Dossier*\n\n` +
+            `• *Company:* ${singleItem.companyName}\n` +
+            `• *Scheduled Date:* \`${singleItem.earningsDateFormatted}\` (${formatSessionTiming(singleItem.timing)})\n` +
+            `• *Countdown:* ${singleItem.daysUntil !== null ? `in ${singleItem.daysUntil} Days` : 'Date Pending'}\n` +
+            `• *Consensus EPS:* ${singleItem.epsEstimate !== null ? `$${singleItem.epsEstimate.toFixed(2)}` : 'N/A'}\n` +
+            `• *Portfolio Status:* ${singleItem.isPortfolioHolding ? 'Active Portfolio Holding' : 'Not Held'}\n\n` +
+            `Attached is your institutional earnings catalyst PDF dossier.`;
+
+          if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
+            await sendPdfReportToTelegram(pdfBuffer, filename, caption, {
+              chatId,
+              messageThreadId,
+            }).catch((e: any) => logToFile(`[TelegramCalendar] Single ticker PDF send error: ${e.message}`));
+          }
+
+          return {
+            handled: true,
+            actionTaken: 'PDF_REPORT',
+            symbol: detectedSymbol,
+            replyText: caption,
+            pdfGenerated: true,
+            itemsCount: 1,
+          };
+        } catch (pdfErr: any) {
+          logToFile(`[TelegramCalendar] Single ticker PDF generation error: ${pdfErr.message}. Falling back to standard diagnostic text.`);
+        }
+      }
+
+      const tickerMsg = formatSingleTickerEarningsMessage(singleItem);
+
+      if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
+        await sendTelegramMessage({
+          text: tickerMsg,
+          chatId,
+          messageThreadId,
+          parseMode: 'Markdown',
+        }).catch((e: any) => logToFile(`[TelegramCalendar] Single ticker send error: ${e.message}`));
+      }
+
+      return {
+        handled: true,
+        actionTaken: 'TICKER_EARNINGS',
+        symbol: detectedSymbol,
+        replyText: tickerMsg,
+      };
+    } else {
+      const notFoundMsg =
+        `⚠️ *Earnings Lookup Notice*\n\n` +
+        `Unable to retrieve earnings data for *$${detectedSymbol}*.\n\n` +
+        `• Please check that the ticker symbol is valid (e.g. \`AAPL\`, \`NVDA\`, \`TSLA\`).\n` +
+        `• Send \`calendar\` to view your full portfolio earnings schedule.\n` +
+        `• Send \`help\` for a list of available calendar commands.`;
+
+      if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
+        await sendTelegramMessage({
+          text: notFoundMsg,
+          chatId,
+          messageThreadId,
+          parseMode: 'Markdown',
+        }).catch((e: any) => logToFile(`[TelegramCalendar] Single ticker not found send error: ${e.message}`));
+      }
+
+      return {
+        handled: true,
+        actionTaken: 'INVALID_INPUT',
+        symbol: detectedSymbol,
+        replyText: notFoundMsg,
+      };
+    }
+  }
+
+  // 4. Timeframe parsing (week, month, next week, year, today)
+  const timeframeInfo = parseCalendarTimeframe(lower);
+
+  // 5. PDF Report Request for portfolio schedule (e.g. "pdf", "calendar pdf", "week pdf", "month pdf")
   if (isPdfRequested) {
     try {
       logToFile(`[TelegramCalendar] Generating executive Earnings Calendar PDF (${timeframeInfo.timeframeLabel}) requested by ${senderLabel}...`);
@@ -1084,56 +1295,6 @@ export async function handleCalendarTopicMessage({
       };
     } catch (pdfErr: any) {
       logToFile(`[TelegramCalendar] PDF generation error: ${pdfErr.message}. Falling back to text summary.`);
-    }
-  }
-
-  // 5. Check for Specific Ticker query (e.g. "AAPL", "$NVDA", "PLTR earnings")
-  // Only execute single-ticker lookup if NOT an explicit timeframe command (e.g., "week", "month")
-  if (!timeframeInfo.isExplicitFilter) {
-    const extracted = extractSymbolsFromText(clean);
-    const specificSymbol = extracted.length > 0 ? extracted[0].toUpperCase() : null;
-
-    if (specificSymbol && !CALENDAR_KEYWORDS.has(specificSymbol)) {
-      logToFile(`[TelegramCalendar] Looking up single ticker earnings for $${specificSymbol}...`);
-      const singleItem = await lookupSymbolEarnings(specificSymbol);
-
-      if (singleItem && singleItem.earningsDate) {
-        // Check if held in portfolio
-        const holding = await prisma.holding.findFirst({
-          where: {
-            OR: [
-              { symbol: { equals: specificSymbol } },
-              { underlyingSymbol: { equals: specificSymbol } },
-            ],
-            quantity: { not: 0 },
-          },
-        });
-
-        if (holding) {
-          singleItem.isPortfolioHolding = true;
-          singleItem.portfolioMarketValue = Math.abs(holding.marketValue || 0);
-          singleItem.portfolioQuantity = holding.quantity;
-          singleItem.portfolioDayPnL = holding.dayPnL;
-        }
-
-        const tickerMsg = formatSingleTickerEarningsMessage(singleItem);
-
-        if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
-          await sendTelegramMessage({
-            text: tickerMsg,
-            chatId,
-            messageThreadId,
-            parseMode: 'Markdown',
-          }).catch((e: any) => logToFile(`[TelegramCalendar] Single ticker send error: ${e.message}`));
-        }
-
-        return {
-          handled: true,
-          actionTaken: 'TICKER_EARNINGS',
-          symbol: specificSymbol,
-          replyText: tickerMsg,
-        };
-      }
     }
   }
 
