@@ -415,7 +415,7 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
       subtitle: 'S&P 500 11 GICS sectors, industry relative strength & sector rotation business cycle clock',
       icon: Layers,
       iconColorClasses: 'bg-blue-500/15 border-blue-500/40 text-blue-300',
-      preview: '11 GICS Sectors • Relative Strength • Cycle Clock',
+      preview: '11 GICS Sectors • Full Window Heatmap • Relative Alpha vs SPY • Cycle Clock',
       renderContent: () => (
         <SectorsAndIndustriesCard
           onNavigateToResearch={onNavigateToResearch}

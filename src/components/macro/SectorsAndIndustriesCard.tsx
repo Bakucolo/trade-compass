@@ -51,6 +51,7 @@ import {
   useSectorsHistory,
 } from '@/services/sectorsService';
 import { SectorDeepDiveModal } from './SectorDeepDiveModal';
+import { SectorHeatmapModal } from './SectorHeatmapModal';
 import {
   ResponsiveContainer,
   BarChart,
@@ -135,6 +136,7 @@ export function SectorsAndIndustriesCard({
   const [viewMode, setViewMode] = useState<ViewMode>('HEATMAP_GRID');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSector, setSelectedSector] = useState<SectorItem | null>(null);
+  const [isHeatmapModalOpen, setIsHeatmapModalOpen] = useState(false);
 
   // Sorting State
   const [sortField, setSortField] = useState<SectorSortField>('return_active');
@@ -433,6 +435,17 @@ export function SectorsAndIndustriesCard({
               })}
             </div>
 
+            {/* Full Window Heatmap Button */}
+            <Button
+              size="sm"
+              onClick={() => setIsHeatmapModalOpen(true)}
+              className="h-8 text-xs font-bold gap-1.5 bg-gradient-to-r from-purple-500 via-primary to-cyan-500 hover:from-purple-600 hover:to-cyan-600 text-white shadow-md border-0"
+              title="Open full window multi-timeframe sector heatmap"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+              <span>Full Window Heatmap</span>
+            </Button>
+
             {/* Refresh Button */}
             <Button
               variant="outline"
@@ -487,6 +500,17 @@ export function SectorsAndIndustriesCard({
           </div>
 
           <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsHeatmapModalOpen(true)}
+              className="h-8 text-xs font-bold gap-1.5 border-purple-500/40 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 shadow-xs shrink-0"
+              title="Open full window multi-timeframe sector heatmap"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>Full Heatmap</span>
+            </Button>
+
             {/* Search Input */}
             <div className="relative w-44 sm:w-56">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -1627,6 +1651,21 @@ export function SectorsAndIndustriesCard({
           onNavigateToGraphs={onNavigateToGraphs}
         />
       )}
+
+      {/* ================= FULL WINDOW SECTOR HEATMAP MODAL ================= */}
+      <SectorHeatmapModal
+        isOpen={isHeatmapModalOpen}
+        onClose={() => setIsHeatmapModalOpen(false)}
+        sectors={allItems}
+        benchmark={benchmark}
+        rotationRatios={rotationRatios}
+        breadth={breadth}
+        onNavigateToResearch={onNavigateToResearch}
+        onNavigateToGraphs={onNavigateToGraphs}
+        onSelectDeepDive={(sector) => {
+          setSelectedSector(sector);
+        }}
+      />
     </Card>
   );
 }
