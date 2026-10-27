@@ -1322,6 +1322,9 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
       if (resolvedTopicName && /(?:copilot|ai[\s_-]*copilot)/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_COPILOT_THREAD_ID) {
         setTelegramCopilotThreadId(msgThreadNum);
       }
+      if (resolvedTopicName && /ideas?/i.test(resolvedTopicName) && msgThreadNum !== undefined && !process.env.TELEGRAM_IDEAS_THREAD_ID) {
+        setTelegramIdeasThreadId(msgThreadNum);
+      }
 
       // Topic created status message handling
       if (contentText.startsWith('📌 Topic created:')) {
@@ -1436,6 +1439,11 @@ export async function consumeTelegramBuffer(prisma: PrismaClient): Promise<Buffe
         contentText.match(/#(?:topic:)?ideas?\b/i) ||
         contentText.includes('💡')
       ));
+
+      // Auto-discover and persist TELEGRAM_IDEAS_THREAD_ID if not yet configured
+      if (isIdeasTopic && msgThreadNum !== undefined && !process.env.TELEGRAM_IDEAS_THREAD_ID) {
+        setTelegramIdeasThreadId(msgThreadNum);
+      }
 
       const isExecutionTopic = isExplicitExecutionThread || (!isExplicitAppThread && !isSetAlertTopic && !isAlertsTopic && !isIdeasTopic && !isExplicitWatchlistThread && !isExplicitNotesThread && Boolean(
         (resolvedTopicName && /execution/i.test(resolvedTopicName)) ||
@@ -2289,12 +2297,17 @@ Output strictly valid JSON matching this schema:
 
         if (alertsResult.handled) {
           logToFile(`[TelegramBuffer] 🎯 Set Alert topic action (${alertsResult.actionTaken}) handled for ${senderLabel}`);
+          const isVoice = msg.type === 'voice';
+          const alertSummaryTitle = alertsResult.alertsCreated && alertsResult.alertsCreated.length > 0
+            ? `🎯 Telegram Set Alert: ${alertsResult.alertsCreated.map((a: any) => `${a.symbol} ${a.targetPrice}`).join(', ')}`
+            : `🎯 Telegram Set Alert: ${alertsResult.actionTaken}`;
+
           const savedLog = await (prisma as any).thoughtLog.create({
             data: {
-              title: `🎯 Telegram Set Alert: ${alertsResult.actionTaken}`,
+              title: alertSummaryTitle,
               content: contentText.trim(),
               folder: 'Alerts',
-              tags: `Telegram, SetAlert, ${alertsResult.actionTaken}, ${senderLabel}`,
+              tags: `Telegram, SetAlert, ${alertsResult.actionTaken}${isVoice ? ', Voice' : ''}, ${senderLabel}`,
               symbols: alertsResult.alertsCreated?.map((a: any) => a.symbol).join(', ') || null,
               sentiment: 'CAUTION',
               isPinned: false,
@@ -2328,12 +2341,17 @@ Output strictly valid JSON matching this schema:
 
         if (alertsResult.handled) {
           logToFile(`[TelegramBuffer] 🔔 Alerts topic action (${alertsResult.actionTaken}) handled for ${senderLabel}`);
+          const isVoice = msg.type === 'voice';
+          const alertSummaryTitle = alertsResult.alertsCreated && alertsResult.alertsCreated.length > 0
+            ? `🔔 Telegram Alert: ${alertsResult.alertsCreated.map((a: any) => `${a.symbol} ${a.targetPrice}`).join(', ')}`
+            : `🔔 Telegram Alerts: ${alertsResult.actionTaken}`;
+
           const savedLog = await (prisma as any).thoughtLog.create({
             data: {
-              title: `🔔 Telegram Alerts: ${alertsResult.actionTaken}`,
+              title: alertSummaryTitle,
               content: contentText.trim(),
               folder: 'Alerts',
-              tags: `Telegram, Alerts, ${alertsResult.actionTaken}, ${senderLabel}`,
+              tags: `Telegram, Alerts, ${alertsResult.actionTaken}${isVoice ? ', Voice' : ''}, ${senderLabel}`,
               symbols: alertsResult.alertsCreated?.map((a: any) => a.symbol).join(', ') || null,
               sentiment: 'CAUTION',
               isPinned: false,

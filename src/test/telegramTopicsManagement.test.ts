@@ -146,7 +146,12 @@ function createMockPrisma() {
         }),
         deleteMany: vi.fn(async (args: any) => {
           const initialLen = alertsStore.length;
-          const filtered = alertsStore.filter((a) => a.symbol !== args?.where?.symbol?.equals);
+          const filtered = alertsStore.filter((a) => {
+            if (args?.where?.symbol?.equals && a.symbol === args.where.symbol.equals) return false;
+            if (!args?.where?.symbol && args?.where?.status?.in && args.where.status.in.includes(a.status)) return false;
+            if (!args?.where || Object.keys(args.where).length === 0) return false;
+            return true;
+          });
           const removed = initialLen - filtered.length;
           alertsStore.length = 0;
           alertsStore.push(...filtered);
@@ -172,7 +177,12 @@ function createMockPrisma() {
         }),
         deleteMany: vi.fn(async (args: any) => {
           const initialLen = alertsStore.length;
-          const filtered = alertsStore.filter((a) => a.symbol !== args?.where?.symbol?.equals);
+          const filtered = alertsStore.filter((a) => {
+            if (args?.where?.symbol?.equals && a.symbol === args.where.symbol.equals) return false;
+            if (!args?.where?.symbol && args?.where?.status?.in && args.where.status.in.includes(a.status)) return false;
+            if (!args?.where || Object.keys(args.where).length === 0) return false;
+            return true;
+          });
           const removed = initialLen - filtered.length;
           alertsStore.length = 0;
           alertsStore.push(...filtered);
@@ -572,6 +582,74 @@ describe('Telegram Topics Management & Multi-Topic Interaction System', () => {
       expect(res.actionTaken).toBe('CREATE_ALERT');
       expect(res.replyText).toContain('Price Alert Armed');
       expect(alertsStore.length).toBeGreaterThan(0);
+    });
+
+    it('arms multiple price alerts from a single message in the alerts topic', async () => {
+      const { prisma, alertsStore } = createMockPrisma();
+      const res = await handleAlertsTopicMessage({
+        text: 'NVDA 145, AAPL 220, TSLA 260',
+        chatId: '-10022334455',
+        prisma,
+      });
+
+      expect(res.handled).toBe(true);
+      expect(res.actionTaken).toBe('CREATE_ALERT');
+      expect(res.replyText).toContain('Price Alert Armed');
+      expect(res.replyText).toContain('Active Monitors');
+      expect(res.replyText).toContain('$NVDA');
+      expect(res.replyText).toContain('$AAPL');
+      expect(res.replyText).toContain('$TSLA');
+      expect(alertsStore.length).toBe(3);
+    });
+
+    it('cancels multiple armed alerts in a single message', async () => {
+      const { prisma, alertsStore } = createMockPrisma();
+      alertsStore.push({ symbol: 'AAPL', condition: 'BELOW', targetPrice: 200, status: 'ACTIVE' });
+      alertsStore.push({ symbol: 'TSLA', condition: 'ABOVE', targetPrice: 260, status: 'ACTIVE' });
+      alertsStore.push({ symbol: 'NVDA', condition: 'ABOVE', targetPrice: 150, status: 'ACTIVE' });
+
+      const res = await handleAlertsTopicMessage({
+        text: 'delete alerts AAPL, TSLA',
+        chatId: '-10022334455',
+        prisma,
+      });
+
+      expect(res.handled).toBe(true);
+      expect(res.actionTaken).toBe('CANCEL_ALERT');
+      expect(res.replyText).toContain('Price Alerts Cancelled: $AAPL, $TSLA');
+      expect(alertsStore).toHaveLength(1);
+      expect(alertsStore[0].symbol).toBe('NVDA');
+    });
+
+    it('disarms all active alerts with "clear all alerts"', async () => {
+      const { prisma, alertsStore } = createMockPrisma();
+      alertsStore.push({ symbol: 'AAPL', condition: 'BELOW', targetPrice: 200, status: 'ACTIVE' });
+      alertsStore.push({ symbol: 'TSLA', condition: 'ABOVE', targetPrice: 260, status: 'ACTIVE' });
+
+      const res = await handleAlertsTopicMessage({
+        text: 'clear all alerts',
+        chatId: '-10022334455',
+        prisma,
+      });
+
+      expect(res.handled).toBe(true);
+      expect(res.actionTaken).toBe('CANCEL_ALERT');
+      expect(res.replyText).toContain('All Price Alerts Disarmed');
+      expect(alertsStore).toHaveLength(0);
+    });
+
+    it('returns topic help instructions on "?" or "help"', async () => {
+      const { prisma } = createMockPrisma();
+      const res = await handleAlertsTopicMessage({
+        text: '?',
+        chatId: '-10022334455',
+        prisma,
+      });
+
+      expect(res.handled).toBe(true);
+      expect(res.actionTaken).toBe('HELP');
+      expect(res.replyText).toContain('Set Alert Topic — Instructions & Commands');
+      expect(res.replyText).toContain('Arm New Price Alerts (Single & Multiple)');
     });
   });
 

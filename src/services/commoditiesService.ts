@@ -7,6 +7,8 @@ export type CommodityCategory = 'energy' | 'precious_metals' | 'industrial_metal
 
 export type CurveStructure = 'BACKWARDATION' | 'CONTANGO' | 'FLAT';
 
+export type CommodityTimeframe = '1D' | '1W' | '1M' | '3M' | '6M' | 'YTD' | '1Y';
+
 export interface CommodityPriceItem {
   id: string;
   symbol: string;
@@ -19,6 +21,7 @@ export interface CommodityPriceItem {
   prevClose: number;
   change: number;
   changePercent: number;
+  returns: Record<CommodityTimeframe, number>;
   dayHigh: number;
   dayLow: number;
   fiftyTwoWeekHigh: number;

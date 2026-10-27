@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { consumeTelegramBuffer } from '../../server/services/telegramBufferConsumerService';
+import { consumeTelegramBuffer, clearPersistedDedupKeysForTest } from '../../server/services/telegramBufferConsumerService';
 import { extractPriceAlertCandidates, autoCreateAlertsFromText } from '../../server/services/thoughtLogAlertService';
 
 describe('Telegram Alerts Topic Ingestion & Processing', () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
+    clearPersistedDedupKeysForTest();
     process.env.TELEGRAM_BUFFER_URL = 'https://telegram-thought-buffer.workers.dev/consume';
     process.env.TELEGRAM_BUFFER_SECRET = 'tradecompass_secret_consume_token_2026';
     process.env.TELEGRAM_ALERTS_THREAD_ID = '2';
@@ -146,6 +147,71 @@ describe('Telegram Alerts Topic Ingestion & Processing', () => {
     expect(results[0].symbol).toBe('AAPL');
     expect(results[0].targetPrice).toBeGreaterThan(0);
     expect(results[0].condition).toBe('BELOW');
+  });
+
+  it('arms multiple price alerts from a single message in the Set Alert topic', async () => {
+    process.env.TELEGRAM_SET_ALERT_THREAD_ID = '499';
+    const mockMultiMessage = [
+      {
+        id: `msg_set_alert_${Date.now()}`,
+        messageId: 49901,
+        messageThreadId: 499,
+        isTopicMessage: true,
+        topicName: 'Set Alert',
+        type: 'text',
+        text: 'NVDA > 150, AAPL < 220, TSLA > 260',
+        date: Math.floor(Date.now() / 1000),
+        timestamp: new Date().toISOString(),
+        sender: { id: 12345, username: 'trader_dan' },
+        chat: { id: -1003872409872, type: 'supergroup' },
+      },
+    ];
+
+    global.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes('/consume')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            count: 1,
+            messages: mockMultiMessage,
+          }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true, result: {} }) };
+    });
+
+    const mockCreatedThoughtLogs: any[] = [];
+    const mockCreatedPriceAlerts: any[] = [];
+
+    const mockPrisma: any = {
+      priceAlert: {
+        findFirst: vi.fn().mockResolvedValue(null),
+        create: vi.fn().mockImplementation(async ({ data }: any) => {
+          const alert = { id: `alert-${Date.now()}-${Math.random()}`, ...data };
+          mockCreatedPriceAlerts.push(alert);
+          return alert;
+        }),
+      },
+      thoughtLog: {
+        create: vi.fn().mockImplementation(async ({ data }: any) => {
+          const log = { id: `log-${Date.now()}-${Math.random()}`, ...data };
+          mockCreatedThoughtLogs.push(log);
+          return log;
+        }),
+      },
+    };
+
+    const result = await consumeTelegramBuffer(mockPrisma);
+    expect(result.success).toBe(true);
+    expect(mockCreatedPriceAlerts).toHaveLength(3);
+    expect(mockCreatedPriceAlerts.map((a) => a.symbol)).toEqual(['NVDA', 'AAPL', 'TSLA']);
+    expect(mockCreatedThoughtLogs).toHaveLength(1);
+    expect(mockCreatedThoughtLogs[0].folder).toBe('Alerts');
+    expect(mockCreatedThoughtLogs[0].title).toContain('NVDA');
+    expect(mockCreatedThoughtLogs[0].title).toContain('AAPL');
+    expect(mockCreatedThoughtLogs[0].title).toContain('TSLA');
   });
 
   it('saves outbound dispatched alerts into the Alerts folder via sendTelegramAlert', async () => {

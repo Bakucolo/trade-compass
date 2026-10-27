@@ -5,6 +5,8 @@ export type CommodityCategory = 'energy' | 'precious_metals' | 'industrial_metal
 
 export type CurveStructure = 'BACKWARDATION' | 'CONTANGO' | 'FLAT';
 
+export type CommodityTimeframe = '1D' | '1W' | '1M' | '3M' | '6M' | 'YTD' | '1Y';
+
 export interface CommodityPriceItem {
   id: string;
   symbol: string;
@@ -17,6 +19,7 @@ export interface CommodityPriceItem {
   prevClose: number;
   change: number;
   changePercent: number;
+  returns: Record<CommodityTimeframe, number>;
   dayHigh: number;
   dayLow: number;
   fiftyTwoWeekHigh: number;
@@ -119,6 +122,7 @@ interface CommodityMetadata {
   tradingViewSymbol: string;
   fallbackPrice: number;
   fallbackPrevClose: number;
+  fallbackReturns: Record<CommodityTimeframe, number>;
   description: string;
 }
 
@@ -136,6 +140,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'NYMEX:CL1!',
     fallbackPrice: 71.40,
     fallbackPrevClose: 70.80,
+    fallbackReturns: { '1D': 0.85, '1W': -1.20, '1M': -3.40, '3M': -5.20, '6M': -8.60, 'YTD': -2.10, '1Y': -6.80 },
     description: 'Global benchmark for light sweet crude oil. Primary driver of refined product costs and headline inflation.',
   },
   {
@@ -150,6 +155,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'ICEEUR:B1!',
     fallbackPrice: 75.20,
     fallbackPrevClose: 74.60,
+    fallbackReturns: { '1D': 0.80, '1W': -1.10, '1M': -3.10, '3M': -4.80, '6M': -7.90, 'YTD': -1.80, '1Y': -6.20 },
     description: 'International seaborne crude oil benchmark pricing ~80% of global waterborne crude trades.',
   },
   {
@@ -164,6 +170,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'NYMEX:NG1!',
     fallbackPrice: 2.85,
     fallbackPrevClose: 2.78,
+    fallbackReturns: { '1D': 2.52, '1W': 5.80, '1M': 11.20, '3M': 18.40, '6M': 12.10, 'YTD': 8.50, '1Y': -14.20 },
     description: 'North American heating, electricity generation, and LNG export feedstock benchmark.',
   },
   {
@@ -178,6 +185,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'NYMEX:RB1!',
     fallbackPrice: 2.12,
     fallbackPrevClose: 2.09,
+    fallbackReturns: { '1D': 1.44, '1W': -0.60, '1M': -2.80, '3M': -6.10, '6M': -9.40, 'YTD': -3.20, '1Y': -8.10 },
     description: 'Reformulated gasoline blendstock for oxygenate blending; key consumer transport inflation proxy.',
   },
   {
@@ -192,6 +200,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'NYMEX:HO1!',
     fallbackPrice: 2.24,
     fallbackPrevClose: 2.21,
+    fallbackReturns: { '1D': 1.36, '1W': -0.40, '1M': -2.20, '3M': -5.40, '6M': -8.80, 'YTD': -2.80, '1Y': -7.40 },
     description: 'Ultra-low sulfur diesel and distillate fuel oil; direct proxy for freight shipping and industrial diesel burn.',
   },
   {
@@ -206,6 +215,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'AMEX:URA',
     fallbackPrice: 31.80,
     fallbackPrevClose: 31.20,
+    fallbackReturns: { '1D': 1.92, '1W': 4.20, '1M': 8.80, '3M': 16.40, '6M': 28.20, 'YTD': 38.50, '1Y': 46.20 },
     description: 'Uranium mining, conversion, and enrichment basket powering baseload clean power for AI data centers.',
   },
 
@@ -222,6 +232,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'COMEX:GC1!',
     fallbackPrice: 2740.50,
     fallbackPrevClose: 2728.00,
+    fallbackReturns: { '1D': 0.46, '1W': 1.80, '1M': 4.20, '3M': 9.60, '6M': 18.40, 'YTD': 26.80, '1Y': 32.50 },
     description: 'Global monetary reserve asset, sovereign debasement shield, and geopolitical safe-haven barometer.',
   },
   {
@@ -236,6 +247,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'COMEX:SI1!',
     fallbackPrice: 32.80,
     fallbackPrevClose: 32.40,
+    fallbackReturns: { '1D': 1.23, '1W': 3.50, '1M': 8.10, '3M': 14.20, '6M': 22.60, 'YTD': 36.20, '1Y': 41.80 },
     description: 'Dual-nature monetary metal and high-demand industrial conductor for photovoltaics (solar) and electronics.',
   },
   {
@@ -250,6 +262,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'NYMEX:PL1!',
     fallbackPrice: 995.00,
     fallbackPrevClose: 988.00,
+    fallbackReturns: { '1D': 0.71, '1W': 1.20, '1M': 2.80, '3M': 4.10, '6M': 6.80, 'YTD': 8.40, '1Y': 11.20 },
     description: 'Autocatalyst emissions converter and hydrogen economy electrolyzer catalyst.',
   },
   {
@@ -264,6 +277,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'NYMEX:PA1!',
     fallbackPrice: 1045.00,
     fallbackPrevClose: 1038.00,
+    fallbackReturns: { '1D': 0.67, '1W': -1.40, '1M': -4.20, '3M': -8.60, '6M': -14.20, 'YTD': -18.60, '1Y': -24.80 },
     description: 'Gasoline internal combustion catalytic converter metal heavily exposed to Russian production.',
   },
 
@@ -280,6 +294,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'COMEX:HG1!',
     fallbackPrice: 4.38,
     fallbackPrevClose: 4.32,
+    fallbackReturns: { '1D': 1.39, '1W': 2.10, '1M': 3.80, '3M': 6.40, '6M': 12.80, 'YTD': 16.20, '1Y': 21.40 },
     description: 'The PhD of macro economics. Unrivaled electrical wiring and grid expansion conductor reflecting global GDP health.',
   },
   {
@@ -294,6 +309,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'COMEX:ALI1!',
     fallbackPrice: 2620.00,
     fallbackPrevClose: 2595.00,
+    fallbackReturns: { '1D': 0.96, '1W': 1.90, '1M': 4.20, '3M': 8.10, '6M': 14.60, 'YTD': 18.20, '1Y': 22.80 },
     description: 'Energy-intensive lightweight structural metal essential for aerospace, transport, and packaging.',
   },
 
@@ -310,6 +326,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'CBOT:ZC1!',
     fallbackPrice: 425.50,
     fallbackPrevClose: 422.00,
+    fallbackReturns: { '1D': 0.83, '1W': 0.60, '1M': -1.80, '3M': -4.20, '6M': -8.40, 'YTD': -12.60, '1Y': -16.80 },
     description: 'Primary feed grain, ethanol biofuel feedstock, and food manufacturing input.',
   },
   {
@@ -324,6 +341,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'CBOT:ZW1!',
     fallbackPrice: 585.00,
     fallbackPrevClose: 580.00,
+    fallbackReturns: { '1D': 0.86, '1W': 1.20, '1M': -2.40, '3M': -5.10, '6M': -9.80, 'YTD': -14.10, '1Y': -18.20 },
     description: 'Global staple bread grain. Vital geopolitical food security and Black Sea export barometer.',
   },
   {
@@ -338,6 +356,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'CBOT:ZS1!',
     fallbackPrice: 1020.00,
     fallbackPrevClose: 1012.00,
+    fallbackReturns: { '1D': 0.79, '1W': 0.40, '1M': -2.10, '3M': -4.60, '6M': -11.20, 'YTD': -15.40, '1Y': -19.50 },
     description: 'Protein meal for livestock and soybean oil for renewable diesel and culinary staples.',
   },
   {
@@ -352,6 +371,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'ICEUS:KC1!',
     fallbackPrice: 252.00,
     fallbackPrevClose: 248.50,
+    fallbackReturns: { '1D': 1.41, '1W': 3.80, '1M': 9.20, '3M': 18.50, '6M': 34.20, 'YTD': 48.60, '1Y': 62.40 },
     description: 'High-grade Arabica coffee driven by Brazilian rainfall and European Deforestation Regulation compliance.',
   },
   {
@@ -366,6 +386,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'ICEUS:SB1!',
     fallbackPrice: 22.40,
     fallbackPrevClose: 22.10,
+    fallbackReturns: { '1D': 1.36, '1W': 2.80, '1M': 5.10, '3M': 3.20, '6M': -6.40, 'YTD': -4.20, '1Y': -12.80 },
     description: 'Raw cane sugar international benchmark; deeply linked to Brazilian sugarcane ethanol parity.',
   },
   {
@@ -380,6 +401,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'ICEUS:CC1!',
     fallbackPrice: 7850.00,
     fallbackPrevClose: 7720.00,
+    fallbackReturns: { '1D': 1.68, '1W': 4.60, '1M': 12.40, '3M': 24.80, '6M': 58.20, 'YTD': 112.50, '1Y': 148.00 },
     description: 'West African cocoa bean contract subject to historic supply deficits in Côte d’Ivoire and Ghana.',
   },
   {
@@ -394,6 +416,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'ICEUS:CT1!',
     fallbackPrice: 73.50,
     fallbackPrevClose: 72.80,
+    fallbackReturns: { '1D': 0.96, '1W': -0.80, '1M': -3.20, '3M': -6.80, '6M': -11.40, 'YTD': -14.80, '1Y': -18.60 },
     description: 'Textile and apparel raw material reflecting discretionary consumer goods demand.',
   },
 
@@ -410,6 +433,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'CME:LE1!',
     fallbackPrice: 188.20,
     fallbackPrevClose: 186.90,
+    fallbackReturns: { '1D': 0.70, '1W': 1.40, '1M': 3.20, '3M': 5.80, '6M': 9.40, 'YTD': 14.20, '1Y': 18.60 },
     description: 'Fed cattle beef production index at historic multi-decade US herd lows.',
   },
   {
@@ -424,6 +448,7 @@ const COMMODITY_CATALOG: CommodityMetadata[] = [
     tradingViewSymbol: 'CME:HE1!',
     fallbackPrice: 84.50,
     fallbackPrevClose: 83.90,
+    fallbackReturns: { '1D': 0.72, '1W': 1.10, '1M': 2.40, '3M': -2.10, '6M': 6.20, 'YTD': 11.80, '1Y': 15.40 },
     description: 'Wholesale pork carcass benchmark driven by domestic grilling demand and Chinese export demand.',
   },
 ];
@@ -433,6 +458,84 @@ let cachedCommoditiesData: { timestamp: number; data: CommoditiesIntelligenceRes
 const CACHE_TTL_MS = 25 * 1000; // 25 seconds
 
 /**
+ * Helper to compute returns across timeframes from Yahoo Finance historical closes
+ */
+function computeYahooReturns(
+  timestamps: number[] | undefined,
+  rawCloses: (number | null)[] | undefined,
+  currentPrice: number,
+  prevClose: number,
+  fallbackReturns: Record<CommodityTimeframe, number>
+): Record<CommodityTimeframe, number> {
+  const returns: Record<CommodityTimeframe, number> = { ...fallbackReturns };
+
+  // 1D return
+  if (prevClose > 0) {
+    returns['1D'] = Number((((currentPrice - prevClose) / prevClose) * 100).toFixed(2));
+  }
+
+  if (!rawCloses || rawCloses.length < 5) {
+    return returns;
+  }
+
+  // Filter valid close prices
+  const validPairs: { time: number; close: number }[] = [];
+  for (let i = 0; i < rawCloses.length; i++) {
+    const c = rawCloses[i];
+    const t = timestamps?.[i] ?? 0;
+    if (typeof c === 'number' && !isNaN(c) && c > 0) {
+      validPairs.push({ time: t, close: c });
+    }
+  }
+
+  if (validPairs.length < 3) return returns;
+
+  const n = validPairs.length;
+  const latest = currentPrice > 0 ? currentPrice : validPairs[n - 1].close;
+
+  // 1W: ~5 trading sessions back
+  const idx1W = Math.max(0, n - 6);
+  if (validPairs[idx1W]?.close > 0) {
+    returns['1W'] = Number((((latest - validPairs[idx1W].close) / validPairs[idx1W].close) * 100).toFixed(2));
+  }
+
+  // 1M: ~21 trading sessions back
+  const idx1M = Math.max(0, n - 22);
+  if (validPairs[idx1M]?.close > 0) {
+    returns['1M'] = Number((((latest - validPairs[idx1M].close) / validPairs[idx1M].close) * 100).toFixed(2));
+  }
+
+  // 3M: ~63 trading sessions back
+  const idx3M = Math.max(0, n - 64);
+  if (validPairs[idx3M]?.close > 0) {
+    returns['3M'] = Number((((latest - validPairs[idx3M].close) / validPairs[idx3M].close) * 100).toFixed(2));
+  }
+
+  // 6M: ~126 trading sessions back
+  const idx6M = Math.max(0, n - 127);
+  if (validPairs[idx6M]?.close > 0) {
+    returns['6M'] = Number((((latest - validPairs[idx6M].close) / validPairs[idx6M].close) * 100).toFixed(2));
+  }
+
+  // YTD: since Jan 1st of current year
+  const currentYear = new Date().getFullYear();
+  const ytdStartTimestamp = new Date(currentYear, 0, 1).getTime() / 1000;
+  const ytdPair = validPairs.find((p) => p.time >= ytdStartTimestamp) || validPairs[0];
+  if (ytdPair?.close > 0) {
+    returns['YTD'] = Number((((latest - ytdPair.close) / ytdPair.close) * 100).toFixed(2));
+  }
+
+  // 1Y: ~252 trading sessions back (or first available)
+  const idx1Y = Math.max(0, n - 253);
+  const oneYearPair = validPairs[idx1Y] || validPairs[0];
+  if (oneYearPair?.close > 0) {
+    returns['1Y'] = Number((((latest - oneYearPair.close) / oneYearPair.close) * 100).toFixed(2));
+  }
+
+  return returns;
+}
+
+/**
  * Fetch live commodity prices from Yahoo Finance
  */
 async function fetchLiveCommodityQuotes(): Promise<Map<string, {
@@ -440,6 +543,7 @@ async function fetchLiveCommodityQuotes(): Promise<Map<string, {
   prevClose: number;
   change: number;
   changePercent: number;
+  returns: Record<CommodityTimeframe, number>;
   dayHigh: number;
   dayLow: number;
   fiftyTwoWeekHigh: number;
@@ -450,7 +554,7 @@ async function fetchLiveCommodityQuotes(): Promise<Map<string, {
   await Promise.all(
     COMMODITY_CATALOG.map(async (item) => {
       try {
-        const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(item.symbol)}?interval=1d`;
+        const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(item.symbol)}?range=1y&interval=1d`;
         const res = await fetch(url, {
           headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
           signal: AbortSignal.timeout(3500),
@@ -469,11 +573,16 @@ async function fetchLiveCommodityQuotes(): Promise<Map<string, {
         const fiftyTwoWeekHigh = meta.fiftyTwoWeekHigh || price * 1.2;
         const fiftyTwoWeekLow = meta.fiftyTwoWeekLow || price * 0.8;
 
+        const timestamps = json.chart?.result?.[0]?.timestamp;
+        const rawCloses = json.chart?.result?.[0]?.indicators?.quote?.[0]?.close;
+        const returns = computeYahooReturns(timestamps, rawCloses, price, prevClose, item.fallbackReturns);
+
         quoteMap.set(item.id, {
           price: Number(price.toFixed(2)),
           prevClose: Number(prevClose.toFixed(2)),
           change: Number(change.toFixed(2)),
           changePercent: Number(changePercent.toFixed(2)),
+          returns,
           dayHigh: Number(dayHigh.toFixed(2)),
           dayLow: Number(dayLow.toFixed(2)),
           fiftyTwoWeekHigh: Number(fiftyTwoWeekHigh.toFixed(2)),
@@ -485,11 +594,15 @@ async function fetchLiveCommodityQuotes(): Promise<Map<string, {
         const prevClose = item.fallbackPrevClose;
         const change = price - prevClose;
         const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
+        const returns = { ...item.fallbackReturns };
+        returns['1D'] = Number(changePercent.toFixed(2));
+
         quoteMap.set(item.id, {
           price,
           prevClose,
           change: Number(change.toFixed(2)),
           changePercent: Number(changePercent.toFixed(2)),
+          returns,
           dayHigh: Number((price * 1.015).toFixed(2)),
           dayLow: Number((price * 0.985).toFixed(2)),
           fiftyTwoWeekHigh: Number((price * 1.22).toFixed(2)),
@@ -921,6 +1034,7 @@ export async function getCommoditiesIntelligence(): Promise<CommoditiesIntellige
       prevClose: item.fallbackPrevClose,
       change: 0,
       changePercent: 0,
+      returns: item.fallbackReturns,
       dayHigh: item.fallbackPrice * 1.01,
       dayLow: item.fallbackPrice * 0.99,
       fiftyTwoWeekHigh: item.fallbackPrice * 1.2,
@@ -957,6 +1071,7 @@ export async function getCommoditiesIntelligence(): Promise<CommoditiesIntellige
       prevClose: q.prevClose,
       change: q.change,
       changePercent: q.changePercent,
+      returns: q.returns || item.fallbackReturns,
       dayHigh: q.dayHigh,
       dayLow: q.dayLow,
       fiftyTwoWeekHigh: q.fiftyTwoWeekHigh,

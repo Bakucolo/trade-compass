@@ -40,6 +40,56 @@ describe('ThoughtLog & Telegram Auto Price Alert Parsing & Creation', () => {
     expect(multiCandidates.map((c) => c.targetPrice)).toEqual([120, 135, 55]);
   });
 
+  it('extracts multiple alerts with conjunctions (and, &, +)', () => {
+    const candidates = extractPriceAlertCandidates('Alert NVDA > 145 and AAPL < 220 & TSLA > 260');
+    expect(candidates).toHaveLength(3);
+    expect(candidates[0]).toMatchObject({ symbol: 'NVDA', targetPrice: 145, condition: 'ABOVE' });
+    expect(candidates[1]).toMatchObject({ symbol: 'AAPL', targetPrice: 220, condition: 'BELOW' });
+    expect(candidates[2]).toMatchObject({ symbol: 'TSLA', targetPrice: 260, condition: 'ABOVE' });
+  });
+
+  it('extracts multiple alerts from space-separated pairs on a single line', () => {
+    const candidates = extractPriceAlertCandidates('NVDA 145 TSLA 260 AAPL 220');
+    expect(candidates).toHaveLength(3);
+    expect(candidates.map((c) => c.symbol)).toEqual(['NVDA', 'TSLA', 'AAPL']);
+    expect(candidates.map((c) => c.targetPrice)).toEqual([145, 260, 220]);
+
+    const cashtagCandidates = extractPriceAlertCandidates('$NVDA 145.50 $AAPL 220 $TSLA 260');
+    expect(cashtagCandidates).toHaveLength(3);
+    expect(cashtagCandidates.map((c) => c.symbol)).toEqual(['NVDA', 'AAPL', 'TSLA']);
+  });
+
+  it('extracts multi-target bracket alerts for the same ticker', () => {
+    const bracketCandidates = extractPriceAlertCandidates('NVDA > 150, < 130');
+    expect(bracketCandidates).toHaveLength(2);
+    expect(bracketCandidates[0]).toMatchObject({ symbol: 'NVDA', targetPrice: 150, condition: 'ABOVE' });
+    expect(bracketCandidates[1]).toMatchObject({ symbol: 'NVDA', targetPrice: 130, condition: 'BELOW' });
+
+    const multiLevels = extractPriceAlertCandidates('Alert NVDA 140, 150, 160');
+    expect(multiLevels).toHaveLength(3);
+    expect(multiLevels.every((c) => c.symbol === 'NVDA')).toBe(true);
+    expect(multiLevels.map((c) => c.targetPrice)).toEqual([140, 150, 160]);
+  });
+
+  it('extracts multiple alerts preceded by global directives (Set alerts: ...)', () => {
+    const candidates = extractPriceAlertCandidates('Set alerts: NVDA 145, AAPL 220, TSLA 260');
+    expect(candidates).toHaveLength(3);
+    expect(candidates.map((c) => c.symbol)).toEqual(['NVDA', 'AAPL', 'TSLA']);
+
+    const alertsFor = extractPriceAlertCandidates('Alerts for NVDA > 145 and AAPL < 220');
+    expect(alertsFor).toHaveLength(2);
+    expect(alertsFor[0]).toMatchObject({ symbol: 'NVDA', targetPrice: 145, condition: 'ABOVE' });
+    expect(alertsFor[1]).toMatchObject({ symbol: 'AAPL', targetPrice: 220, condition: 'BELOW' });
+  });
+
+  it('extracts multiple percentage offset alerts', () => {
+    const pctCandidates = extractPriceAlertCandidates('NVDA -5%, TSLA +10%, AAPL -3%');
+    expect(pctCandidates).toHaveLength(3);
+    expect(pctCandidates[0]).toMatchObject({ symbol: 'NVDA', percentageOffset: -5, condition: 'BELOW' });
+    expect(pctCandidates[1]).toMatchObject({ symbol: 'TSLA', percentageOffset: 10, condition: 'ABOVE' });
+    expect(pctCandidates[2]).toMatchObject({ symbol: 'AAPL', percentageOffset: -3, condition: 'BELOW' });
+  });
+
   it('ignores non-ticker words and casual notes', () => {
     const noiseCandidates = extractPriceAlertCandidates('Meeting at 10:30 AM today for 5 people');
     expect(noiseCandidates).toHaveLength(0);

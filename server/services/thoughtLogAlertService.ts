@@ -24,7 +24,7 @@ export interface CreatedAlertResult {
 }
 
 // Stop words / common non-ticker uppercase terms to avoid false positives
-const NON_TICKER_WORDS = new Set([
+export const NON_TICKER_WORDS = new Set([
   // Single-letter English words & pronouns
   'A', 'I',
 
@@ -90,6 +90,9 @@ const NON_TICKER_WORDS = new Set([
  *  - "RBRK below 110" / "RBRK < 110"
  *  - "Set alert for RBRK 120"
  *  - "NVDA -5%" / "Alert NVDA +10%" / "TSLA 5% dip"
+ *  - Multi-alerts: "NVDA 145, AAPL 220, TSLA 260" / "Alert NVDA > 145 and AAPL < 220"
+ *  - Bracket alerts: "NVDA > 150, < 130"
+ *  - Space separated: "NVDA 145 TSLA 260 AAPL 220"
  */
 export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[] {
   if (!text || typeof text !== 'string') return [];
@@ -102,36 +105,57 @@ export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[
   }
 
   // Remove timestamps like "10:30 AM", "09:15"
-  const sanitized = text.replace(/\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM|am|pm)?\b/gi, ' ');
+  let sanitized = text.replace(/\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM|am|pm)?\b/gi, ' ');
+
+  // Detect global leading alert directive (e.g. "Set alerts:", "Set alerts on:", "Alerts for:", "Alerts:", "Set alert:")
+  const hasGlobalAlertDirective = /^\s*(?:(?:SET\s+)?ALERTS?(?:\s+FOR|\s+ON)?[:\s]+)/i.test(sanitized);
+  if (/^\s*(?:(?:SET\s+)?ALERTS?(?:\s+FOR|\s+ON)?[:]\s*)/i.test(sanitized)) {
+    sanitized = sanitized.replace(/^\s*(?:(?:SET\s+)?ALERTS?(?:\s+FOR|\s+ON)?[:]\s*)/i, '');
+  }
 
   const results: ParsedAlertCandidate[] = [];
   const seenSymbols = new Set<string>();
 
-  // Split into lines/clauses to handle multi-alert messages
-  const segments = sanitized.split(/[\r\n,;]+/);
+  // 1. Initial split on newlines, commas, semicolons, pipes, or spaced conjunctions (and, &, +, |)
+  const rawSegments = sanitized.split(/[\r\n,;|]+|\s+(?:and|&|\+|\|)\s+/i);
+
+  // 2. Expand any segments that contain space-separated alert pairs e.g. "NVDA 145 TSLA 260" or "$NVDA 145 $AAPL 220"
+  // or space-separated bracket operators e.g. "NVDA > 150 < 130"
+  const segments: string[] = [];
+  for (const raw of rawSegments) {
+    const trimmedRaw = raw.trim();
+    if (!trimmedRaw) continue;
+
+    const subSegments = trimmedRaw.split(/(?<=[0-9%])\s+(?=(?:(?:(?:above|below|>|<|over|under)\s*[\$+-]?[0-9])|(?:\$?[A-Za-z]{1,6}\b\s*(?:@|at|:|above|below|>|<|over|under)?\s*[\$+-]?[0-9])))/i);
+    for (const sub of subSegments) {
+      if (sub.trim()) segments.push(sub.trim());
+    }
+  }
+
+  let lastSeenSymbol: string | null = null;
 
   for (const seg of segments) {
     let trimmed = seg.trim();
     if (!trimmed) continue;
 
-    // Skip markdown table separators/rows, headers, blockquotes, code blocks
-    if (/^[|#>`~\-=]{1,3}/.test(trimmed) || trimmed.startsWith('---') || trimmed.startsWith('***')) {
+    // Skip markdown table separators/rows, headers, code blocks
+    if (/^[|#`~=]{1,3}/.test(trimmed) || trimmed.startsWith('---') || trimmed.startsWith('***')) {
       continue;
     }
 
     // Strip leading markdown bullets / list numbers (e.g. "- RBRK 120", "* NVDA 130", "1. PLTR 120")
-    trimmed = trimmed.replace(/^[\s*\-•#>|~\d+.)\]\[]+/, '').trim();
+    trimmed = trimmed.replace(/^[\s*\-•#|~]+/, '').replace(/^\d+[\.\)]\s+/, '').trim();
     if (!trimmed) continue;
 
     // If segment is a long prose sentence (> 80 chars or > 10 words) without an explicit ALERT keyword or cashtag, skip
     const isExplicitLine = /\b(?:SET\s+)?ALERTS?\b|\$[A-Za-z]/i.test(trimmed);
     const wordCount = trimmed.split(/\s+/).length;
-    if (!isExplicitLine && (trimmed.length > 80 || wordCount > 10)) {
+    if (!isExplicitLine && !hasGlobalAlertDirective && (trimmed.length > 80 || wordCount > 10)) {
       continue;
     }
 
     // --- 1. Check for percentage offset alert: e.g. "NVDA -5%", "Alert NVDA +10%", "TSLA 5% dip", "AAPL down 5%" ---
-    let pctMatch = trimmed.match(/^(?:(?:SET\s+)?ALERT(?:\s+FOR|\s+ON|:)?\s+)(?:\$)?([A-Za-z]{1,6})\b\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH|DOWN|UP)?\s*([+-]?\s*[0-9]+(?:\.[0-9]+)?)\s*%(?:\s*(?:DIP|DROP|UP|DOWN|RALLY|TARGET))?(?:\s|$)/i);
+    let pctMatch = trimmed.match(/^(?:(?:SET\s+)?ALERTS?(?:\s+FOR|\s+ON|:)?\s+)(?:\$)?([A-Za-z]{1,6})\b\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH|DOWN|UP)?\s*([+-]?\s*[0-9]+(?:\.[0-9]+)?)\s*%(?:\s*(?:DIP|DROP|UP|DOWN|RALLY|TARGET))?(?:\s|$)/i);
     if (!pctMatch) {
       pctMatch = trimmed.match(/^\$([A-Za-z]{1,6})\b\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH|DOWN|UP)?\s*([+-]?\s*[0-9]+(?:\.[0-9]+)?)\s*%(?:\s*(?:DIP|DROP|UP|DOWN|RALLY|TARGET))?\s*$/i);
     }
@@ -139,9 +163,15 @@ export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[
       pctMatch = trimmed.match(/^([A-Za-z]{2,6})\b\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH|DOWN|UP)?\s*([+-]?\s*[0-9]+(?:\.[0-9]+)?)\s*%(?:\s*(?:DIP|DROP|UP|DOWN|RALLY|TARGET))?\s*$/i);
     }
 
-    if (pctMatch) {
-      const rawSym = pctMatch[1].toUpperCase();
-      const pctVal = parseFloat(pctMatch[2].replace(/\s+/g, ''));
+    // Support multi-target percentage bracket for the same symbol (e.g. "NVDA -5%, +10%")
+    let barePctMatch: RegExpMatchArray | null = null;
+    if (!pctMatch && lastSeenSymbol) {
+      barePctMatch = trimmed.match(/^(?:(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH|DOWN|UP)?\s*)?([+-]?\s*[0-9]+(?:\.[0-9]+)?)\s*%(?:\s*(?:DIP|DROP|UP|DOWN|RALLY|TARGET))?\s*$/i);
+    }
+
+    if (pctMatch || barePctMatch) {
+      const rawSym = (pctMatch ? pctMatch[1] : lastSeenSymbol!).toUpperCase();
+      const pctVal = parseFloat((pctMatch ? pctMatch[2] : barePctMatch![1]).replace(/\s+/g, ''));
       if (
         !NON_TICKER_WORDS.has(rawSym) &&
         !isNaN(pctVal) &&
@@ -150,7 +180,7 @@ export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[
         rawSym.length <= 6
       ) {
         // Single letter without explicit alert prefix or $ is rejected
-        if (rawSym.length === 1 && !isExplicitLine) {
+        if (rawSym.length === 1 && !isExplicitLine && !hasGlobalAlertDirective) {
           continue;
         }
 
@@ -168,6 +198,7 @@ export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[
         const dedupKey = `${rawSym}-PCT-${finalOffset}-${condition}`;
         if (!seenSymbols.has(dedupKey)) {
           seenSymbols.add(dedupKey);
+          lastSeenSymbol = rawSym;
           results.push({
             symbol: rawSym,
             percentageOffset: finalOffset,
@@ -180,7 +211,7 @@ export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[
     }
 
     // --- 2. Check for fixed target price: e.g. "NVDA 120", "Alert RBRK at 120", "RBRK @ $120.50", "NVDA > 130" ---
-    let match = trimmed.match(/^(?:(?:SET\s+)?ALERT(?:\s+FOR|\s+ON|:)?\s+)(?:\$)?([A-Za-z]{1,6})\b\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH)?\s*\$?([0-9]+(?:\.[0-9]+)?)(?!\s*%)(?:\s*(?:ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|TARGET))?(?:\s|$)/i);
+    let match = trimmed.match(/^(?:(?:SET\s+)?ALERTS?(?:\s+FOR|\s+ON|:)?\s+)(?:\$)?([A-Za-z]{1,6})\b\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH)?\s*\$?([0-9]+(?:\.[0-9]+)?)(?!\s*%)(?:\s*(?:ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|TARGET))?(?:\s|$)/i);
     if (!match) {
       match = trimmed.match(/^\$([A-Za-z]{1,6})\b\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH)?\s*\$?([0-9]+(?:\.[0-9]+)?)(?!\s*%)(?:\s*(?:ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|TARGET))?\s*$/i);
     }
@@ -188,9 +219,15 @@ export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[
       match = trimmed.match(/^([A-Za-z]{2,6})\b\s*(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH)?\s*\$?([0-9]+(?:\.[0-9]+)?)(?!\s*%)(?:\s*(?:ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|TARGET))?\s*$/i);
     }
 
-    if (match) {
-      const rawSym = match[1].toUpperCase();
-      const rawPrice = parseFloat(match[2]);
+    // Support multi-target bracket without repeated ticker e.g. "NVDA > 150, < 130" or "NVDA 140, 150, 160"
+    let barePriceMatch: RegExpMatchArray | null = null;
+    if (!match && lastSeenSymbol) {
+      barePriceMatch = trimmed.match(/^(?:(?:@|AT|:|ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|REACH)\s*)?\$?([0-9]+(?:\.[0-9]+)?)(?!\s*%)(?:\s*(?:ABOVE|BELOW|>|<|OVER|UNDER|DIP|DROP|TARGET))?\s*$/i);
+    }
+
+    if (match || barePriceMatch) {
+      const rawSym = (match ? match[1] : lastSeenSymbol!).toUpperCase();
+      const rawPrice = parseFloat(match ? match[2] : barePriceMatch![1]);
 
       // Filter out non-tickers or invalid prices (prices < 0.01 or years like 2024-2030 unless clearly a high-priced asset)
       if (
@@ -201,7 +238,7 @@ export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[
         rawSym.length <= 6
       ) {
         // Single letter without explicit alert prefix or $ is rejected
-        if (rawSym.length === 1 && !isExplicitLine) {
+        if (rawSym.length === 1 && !isExplicitLine && !hasGlobalAlertDirective) {
           continue;
         }
 
@@ -230,14 +267,21 @@ export function extractPriceAlertCandidates(text: string): ParsedAlertCandidate[
         const dedupKey = `${rawSym}-${rawPrice}-${condition}`;
         if (!seenSymbols.has(dedupKey)) {
           seenSymbols.add(dedupKey);
+          lastSeenSymbol = rawSym;
           results.push({
             symbol: rawSym,
             targetPrice: rawPrice,
             condition,
             rawSnippet: trimmed,
           });
+          continue;
         }
       }
+    }
+
+    // If segment did not match an alert and is not a valid continuation, reset lastSeenSymbol
+    if (!pctMatch && !barePctMatch && !match && !barePriceMatch) {
+      lastSeenSymbol = null;
     }
   }
 

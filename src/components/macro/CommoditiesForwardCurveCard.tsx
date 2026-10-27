@@ -26,7 +26,10 @@ import {
   ChevronRight,
   Gauge,
   Wheat,
+  LayoutGrid,
+  Maximize2,
 } from 'lucide-react';
+import { CommodityHeatmapModal } from './CommodityHeatmapModal';
 import {
   ResponsiveContainer,
   LineChart,
@@ -79,6 +82,7 @@ export function CommoditiesForwardCurveCard({
 }: CommoditiesForwardCurveCardProps) {
   const { data, isLoading, isError, refetch, isFetching } = useCommoditiesIntelligence();
 
+  const [isHeatmapOpen, setIsHeatmapOpen] = useState<boolean>(false);
   const [selectedCurveId, setSelectedCurveId] = useState<string>('CL');
   const [showHistoricalCurves, setShowHistoricalCurves] = useState<boolean>(true);
   const [activeCatalogCategory, setActiveCatalogCategory] = useState<'all' | CommodityCategory>('all');
@@ -165,8 +169,8 @@ export function CommoditiesForwardCurveCard({
               </div>
             </div>
 
-            <div className="flex items-center gap-3 self-end md:self-auto shrink-0">
-              <div className="text-right">
+            <div className="flex items-center gap-2.5 self-end md:self-auto shrink-0 flex-wrap">
+              <div className="text-right hidden sm:block">
                 <span className="text-[10px] uppercase font-bold text-muted-foreground block">
                   Commodity Inflation Pulse
                 </span>
@@ -175,6 +179,15 @@ export function CommoditiesForwardCurveCard({
                   {marketRegime.inflationaryImpulseScore}/100
                 </span>
               </div>
+              <Button
+                size="sm"
+                onClick={() => setIsHeatmapOpen(true)}
+                className="h-8 text-xs font-bold gap-1.5 bg-gradient-to-r from-amber-500 via-emerald-600 to-cyan-600 hover:from-amber-600 hover:to-cyan-700 text-white shadow-md border-0"
+                title="Open full window multi-timeframe commodity heatmap"
+              >
+                <Maximize2 className="w-3.5 h-3.5" />
+                <span>Full Window Heatmap</span>
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -715,8 +728,18 @@ export function CommoditiesForwardCurveCard({
             </Badge>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="relative w-48 sm:w-60">
+          <div className="flex items-center gap-2.5">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsHeatmapOpen(true)}
+              className="h-8 text-xs font-bold gap-1.5 border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 shadow-xs"
+              title="View full window multi-timeframe heatmap"
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>Full Heatmap</span>
+            </Button>
+            <div className="relative w-44 sm:w-56">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Search commodity or ticker..."
@@ -863,6 +886,16 @@ export function CommoditiesForwardCurveCard({
           )}
         </CardContent>
       </Card>
+
+      {/* ================= 5. FULL WINDOW HEATMAP MODAL ================= */}
+      <CommodityHeatmapModal
+        isOpen={isHeatmapOpen}
+        onClose={() => setIsHeatmapOpen(false)}
+        commodities={commodities}
+        marketRegime={marketRegime}
+        onNavigateToResearch={onNavigateToResearch}
+        onNavigateToGraphs={onNavigateToGraphs}
+      />
     </div>
   );
 }

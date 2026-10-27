@@ -257,20 +257,28 @@ export function getSetAlertTopicHelp(): string {
 
 Set, query, and manage 24/7 price alerts right here. When triggered, the notification fires in the *Alerts* topic!
 
-🎯 *1. Arm New Price Alerts*
-• \`Alert NVDA above $145\`
-• \`Alert AAPL below $215\`
-• \`Notify me when PLTR hits $60\`
-• \`TSLA > 250\`
-• \`AMD < 130\`
+🎯 *1. Arm New Price Alerts (Single & Multiple)*
+• *Single alert*: \`Alert NVDA above $145\` or \`TSLA < 250\`
+• *Multiple alerts (comma/newline)*:
+  \`NVDA 145, AAPL 220, TSLA 260\`
+• *Multi-line list*:
+  \`NVDA > 145\`
+  \`AAPL < 220\`
+  \`TSLA > 260\`
+• *Conjunction*: \`Alert NVDA > 145 and AAPL < 220 and TSLA > 260\`
+• *Space-separated*: \`$NVDA 145 $AAPL 220 $TSLA 260\`
+• *Multi-target bracket*: \`NVDA > 150, < 130\`
+• *Percentage offset*: \`NVDA -5%, TSLA +10%, AAPL -3%\`
+• *Batch tickers*: \`Alerts for NVDA, TSLA, AAPL\`
 
 📋 *2. Check Active Alerts*
 • \`alerts\` (or \`list\`, \`active\`, \`my alerts\`, \`show alerts\`)
   _Lists every armed price alert with trigger condition (▲ above / ▼ below), spot price, and distance._
 
-🗑️ *3. Cancel / Disarm an Alert*
-• \`delete alert NVDA\` or \`cancel alert AAPL\` (or \`clear TSLA\`)
-  _Disarms and removes the alert monitor for that stock._
+🗑️ *3. Cancel / Disarm Alerts*
+• *Single ticker*: \`delete alert NVDA\` or \`cancel alert AAPL\`
+• *Multiple tickers*: \`delete alerts NVDA, TSLA, AAPL\`
+• *Disarm all*: \`clear all alerts\` or \`delete all alerts\`
 
 ⚡ *Alert Features:*
 • 📈 *Direction Detection*: Automatically recognizes above (▲) or below (▼) conditions.

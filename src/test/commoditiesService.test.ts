@@ -37,6 +37,15 @@ describe('Commodities Intelligence & Forward Curves Engine', () => {
     const gold = data.commodities.find((c) => c.id === 'GC');
     expect(gold).toBeDefined();
     expect(gold?.price).toBeGreaterThan(1000);
+
+    // Verify multi-timeframe returns for all commodities
+    const requiredTimeframes = ['1D', '1W', '1M', '3M', '6M', 'YTD', '1Y'] as const;
+    for (const item of data.commodities) {
+      expect(item.returns).toBeDefined();
+      for (const tf of requiredTimeframes) {
+        expect(typeof item.returns[tf]).toBe('number');
+      }
+    }
   });
 
   it('generates forward curves with M1 to M24 strips and roll yields for core benchmarks', async () => {

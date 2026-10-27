@@ -57,6 +57,17 @@ export interface UnifiedMarketIdea {
  * with timeframe keywords (year, month, week, all) and PDF export formatting.
  */
 export function parseIdeasQuery(text: string): ParsedIdeasQuery {
+  if (!text || typeof text !== 'string') {
+    return {
+      isQuery: false,
+      timeframe: 'ALL',
+      timeframeLabel: 'All Ideas Sent',
+      isPdfRequested: false,
+      symbolFilter: null,
+      cutoffDate: null,
+    };
+  }
+
   const clean = text
     .replace(/#(?:topic:)?ideas?\b/gi, '')
     .replace(/^💡\s*/, '')
@@ -64,27 +75,34 @@ export function parseIdeasQuery(text: string): ParsedIdeasQuery {
     .trim();
 
   const lower = clean.toLowerCase();
-  const tokens = lower.split(/\s+/).filter(Boolean);
+  const rawTokens = lower.split(/\s+/).filter(Boolean);
+  const tokens = rawTokens.map((t) => t.replace(/^[^\w$]+|[^\w$]+$/g, '')).filter(Boolean);
 
-  // Exact standalone keywords
-  const isExactTimeframeOnly = /^(?:week|weekly|last\s+week|month|monthly|last\s+month|year|yearly|annual|annually|last\s+year|all|pdf)$/i.test(clean);
+  // Exact standalone keywords: list, all, week, month, year, pdf, ideas, theses
+  const isExactCommandOnly = /^(?:list|ideas?|theses?|thesis|all|week|weekly|last\s+week|month|monthly|last\s+month|year|yearly|annual|annually|last\s+year|pdf|report|export|dossier)$/i.test(
+    clean.replace(/[!?.]+$/, '').trim()
+  );
 
-  // Starts with list/ideas/theses/show ideas/pdf
-  const startsWithCommand = /^(?:list|ideas?|theses?|show\s+ideas?|view\s+ideas?|get\s+ideas?|my\s+ideas?|recent\s+ideas?|all\s+ideas?|pdf)\b/i.test(clean);
+  // Starts with list/ideas/theses/show ideas/pdf/send pdf/export pdf
+  const startsWithCommand = /^(?:list|ideas?|theses?|thesis|show\s+ideas?|view\s+ideas?|get\s+ideas?|my\s+ideas?|recent\s+ideas?|all\s+ideas?|pdf|send\s+pdf|export\s+pdf|download\s+pdf)\b/i.test(clean);
 
-  // Short query phrase (<= 6 tokens) containing list, ideas, theses, or pdf
-  const isShortQueryPhrase = tokens.length <= 6 && (
+  // Detection for presence of the word "pdf"
+  const isPdfWordPresent = /\bpdf\b/i.test(clean) || tokens.includes('pdf');
+
+  // Short query phrase (<= 8 tokens) containing list, ideas, theses, or pdf
+  const isShortQueryPhrase = tokens.length <= 8 && (
     tokens.includes('list') ||
     tokens.includes('idea') ||
     tokens.includes('ideas') ||
     tokens.includes('theses') ||
     tokens.includes('thesis') ||
-    tokens.includes('pdf') ||
-    isExactTimeframeOnly
+    tokens.includes('all') ||
+    isPdfWordPresent ||
+    isExactCommandOnly
   );
 
   // Check if it's an inquiry command rather than a new thesis
-  const isQuery = (startsWithCommand || isExactTimeframeOnly || isShortQueryPhrase) && tokens.length <= 8;
+  const isQuery = (startsWithCommand || isExactCommandOnly || isShortQueryPhrase) && tokens.length <= 8;
 
   if (!isQuery) {
     return {
@@ -98,7 +116,7 @@ export function parseIdeasQuery(text: string): ParsedIdeasQuery {
   }
 
   // 1. PDF requested
-  const isPdfRequested = /\b(?:pdf|report|export|dossier|document)\b/i.test(clean);
+  const isPdfRequested = isPdfWordPresent || /\b(?:pdf|report|export|dossier|document)\b/i.test(clean);
 
   // 2. Timeframe detection
   let timeframe: IdeasTimeframe = 'ALL';
@@ -130,7 +148,8 @@ export function parseIdeasQuery(text: string): ParsedIdeasQuery {
       'list', 'all', 'week', 'weekly', 'last', 'past', 'this', 'month', 'monthly',
       'year', 'yearly', 'annual', 'annually', 'pdf', 'report', 'export', 'dossier',
       'document', 'ideas', 'idea', 'theses', 'thesis', 'show', 'view', 'get', 'my',
-      'recent', 'for', 'on', 'in', 'and', 'the', 'of', 'to'
+      'recent', 'for', 'on', 'in', 'and', 'the', 'of', 'to', 'send', 'give', 'me',
+      'please', 'a', 'an'
     ]);
     for (const t of tokens) {
       const cleanToken = t.replace(/[^a-z0-9]/gi, '');
@@ -311,30 +330,27 @@ export function formatIdeasTelegramMessage(
   const uniqueSyms = Array.from(symSet).slice(0, 8);
   const symSummary = uniqueSyms.length > 0 ? uniqueSyms.map((s) => `$${s}`).join(', ') : null;
 
-  let replyText = `💡 *Recent Market Ideas & Catalysts* (${ideas.length} logs • ${query.timeframeLabel})\n`;
+  let replyText = `💡 *Recent Market Ideas & Catalysts* (${ideas.length} ${ideas.length === 1 ? 'idea' : 'ideas'} sent • ${query.timeframeLabel})\n`;
   replyText += `• Breakdown: 🟢 *${bullCount}* Bullish • 🔴 *${bearCount}* Bearish • ⚪ *${neutralCount}* Neutral\n`;
   if (symSummary) {
     replyText += `• Mentioned Symbols: *${symSummary}${symSet.size > 8 ? ` (+${symSet.size - 8} more)` : ''}*\n`;
   }
   replyText += `\n`;
 
-  const displayLimit = 15;
-  const rows = ideas.slice(0, displayLimit).map((item) => {
+  // Provide ALL ideas sent — without truncating to 15!
+  const rows = ideas.map((item, idx) => {
     const titleClean = item.title.replace(/^💡\s*(?:Idea:\s*)?/, '');
     const symStr = item.symbols.length > 0 ? ` ($${item.symbols.join(', $')})` : '';
     const dateStr = new Date(item.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    const sentIcon = item.sentiment === 'BULLISH' ? '🟢 ' : item.sentiment === 'BEARISH' ? '🔴 ' : '';
-    const snippet = item.content.slice(0, 95).replace(/\n+/g, ' ');
-    return `• ${sentIcon}*${titleClean}*${symStr} — _${dateStr}_\n  "${snippet}${item.content.length > 95 ? '...' : ''}"`;
+    const sentIcon = item.sentiment === 'BULLISH' ? '🟢 ' : item.sentiment === 'BEARISH' ? '🔴 ' : '⚪ ';
+    const snippet = item.content.slice(0, 130).replace(/\n+/g, ' ').trim();
+    const targetsStr = item.targetPrice ? ` [TGT: $${item.targetPrice.toFixed(2)}]` : '';
+    return `${idx + 1}. ${sentIcon}*${titleClean}*${symStr}${targetsStr} — _${dateStr}_\n   "${snippet}${item.content.length > 130 ? '...' : ''}"`;
   }).join('\n\n');
 
   replyText += rows;
 
-  if (ideas.length > displayLimit) {
-    replyText += `\n\n_...and ${ideas.length - displayLimit} more ideas sent in this period._\n📄 _Tip: Send \`list ${query.timeframe === 'ALL' ? '' : query.timeframe.toLowerCase() + ' '}pdf\` to get all ${ideas.length} ideas in a styled PDF dossier!_`;
-  }
-
-  replyText += `\n\n───────────────────────\n💡 _Commands: \`list week\`, \`list month\`, \`list year\`, \`list all\`, or add \`pdf\` (e.g. \`list month pdf\`) for a downloadable PDF report!_`;
+  replyText += `\n\n───────────────────────\n💡 _Commands: Write \`list\` to view all ideas sent, \`pdf\` for a readable PDF document, or \`week\` / \`month\` / \`year\` to filter._`;
 
   return replyText;
 }
@@ -349,7 +365,7 @@ export async function generateIdeasPdfReport(
   return new Promise<Buffer>((resolve, reject) => {
     const doc = new PDFDocument({
       size: 'LETTER',
-      margins: { top: 32, bottom: 25, left: 36, right: 36 },
+      margins: { top: 32, bottom: 32, left: 36, right: 36 },
       bufferPages: true,
       info: {
         Title: `Trade Compass - Market Ideas Dossier (${query.timeframeLabel})`,
@@ -399,7 +415,7 @@ export async function generateIdeasPdfReport(
     const bearCount = ideas.filter((i) => i.sentiment === 'BEARISH').length;
     const neutralCount = ideas.length - bullCount - bearCount;
 
-    // Unique symbols
+    // Unique symbols & counts
     const symCounts = new Map<string, number>();
     for (const item of ideas) {
       for (const s of item.symbols) {
@@ -411,34 +427,34 @@ export async function generateIdeasPdfReport(
     // ==========================================
     // 1. PAGE 1 HEADER BANNER
     // ==========================================
-    doc.rect(36, 36, 540, 58).fill(colors.primaryNavy);
-    doc.rect(36, 92, 540, 2).fill(colors.accentIndigo);
+    doc.rect(36, 36, 540, 60).fill(colors.primaryNavy);
+    doc.rect(36, 94, 540, 2.5).fill(colors.accentIndigo);
 
     // Left title block
-    doc.fillColor(colors.white).fontSize(13.5).font('Helvetica-Bold')
+    doc.fillColor(colors.white).fontSize(14).font('Helvetica-Bold')
       .text('TRADE COMPASS | MARKET IDEAS DOSSIER', 48, 44);
-    doc.fillColor('#94a3b8').fontSize(7.5).font('Helvetica')
-      .text('Curated Market Catalysts, Theses & Tactical Rationale', 48, 60);
+    doc.fillColor('#94a3b8').fontSize(8.5).font('Helvetica')
+      .text('Curated Market Catalysts, Theses & Tactical Rationale', 48, 62);
 
     const filterNote = query.symbolFilter ? ` • Ticker: $${query.symbolFilter}` : '';
-    doc.fillColor('#38bdf8').fontSize(7).font('Helvetica-Bold')
-      .text(`Scope: ${query.timeframeLabel}${filterNote}`, 48, 73);
+    doc.fillColor('#38bdf8').fontSize(7.5).font('Helvetica-Bold')
+      .text(`Scope: ${query.timeframeLabel}${filterNote} • ${ideas.length} ${ideas.length === 1 ? 'Idea' : 'Ideas'} Recorded`, 48, 76);
 
     // Right meta badge
-    doc.rect(424, 42, 142, 44).fill('#1e293b');
-    doc.fillColor('#38bdf8').fontSize(7).font('Helvetica-Bold')
+    doc.rect(424, 42, 142, 46).fill('#1e293b');
+    doc.fillColor('#38bdf8').fontSize(7.5).font('Helvetica-Bold')
       .text('INSTITUTIONAL DOSSIER', 430, 48, { width: 130, align: 'right' });
-    doc.fillColor('#cbd5e1').fontSize(6.5).font('Helvetica')
-      .text(dateFormatted, 430, 60, { width: 130, align: 'right' });
-    doc.fillColor('#94a3b8').fontSize(6).font('Helvetica')
-      .text(`Generated at ${timeFormatted}`, 430, 71, { width: 130, align: 'right' });
+    doc.fillColor('#cbd5e1').fontSize(7).font('Helvetica')
+      .text(dateFormatted, 430, 61, { width: 130, align: 'right' });
+    doc.fillColor('#94a3b8').fontSize(6.5).font('Helvetica')
+      .text(`Generated at ${timeFormatted}`, 430, 73, { width: 130, align: 'right' });
 
     // ==========================================
     // 2. EXECUTIVE SUMMARY KPI HUD (4 Cards)
     // ==========================================
-    const kpiY = 102;
+    const kpiY = 106;
     const cardW = 129;
-    const cardH = 44;
+    const cardH = 48;
     const cardGap = 8;
 
     const renderKpiCard = (
@@ -448,70 +464,87 @@ export async function generateIdeasPdfReport(
       sub: string,
       accentColor: string
     ) => {
-      doc.rect(x, kpiY, cardW, cardH).fillAndStroke(colors.white, colors.cardBorder);
+      doc.roundedRect(x, kpiY, cardW, cardH, 3).fillAndStroke(colors.white, colors.cardBorder);
       doc.rect(x, kpiY, cardW, 2.5).fill(accentColor);
-      doc.fillColor(colors.slateMuted).fontSize(6).font('Helvetica-Bold')
-        .text(title.toUpperCase(), x + 8, kpiY + 7);
-      doc.fillColor(accentColor).fontSize(13).font('Helvetica-Bold')
-        .text(val, x + 8, kpiY + 16);
-      doc.fillColor(colors.slateDark).fontSize(5.5).font('Helvetica')
-        .text(sub, x + 8, kpiY + 32);
+      doc.fillColor(colors.slateMuted).fontSize(6.5).font('Helvetica-Bold')
+        .text(title.toUpperCase(), x + 8, kpiY + 8);
+      doc.fillColor(accentColor).fontSize(14).font('Helvetica-Bold')
+        .text(val, x + 8, kpiY + 18);
+      doc.fillColor(colors.slateDark).fontSize(6).font('Helvetica')
+        .text(sub, x + 8, kpiY + 35);
     };
 
+    const bullPct = ideas.length > 0 ? Math.round((bullCount / ideas.length) * 100) : 0;
+    const bearPct = ideas.length > 0 ? Math.round((bearCount / ideas.length) * 100) : 0;
+
     renderKpiCard(36, 'Total Ideas', `${ideas.length}`, 'Recorded theses & insights', colors.primaryNavy);
-    renderKpiCard(36 + (cardW + cardGap), 'Bullish Bias', `${bullCount}`, `${ideas.length > 0 ? Math.round((bullCount / ideas.length) * 100) : 0}% upside catalysts`, colors.emeraldGreen);
-    renderKpiCard(36 + (cardW + cardGap) * 2, 'Bearish Bias', `${bearCount}`, `${ideas.length > 0 ? Math.round((bearCount / ideas.length) * 100) : 0}% defensive/short theses`, colors.roseRed);
+    renderKpiCard(36 + (cardW + cardGap), 'Bullish Bias', `${bullCount}`, `${bullPct}% upside catalysts`, colors.emeraldGreen);
+    renderKpiCard(36 + (cardW + cardGap) * 2, 'Bearish Bias', `${bearCount}`, `${bearPct}% defensive/short theses`, colors.roseRed);
     renderKpiCard(36 + (cardW + cardGap) * 3, 'Unique Symbols', `${symCounts.size}`, 'Tracked tickers with catalysts', colors.accentCyan);
 
     // Symbols Bar
-    let secY = 154;
+    let secY = 162;
     if (sortedSyms.length > 0) {
-      doc.rect(36, 154, 540, 20).fillAndStroke(colors.slateLight, colors.cardBorder);
-      doc.fillColor(colors.slateMuted).fontSize(6.5).font('Helvetica-Bold')
-        .text('TOP TRACKED SYMBOLS:', 44, 160);
+      doc.roundedRect(36, 162, 540, 22, 3).fillAndStroke(colors.slateLight, colors.cardBorder);
+      doc.fillColor(colors.slateMuted).fontSize(7).font('Helvetica-Bold')
+        .text('TOP TRACKED TICKERS:', 44, 169);
       const topSymStr = sortedSyms
         .slice(0, 10)
         .map(([sym, count]) => `$${sym} (${count})`)
-        .join('  •  ');
-      doc.fillColor(colors.primaryNavy).fontSize(6.5).font('Helvetica-Bold')
-        .text(topSymStr, 150, 160, { width: 415 });
-      secY = 182;
+        .join('   •   ');
+      doc.fillColor(colors.primaryNavy).fontSize(7).font('Helvetica-Bold')
+        .text(topSymStr, 160, 169, { width: 405 });
+      secY = 192;
     }
 
     // Section title
-    doc.fillColor(colors.primaryNavy).fontSize(9.5).font('Helvetica-Bold')
+    doc.fillColor(colors.primaryNavy).fontSize(10).font('Helvetica-Bold')
       .text('LOGGED MARKET THESES & DD RECORDS', 36, secY);
-    doc.rect(36, secY + 13, 540, 0.75).fill(colors.cardBorder);
+    doc.rect(36, secY + 14, 540, 1).fill(colors.cardBorder);
 
-    let curY = secY + 20;
+    let curY = secY + 22;
 
     // If 0 ideas
     if (ideas.length === 0) {
-      doc.rect(36, curY, 540, 75).fillAndStroke(colors.slateLight, colors.cardBorder);
-      doc.fillColor(colors.slateDark).fontSize(9).font('Helvetica-Bold')
-        .text(`No Market Ideas Found for ${query.timeframeLabel}`, 48, curY + 20);
-      doc.fillColor(colors.slateMuted).fontSize(7.5).font('Helvetica')
-        .text('To log new theses, share market thoughts or ticker catalysts directly in the Ideas Telegram topic.', 48, curY + 36);
+      doc.roundedRect(36, curY, 540, 80, 4).fillAndStroke(colors.slateLight, colors.cardBorder);
+      doc.fillColor(colors.slateDark).fontSize(10).font('Helvetica-Bold')
+        .text(`No Market Ideas Found for ${query.timeframeLabel}`, 48, curY + 22);
+      doc.fillColor(colors.slateMuted).fontSize(8.5).font('Helvetica')
+        .text('To log new theses, share market thoughts or ticker catalysts directly in the Ideas Telegram topic.', 48, curY + 40);
     } else {
       // Loop through all ideas
       for (const item of ideas) {
         const hasTargets = Boolean(item.targetPrice || item.stopLoss || item.entryPrice);
-        const textH = Math.min(
-          Math.max(doc.heightOfString(item.content, { width: 512, font: 'Helvetica', size: 8 }), 14),
-          120
-        );
-        const cardH = 24 + (hasTargets ? 14 : 0) + textH + 18;
 
-        // Page break if card exceeds bottom margin
-        if (curY + cardH > 730) {
+        // Calculate heights dynamically for readable typography
+        const cleanContent = (item.content || '').trim();
+        const contentH = Math.max(
+          doc.heightOfString(cleanContent, { width: 512, font: 'Helvetica', size: 9, lineGap: 2.5 }),
+          18
+        );
+
+        // Check if agentOutput is present and adds distinct insight
+        const hasAgentOutput = Boolean(
+          item.agentOutput &&
+          item.agentOutput.trim() !== '' &&
+          !item.agentOutput.includes('Market Idea Logged') &&
+          item.agentOutput.trim() !== cleanContent
+        );
+        const agentSnippet = hasAgentOutput ? item.agentOutput!.replace(/[*_#`]/g, '').trim().slice(0, 220) : '';
+        const agentH = hasAgentOutput && agentSnippet.length > 0 ? 20 : 0;
+
+        const cardH = 26 + (hasTargets ? 15 : 0) + contentH + agentH + 20;
+
+        // Page break if card exceeds bottom margin (720pt)
+        if (curY + cardH > 720) {
           doc.addPage();
           curY = 36;
-          doc.rect(36, curY, 540, 22).fill(colors.primaryNavy);
-          doc.fillColor(colors.white).fontSize(8).font('Helvetica-Bold')
-            .text('TRADE COMPASS | MARKET IDEAS DOSSIER (CONTINUED)', 44, curY + 7);
-          doc.fillColor('#38bdf8').fontSize(7).font('Helvetica')
-            .text(`Timeframe: ${query.timeframeLabel}`, 400, curY + 7, { width: 168, align: 'right' });
-          curY += 30;
+          doc.rect(36, curY, 540, 24).fill(colors.primaryNavy);
+          doc.fillColor(colors.white).fontSize(8.5).font('Helvetica-Bold')
+            .text('TRADE COMPASS | MARKET IDEAS DOSSIER (CONTINUED)', 46, curY + 8);
+          doc.fillColor('#38bdf8').fontSize(7.5).font('Helvetica')
+            .text(`Scope: ${query.timeframeLabel}`, 400, curY + 8, { width: 168, align: 'right' });
+          curY += 34;
         }
 
         // Accent strip & pill colors
@@ -538,70 +571,77 @@ export async function generateIdeasPdfReport(
         }
 
         // Draw Card Container
-        doc.roundedRect(36, curY, 540, cardH, 3).fillAndStroke(colors.white, colors.cardBorder);
+        doc.roundedRect(36, curY, 540, cardH, 4).fillAndStroke(colors.white, colors.cardBorder);
         doc.rect(36, curY, 4, cardH).fill(accentColor);
 
         // Sentiment Pill
-        doc.roundedRect(46, curY + 6, 52, 13, 2).fillAndStroke(badgeBg, badgeBorder);
-        doc.fillColor(badgeColor).fontSize(6.5).font('Helvetica-Bold')
-          .text(item.sentiment, 46, curY + 9, { width: 52, align: 'center' });
+        doc.roundedRect(46, curY + 6, 56, 14, 2.5).fillAndStroke(badgeBg, badgeBorder);
+        doc.fillColor(badgeColor).fontSize(7).font('Helvetica-Bold')
+          .text(item.sentiment, 46, curY + 9, { width: 56, align: 'center' });
 
         // Symbols tag
-        let headerX = 104;
+        let headerX = 110;
         if (item.symbols.length > 0) {
           const symText = item.symbols.map((s) => `$${s}`).join(', ');
-          doc.fillColor(colors.primaryNavy).fontSize(8.5).font('Helvetica-Bold')
+          doc.fillColor(colors.accentIndigo).fontSize(9.5).font('Helvetica-Bold')
             .text(symText, headerX, curY + 8);
-          headerX += Math.min(item.symbols.length * 40, 140);
+          headerX += Math.min(item.symbols.length * 42, 130);
         }
 
         // Title
-        doc.fillColor(colors.slateDark).fontSize(8).font('Helvetica-Bold')
-          .text(item.title, headerX, curY + 8, { width: 380 - (headerX - 104), lineBreak: false });
+        doc.fillColor(colors.slateDark).fontSize(9).font('Helvetica-Bold')
+          .text(item.title, headerX, curY + 8, { width: 375 - (headerX - 110), lineBreak: false, ellipsis: true });
 
         // Date right aligned
         const dateStr =
           item.createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) +
           ' ' +
           item.createdAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-        doc.fillColor(colors.slateMuted).fontSize(6.5).font('Helvetica')
-          .text(dateStr, 400, curY + 8, { width: 168, align: 'right' });
+        doc.fillColor(colors.slateMuted).fontSize(7).font('Helvetica')
+          .text(dateStr, 400, curY + 9, { width: 168, align: 'right' });
 
         // Targets row (if any)
-        let bodyY = curY + 22;
+        let bodyY = curY + 24;
         if (hasTargets) {
           let targetsText = '';
-          if (item.entryPrice) targetsText += `Entry: $${item.entryPrice.toFixed(2)}   `;
-          if (item.targetPrice) targetsText += `Target: $${item.targetPrice.toFixed(2)}   `;
-          if (item.stopLoss) targetsText += `Stop: $${item.stopLoss.toFixed(2)}   `;
+          if (item.entryPrice) targetsText += `Entry: $${item.entryPrice.toFixed(2)}    `;
+          if (item.targetPrice) targetsText += `Target: $${item.targetPrice.toFixed(2)}    `;
+          if (item.stopLoss) targetsText += `Stop: $${item.stopLoss.toFixed(2)}    `;
           if (item.status) targetsText += `Status: ${item.status}`;
 
-          doc.fillColor(colors.accentIndigo).fontSize(7).font('Helvetica-Bold')
+          doc.fillColor(colors.accentIndigo).fontSize(7.5).font('Helvetica-Bold')
             .text(targetsText, 46, bodyY);
-          bodyY += 13;
+          bodyY += 15;
         }
 
         // Content
-        doc.fillColor(colors.slateDark).fontSize(8).font('Helvetica')
-          .text(item.content, 46, bodyY, { width: 520, height: textH, ellipsis: true });
+        doc.fillColor(colors.slateDark).fontSize(9).font('Helvetica')
+          .text(cleanContent, 46, bodyY, { width: 520, lineGap: 2.5 });
+        bodyY += contentH + 4;
+
+        // Agent Enrichment Note (if available)
+        if (hasAgentOutput && agentSnippet.length > 0) {
+          doc.fillColor('#0369a1').fontSize(7.5).font('Helvetica-Oblique')
+            .text(`💡 Note: "${agentSnippet}"`, 46, bodyY, { width: 520, lineBreak: false, ellipsis: true });
+        }
 
         // Card Footer
-        const footY = curY + cardH - 13;
+        const footY = curY + cardH - 14;
         const tagsStr =
           item.tags && item.tags.length > 0
             ? `Tags: ${item.tags.join(', ')}`
             : `Type: ${item.sourceType === 'TRADE_IDEA' ? 'Trade Compass Idea' : 'Market Observation'}`;
-        doc.fillColor(colors.slateMuted).fontSize(6).font('Helvetica').text(tagsStr, 46, footY);
+        doc.fillColor(colors.slateMuted).fontSize(6.5).font('Helvetica').text(tagsStr, 46, footY);
 
         const srcStr = item.sourceType === 'TRADE_IDEA' ? 'Trade Compass Record' : 'Telegram Ideas Topic';
-        doc.fillColor(colors.slateMuted).fontSize(6).font('Helvetica')
+        doc.fillColor(colors.slateMuted).fontSize(6.5).font('Helvetica')
           .text(srcStr, 400, footY, { width: 168, align: 'right' });
 
-        curY += cardH + 7;
+        curY += cardH + 8;
       }
     }
 
-    // Numbered Footers
+    // Numbered Footers on all pages
     const totalPages = doc.bufferedPageRange().count;
     for (let i = 0; i < totalPages; i++) {
       doc.switchToPage(i);
@@ -609,14 +649,14 @@ export async function generateIdeasPdfReport(
       doc.page.margins.bottom = 0;
       const footerY = 752;
       doc.rect(36, footerY, 540, 0.75).fill(colors.cardBorder);
-      doc.fillColor(colors.slateMuted).fontSize(6.5).font('Helvetica')
+      doc.fillColor(colors.slateMuted).fontSize(7).font('Helvetica')
         .text(
           `Trade Compass Market Ideas Dossier • ${query.timeframeLabel} • Institutional Intelligence`,
           36,
           footerY + 6,
           { lineBreak: false }
         );
-      doc.fillColor(colors.accentIndigo).fontSize(6.5).font('Helvetica-Bold')
+      doc.fillColor(colors.accentIndigo).fontSize(7).font('Helvetica-Bold')
         .text(`Page ${i + 1} of ${totalPages}`, 480, footerY + 6, { width: 96, align: 'right', lineBreak: false });
       doc.page.margins.bottom = oldBottom;
     }

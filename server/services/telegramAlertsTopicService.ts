@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { sendTelegramMessage } from './telegramReportService';
-import { autoCreateAlertsFromText } from './thoughtLogAlertService';
+import { autoCreateAlertsFromText, NON_TICKER_WORDS } from './thoughtLogAlertService';
+import { getSetAlertTopicHelp } from './telegramTopicHelpService';
 
 const logToFile = (msg: string) => console.log(msg);
 
@@ -43,35 +44,48 @@ export async function handleAlertsTopicMessage({
   const lower = clean.toLowerCase();
 
   // ==========================================
-  // 1. CANCEL / DELETE PRICE ALERT
+  // 1. HELP / INSTRUCTIONS REQUEST
   // ==========================================
-  const cancelMatch = clean.match(/^(?:cancel|remove|delete|clear|disarm)\s+(?:alerts?\s+)?\$?([A-Za-z]{1,6})$/i);
-  if (cancelMatch) {
-    const sym = cancelMatch[1].toUpperCase();
+  if (clean === '?' || clean === '??' || /^(help|commands?|usage|info|guide|\?)$/i.test(clean)) {
+    const helpText = getSetAlertTopicHelp();
+    if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
+      await sendTelegramMessage({
+        text: helpText,
+        chatId,
+        messageThreadId,
+        parseMode: 'Markdown',
+      }).catch((e: any) => logToFile(`[TelegramAlerts] Send error: ${e.message}`));
+    }
+
+    return {
+      handled: true,
+      replyText: helpText,
+      actionTaken: 'HELP',
+    };
+  }
+
+  // ==========================================
+  // 2. CANCEL / DELETE PRICE ALERT
+  // ==========================================
+  // 2A. Cancel / Clear all active alerts
+  if (/^(?:cancel|remove|delete|clear|disarm)\s+(?:all\s+alerts?|alerts?\s+all)$/i.test(clean) || /^clear\s+alerts?$/i.test(clean)) {
     const alertModel = (prisma as any).priceAlert || (prisma as any).alert;
     const activeAlerts = alertModel
       ? await alertModel.findMany({
-          where: {
-            symbol: { equals: sym },
-            status: { in: ['ACTIVE', 'PENDING'] },
-          },
+          where: { status: { in: ['ACTIVE', 'PENDING'] } },
         })
       : [];
 
     let replyText = '';
     if (activeAlerts.length === 0) {
-      replyText = `🔔 *Price Alerts for $${sym}*\n\n_No active price alerts currently armed for $${sym}._\n\n💡 _Send \`alerts\` to view all armed price alerts._`;
+      replyText = `🔔 *Price Alerts*\n\n_No active price alerts currently armed._\n\n💡 _Send \`alerts\` to view all armed price alerts._`;
     } else {
       if (alertModel) {
         await alertModel.deleteMany({
-          where: {
-            symbol: { equals: sym },
-            status: { in: ['ACTIVE', 'PENDING'] },
-          },
+          where: { status: { in: ['ACTIVE', 'PENDING'] } },
         });
       }
-
-      replyText = `🔕 *Price Alert Cancelled: $${sym}*\n\nDisarmed and removed ${activeAlerts.length} alert(s) for $${sym}.\n\n💡 _Send \`alerts\` to see remaining active monitors._`;
+      replyText = `🔕 *All Price Alerts Disarmed*\n\nDisarmed and removed all ${activeAlerts.length} active price alert monitor(s).\n\n💡 _Send \`alerts\` to verify._`;
     }
 
     if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
@@ -90,10 +104,118 @@ export async function handleAlertsTopicMessage({
     };
   }
 
+  // 2B. Cancel specific ticker(s) e.g. "cancel alert AAPL", "delete alerts NVDA, TSLA", "clear NVDA AAPL"
+  const cancelMatch = clean.match(/^(?:cancel|remove|delete|clear|disarm)\s+(?:alerts?\s+)?(.+)$/i);
+  if (cancelMatch) {
+    const rawTarget = cancelMatch[1].trim();
+    const symbols = rawTarget
+      .split(/[\s,;&+]+|\s+(?:and|or)\s+/i)
+      .map((s) => s.replace(/^\$/, '').toUpperCase())
+      .filter((s) => s.length >= 1 && s.length <= 6 && !NON_TICKER_WORDS.has(s));
+
+    if (symbols.length > 0) {
+      const alertModel = (prisma as any).priceAlert || (prisma as any).alert;
+
+      if (symbols.length === 1) {
+        const sym = symbols[0];
+        const activeAlerts = alertModel
+          ? await alertModel.findMany({
+              where: {
+                symbol: { equals: sym },
+                status: { in: ['ACTIVE', 'PENDING'] },
+              },
+            })
+          : [];
+
+        let replyText = '';
+        if (activeAlerts.length === 0) {
+          replyText = `🔔 *Price Alerts for $${sym}*\n\n_No active price alerts currently armed for $${sym}._\n\n💡 _Send \`alerts\` to view all armed price alerts._`;
+        } else {
+          if (alertModel) {
+            await alertModel.deleteMany({
+              where: {
+                symbol: { equals: sym },
+                status: { in: ['ACTIVE', 'PENDING'] },
+              },
+            });
+          }
+
+          replyText = `🔕 *Price Alert Cancelled: $${sym}*\n\nDisarmed and removed ${activeAlerts.length} alert(s) for $${sym}.\n\n💡 _Send \`alerts\` to see remaining active monitors._`;
+        }
+
+        if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
+          await sendTelegramMessage({
+            text: replyText,
+            chatId,
+            messageThreadId,
+            parseMode: 'Markdown',
+          }).catch((e: any) => logToFile(`[TelegramAlerts] Send error: ${e.message}`));
+        }
+
+        return {
+          handled: true,
+          replyText,
+          actionTaken: 'CANCEL_ALERT',
+        };
+      } else {
+        // Multi-symbol cancellation
+        let totalDeleted = 0;
+        const deletedSymbols: string[] = [];
+
+        for (const sym of symbols) {
+          const activeAlerts = alertModel
+            ? await alertModel.findMany({
+                where: {
+                  symbol: { equals: sym },
+                  status: { in: ['ACTIVE', 'PENDING'] },
+                },
+              })
+            : [];
+
+          if (activeAlerts.length > 0) {
+            if (alertModel) {
+              await alertModel.deleteMany({
+                where: {
+                  symbol: { equals: sym },
+                  status: { in: ['ACTIVE', 'PENDING'] },
+                },
+              });
+            }
+            totalDeleted += activeAlerts.length;
+            deletedSymbols.push(sym);
+          }
+        }
+
+        const symListStr = symbols.map((s) => `$${s}`).join(', ');
+        let replyText = '';
+        if (totalDeleted === 0) {
+          replyText = `🔔 *Price Alerts for ${symListStr}*\n\n_No active price alerts currently armed for any of these tickers._\n\n💡 _Send \`alerts\` to view all armed price alerts._`;
+        } else {
+          replyText = `🔕 *Price Alerts Cancelled: ${symListStr}*\n\nDisarmed and removed ${totalDeleted} alert(s) across ${deletedSymbols.length} ticker(s).\n\n💡 _Send \`alerts\` to see remaining active monitors._`;
+        }
+
+        if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
+          await sendTelegramMessage({
+            text: replyText,
+            chatId,
+            messageThreadId,
+            parseMode: 'Markdown',
+          }).catch((e: any) => logToFile(`[TelegramAlerts] Send error: ${e.message}`));
+        }
+
+        return {
+          handled: true,
+          replyText,
+          actionTaken: 'CANCEL_ALERT',
+        };
+      }
+    }
+  }
+
   // ==========================================
-  // 2. VIEW ACTIVE ARMED ALERTS
+  // 3. VIEW ACTIVE ARMED ALERTS
   // ==========================================
-  if (/^(alerts|list|active|active\s+alerts|my\s+alerts|show\s+alerts|status|all\s+alerts)$/i.test(lower)) {
+  if (/^(?:[\/#]?alerts?|list|active|active\s+alerts|my\s+alerts|show\s+alerts?|view\s+alerts?|get\s+alerts?|list\s+alerts?|status|all\s+alerts?)$/i.test(lower)) {
     const alertModel = (prisma as any).priceAlert || (prisma as any).alert;
     const alerts = alertModel
       ? await alertModel.findMany({
@@ -105,7 +227,7 @@ export async function handleAlertsTopicMessage({
 
     let replyText = '';
     if (alerts.length === 0) {
-      replyText = `🔔 *Active Price Alerts*\n\n_No active price alerts currently armed._\n\n💡 *How to Arm Price Alerts:*\n• \`Alert NVDA above $145\`\n• \`Alert AAPL below $215\`\n• \`PLTR > $60\`\n• \`TSLA < 200\``;
+      replyText = `🔔 *Active Price Alerts*\n\n_No active price alerts currently armed._\n\n💡 *How to Arm Price Alerts:*\n• \`NVDA 145, AAPL 220, TSLA 260\`\n• \`Alert NVDA above $145\`\n• \`PLTR > $60\`\n• \`NVDA > 150, < 130\``;
     } else {
       const rows = alerts.map((a: any) => {
         const condArrow = a.condition === 'ABOVE' || a.type === 'PRICE_ABOVE' ? '▲ Above' : '▼ Below';
@@ -135,7 +257,7 @@ export async function handleAlertsTopicMessage({
   }
 
   // ==========================================
-  // 3. ARM / CREATE PRICE ALERT
+  // 4. ARM / CREATE PRICE ALERT(S)
   // ==========================================
   const createdAlerts = await autoCreateAlertsFromText(
     prisma,
@@ -152,7 +274,11 @@ export async function handleAlertsTopicMessage({
       )
       .join('\n');
 
-    const replyText = `🎯 *Price Alert Armed & Monitored 24/7*\n\n${alertSummary}\n\n───────────────────────\n🚨 _When triggered, live alert notifications will fire into the *Alerts* topic!_`;
+    const header = createdAlerts.length > 1
+      ? `🎯 *Price Alert Armed & Monitored 24/7* (${createdAlerts.length} Active Monitors)`
+      : `🎯 *Price Alert Armed & Monitored 24/7*`;
+
+    const replyText = `${header}\n\n${alertSummary}\n\n───────────────────────\n🚨 _When triggered, live alert notifications will fire into the *Alerts* topic!_`;
 
     if (process.env.TELEGRAM_BOT_TOKEN && chatId) {
       await sendTelegramMessage({

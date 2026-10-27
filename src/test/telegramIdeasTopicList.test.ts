@@ -400,33 +400,119 @@ describe('Telegram Ideas Topic — Query Parsing, Timeframe Filtering & PDF Gene
       expect(sendMsgSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('returns all ideas when simply sending "list"', async () => {
+    it('returns all ideas when simply sending "list", even with large numbers of ideas', async () => {
+      // 20 sample ideas
+      const sample20Ideas = Array.from({ length: 20 }, (_, i) => ({
+        id: `tl-${i + 1}`,
+        title: `💡 Idea: Ticker Opportunity #${i + 1}`,
+        content: `Detailed thesis number ${i + 1} with strategic catalyst and conviction level`,
+        symbols: `SYM${i + 1}`,
+        sentiment: i % 2 === 0 ? 'BULLISH' : 'BEARISH',
+        folder: 'Ideas',
+        createdAt: new Date(Date.now() - i * 3600000),
+      }));
+
       const mockPrisma: any = {
         thoughtLog: {
-          findMany: vi.fn(async () => [
-            {
-              id: 'tl-all',
-              title: '💡 Idea: Macro Gold Cycle',
-              content: 'Central banks continuing gold purchases',
-              symbols: 'GLD',
-              sentiment: 'BULLISH',
-              folder: 'Ideas',
-              createdAt: new Date(),
-            },
-          ]),
+          findMany: vi.fn(async () => sample20Ideas),
         },
       };
 
       const res = await handleIdeasTopicMessage({
         text: 'list',
         chatId: '-1003872409872',
+        messageThreadId: 95,
         prisma: mockPrisma,
       });
 
       expect(res.handled).toBe(true);
       expect(res.actionTaken).toBe('VIEW_IDEAS');
       expect(res.replyText).toContain('All Ideas Sent');
-      expect(res.replyText).toContain('Macro Gold Cycle');
+      expect(res.ideasCount).toBe(20);
+
+      // Verify ALL 20 ideas are present in the reply text and NOT truncated at 15
+      for (let i = 1; i <= 20; i++) {
+        expect(res.replyText).toContain(`Ticker Opportunity #${i}`);
+      }
+      expect(res.replyText).not.toContain('...and 5 more ideas sent');
+    });
+
+    it('replies with a nicely readable PDF when the word "pdf" or "PDF" is written', async () => {
+      const sendPdfSpy = vi.spyOn(telegramReportService, 'sendPdfReportToTelegram').mockResolvedValue({
+        success: true,
+        messageId: 888,
+      } as any);
+
+      const mockPrisma: any = {
+        thoughtLog: {
+          findMany: vi.fn(async () => [
+            {
+              id: 'tl-1',
+              title: '💡 Idea: PLTR Expansion',
+              content: 'Global enterprise software deals accelerating with AIP rollout',
+              symbols: 'PLTR',
+              sentiment: 'BULLISH',
+              folder: 'Ideas',
+              createdAt: new Date(),
+            },
+            {
+              id: 'tl-2',
+              title: '💡 Idea: NVDA Blackwell GPUs',
+              content: 'Hyperscaler datacenter spending surging into new architectures',
+              symbols: 'NVDA',
+              sentiment: 'BULLISH',
+              folder: 'Ideas',
+              createdAt: new Date(Date.now() - 86400000),
+            },
+          ]),
+        },
+      };
+
+      // 1. Standalone "pdf"
+      const resPdf = await handleIdeasTopicMessage({
+        text: 'pdf',
+        chatId: '-1003872409872',
+        messageThreadId: 95,
+        prisma: mockPrisma,
+      });
+
+      expect(resPdf.handled).toBe(true);
+      expect(resPdf.actionTaken).toBe('PDF_REPORT');
+      expect(resPdf.pdfGenerated).toBe(true);
+      expect(resPdf.replyText).toContain('Trade Compass — Market Ideas Dossier');
+      expect(sendPdfSpy).toHaveBeenCalledTimes(1);
+
+      const [pdfBuffer, filename, caption, extra] = sendPdfSpy.mock.calls[0];
+      expect(pdfBuffer.toString('utf8', 0, 5)).toBe('%PDF-');
+      expect(pdfBuffer.length).toBeGreaterThan(1000);
+      expect(filename).toContain('TradeCompass_Ideas_all_');
+      expect(extra?.messageThreadId).toBe(95);
+
+      // 2. Standalone uppercase "PDF"
+      const resUpper = await handleIdeasTopicMessage({
+        text: 'PDF',
+        chatId: '-1003872409872',
+        messageThreadId: 95,
+        prisma: mockPrisma,
+      });
+
+      expect(resUpper.handled).toBe(true);
+      expect(resUpper.actionTaken).toBe('PDF_REPORT');
+      expect(resUpper.pdfGenerated).toBe(true);
+      expect(sendPdfSpy).toHaveBeenCalledTimes(2);
+
+      // 3. Short phrase "send pdf"
+      const resPhrase = await handleIdeasTopicMessage({
+        text: 'send pdf',
+        chatId: '-1003872409872',
+        messageThreadId: 95,
+        prisma: mockPrisma,
+      });
+
+      expect(resPhrase.handled).toBe(true);
+      expect(resPhrase.actionTaken).toBe('PDF_REPORT');
+      expect(resPhrase.pdfGenerated).toBe(true);
+      expect(sendPdfSpy).toHaveBeenCalledTimes(3);
     });
 
     it('still creates a new idea when non-query thesis is sent', async () => {

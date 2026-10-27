@@ -322,7 +322,7 @@ export function MacroPage({ onNavigateToResearch, onNavigateToGraphs, onNavigate
       subtitle: 'Real-time commodity futures pricing, M1 to M24 term structures, backwardation vs contango, and macro ratio spreads',
       icon: Flame,
       iconColorClasses: 'bg-amber-500/15 border-amber-500/40 text-amber-300',
-      preview: '21 Commodities • WTI / Brent / Gas / Gold / Copper Forward Strips • Roll Yields • GSR & Crack Spreads',
+      preview: '21 Commodities • Full Window Heatmap • WTI / Brent / Gas / Gold Strips • Multi-Timeframe Matrix',
       renderContent: () => (
         <CommoditiesForwardCurveCard
           onNavigateToResearch={onNavigateToResearch}
