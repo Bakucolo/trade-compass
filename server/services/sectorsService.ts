@@ -647,14 +647,19 @@ export async function fetchSectorsOverview(): Promise<SectorsOverviewResponse> {
         }));
 
         const meta = chartRes?.meta;
-        if (meta) {
-          currentQuoteMap[sym] = {
-            regularMarketPrice: meta.regularMarketPrice || quotes[quotes.length - 1]?.close,
-            previousClose: meta.chartPreviousClose || meta.previousClose || (quotes.length > 1 ? quotes[quotes.length - 2]?.close : quotes[quotes.length - 1]?.close),
-            fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh,
-            fiftyTwoWeekLow: meta.fiftyTwoWeekLow,
-          };
-        }
+        const lastQuote = quotes.length > 0 ? quotes[quotes.length - 1] : null;
+        const prevQuote = quotes.length >= 2 ? quotes[quotes.length - 2] : null;
+        const currentPrice = Number(meta?.regularMarketPrice || lastQuote?.close || 0);
+        // CRITICAL FIX: meta.chartPreviousClose is the price 400 days ago (prior to period1)!
+        // Yesterday's close for 1D returns is specifically prevQuote.close (or meta.previousClose).
+        const yesterdayClose = Number(prevQuote?.close || meta?.previousClose || currentPrice);
+
+        currentQuoteMap[sym] = {
+          regularMarketPrice: currentPrice,
+          previousClose: yesterdayClose,
+          fiftyTwoWeekHigh: meta?.fiftyTwoWeekHigh,
+          fiftyTwoWeekLow: meta?.fiftyTwoWeekLow,
+        };
       } catch (err) {
         // Fallback handled below
       }
@@ -662,12 +667,14 @@ export async function fetchSectorsOverview(): Promise<SectorsOverviewResponse> {
   );
 
   // Extract SPY benchmark returns
+  const currentYearStr = `${new Date().getFullYear()}`;
   const spyHistory = historicalMap['SPY'] || [];
-  const spyCurrent = currentQuoteMap['SPY']?.regularMarketPrice || 585.50;
-  const spyPrevClose = currentQuoteMap['SPY']?.previousClose || 583.20;
-
   const spyLen = spyHistory.length;
   const spyCloses = spyHistory.map((h) => h.close);
+  const spyCurrent = currentQuoteMap['SPY']?.regularMarketPrice || (spyLen > 0 ? spyCloses[spyLen - 1] : 585.50);
+  const spyPrevClose = currentQuoteMap['SPY']?.previousClose || (spyLen >= 2 ? spyCloses[spyLen - 2] : spyCurrent * 0.997);
+  const spyYtdIndex = spyHistory.findIndex((h) => h.date.startsWith(currentYearStr));
+  const spyYtdBase = spyYtdIndex > 0 ? spyCloses[spyYtdIndex - 1] : (spyYtdIndex === 0 ? spyCloses[0] : (spyLen >= 160 ? spyCloses[spyLen - 160] : spyPrevClose));
 
   const spyReturns = {
     '1D': calcReturn(spyCurrent, spyPrevClose),
@@ -675,36 +682,44 @@ export async function fetchSectorsOverview(): Promise<SectorsOverviewResponse> {
     '1M': calcReturn(spyCurrent, spyLen >= 22 ? spyCloses[spyLen - 22] : spyPrevClose),
     '3M': calcReturn(spyCurrent, spyLen >= 64 ? spyCloses[spyLen - 64] : spyPrevClose),
     '6M': calcReturn(spyCurrent, spyLen >= 127 ? spyCloses[spyLen - 127] : spyPrevClose),
-    'YTD': calcReturn(spyCurrent, spyLen >= 160 ? spyCloses[spyLen - 160] : spyPrevClose),
+    'YTD': calcReturn(spyCurrent, spyYtdBase),
     '1Y': calcReturn(spyCurrent, spyLen >= 250 ? spyCloses[0] : spyPrevClose),
   };
 
   const qqqHistory = historicalMap['QQQ'] || [];
-  const qqqCurrent = currentQuoteMap['QQQ']?.regularMarketPrice || 498.20;
   const qqqLen = qqqHistory.length;
   const qqqCloses = qqqHistory.map((h) => h.close);
+  const qqqCurrent = currentQuoteMap['QQQ']?.regularMarketPrice || (qqqLen > 0 ? qqqCloses[qqqLen - 1] : 498.20);
+  const qqqPrevClose = currentQuoteMap['QQQ']?.previousClose || (qqqLen >= 2 ? qqqCloses[qqqLen - 2] : qqqCurrent * 0.997);
+  const qqqYtdIndex = qqqHistory.findIndex((h) => h.date.startsWith(currentYearStr));
+  const qqqYtdBase = qqqYtdIndex > 0 ? qqqCloses[qqqYtdIndex - 1] : (qqqYtdIndex === 0 ? qqqCloses[0] : (qqqLen >= 160 ? qqqCloses[qqqLen - 160] : qqqPrevClose));
+
   const qqqReturns = {
-    '1D': calcReturn(qqqCurrent, currentQuoteMap['QQQ']?.previousClose || 495.0),
-    '1W': calcReturn(qqqCurrent, qqqLen >= 6 ? qqqCloses[qqqLen - 6] : qqqCurrent),
-    '1M': calcReturn(qqqCurrent, qqqLen >= 22 ? qqqCloses[qqqLen - 22] : qqqCurrent),
-    '3M': calcReturn(qqqCurrent, qqqLen >= 64 ? qqqCloses[qqqLen - 64] : qqqCurrent),
-    '6M': calcReturn(qqqCurrent, qqqLen >= 127 ? qqqCloses[qqqLen - 127] : qqqCurrent),
-    'YTD': calcReturn(qqqCurrent, qqqLen >= 160 ? qqqCloses[qqqLen - 160] : qqqCurrent),
-    '1Y': calcReturn(qqqCurrent, qqqLen >= 250 ? qqqCloses[0] : qqqCurrent),
+    '1D': calcReturn(qqqCurrent, qqqPrevClose),
+    '1W': calcReturn(qqqCurrent, qqqLen >= 6 ? qqqCloses[qqqLen - 6] : qqqPrevClose),
+    '1M': calcReturn(qqqCurrent, qqqLen >= 22 ? qqqCloses[qqqLen - 22] : qqqPrevClose),
+    '3M': calcReturn(qqqCurrent, qqqLen >= 64 ? qqqCloses[qqqLen - 64] : qqqPrevClose),
+    '6M': calcReturn(qqqCurrent, qqqLen >= 127 ? qqqCloses[qqqLen - 127] : qqqPrevClose),
+    'YTD': calcReturn(qqqCurrent, qqqYtdBase),
+    '1Y': calcReturn(qqqCurrent, qqqLen >= 250 ? qqqCloses[0] : qqqPrevClose),
   };
 
   const iwmHistory = historicalMap['IWM'] || [];
-  const iwmCurrent = currentQuoteMap['IWM']?.regularMarketPrice || 224.50;
   const iwmLen = iwmHistory.length;
   const iwmCloses = iwmHistory.map((h) => h.close);
+  const iwmCurrent = currentQuoteMap['IWM']?.regularMarketPrice || (iwmLen > 0 ? iwmCloses[iwmLen - 1] : 224.50);
+  const iwmPrevClose = currentQuoteMap['IWM']?.previousClose || (iwmLen >= 2 ? iwmCloses[iwmLen - 2] : iwmCurrent * 0.997);
+  const iwmYtdIndex = iwmHistory.findIndex((h) => h.date.startsWith(currentYearStr));
+  const iwmYtdBase = iwmYtdIndex > 0 ? iwmCloses[iwmYtdIndex - 1] : (iwmYtdIndex === 0 ? iwmCloses[0] : (iwmLen >= 160 ? iwmCloses[iwmLen - 160] : iwmPrevClose));
+
   const iwmReturns = {
-    '1D': calcReturn(iwmCurrent, currentQuoteMap['IWM']?.previousClose || 223.1),
-    '1W': calcReturn(iwmCurrent, iwmLen >= 6 ? iwmCloses[iwmLen - 6] : iwmCurrent),
-    '1M': calcReturn(iwmCurrent, iwmLen >= 22 ? iwmCloses[iwmLen - 22] : iwmCurrent),
-    '3M': calcReturn(iwmCurrent, iwmLen >= 64 ? iwmCloses[iwmLen - 64] : iwmCurrent),
-    '6M': calcReturn(iwmCurrent, iwmLen >= 127 ? iwmCloses[iwmLen - 127] : iwmCurrent),
-    'YTD': calcReturn(iwmCurrent, iwmLen >= 160 ? iwmCloses[iwmLen - 160] : iwmCurrent),
-    '1Y': calcReturn(iwmCurrent, iwmLen >= 250 ? iwmCloses[0] : iwmCurrent),
+    '1D': calcReturn(iwmCurrent, iwmPrevClose),
+    '1W': calcReturn(iwmCurrent, iwmLen >= 6 ? iwmCloses[iwmLen - 6] : iwmPrevClose),
+    '1M': calcReturn(iwmCurrent, iwmLen >= 22 ? iwmCloses[iwmLen - 22] : iwmPrevClose),
+    '3M': calcReturn(iwmCurrent, iwmLen >= 64 ? iwmCloses[iwmLen - 64] : iwmPrevClose),
+    '6M': calcReturn(iwmCurrent, iwmLen >= 127 ? iwmCloses[iwmLen - 127] : iwmPrevClose),
+    'YTD': calcReturn(iwmCurrent, iwmYtdBase),
+    '1Y': calcReturn(iwmCurrent, iwmLen >= 250 ? iwmCloses[0] : iwmPrevClose),
   };
 
   // Process all Sector & Industry Definitions
@@ -714,17 +729,20 @@ export async function fetchSectorsOverview(): Promise<SectorsOverviewResponse> {
     const closes = history.map((h) => h.close);
 
     const price = currentQuoteMap[def.symbol]?.regularMarketPrice || (len > 0 ? closes[len - 1] : def.fallbackPrice);
-    const prevClose = currentQuoteMap[def.symbol]?.previousClose || (len > 1 ? closes[len - 2] : price * 0.995);
+    const prevClose = currentQuoteMap[def.symbol]?.previousClose || (len > 1 ? closes[len - 2] : price);
     const change = Number((price - prevClose).toFixed(2));
     const changePercent = calcReturn(price, prevClose);
 
     // Multi-Timeframe returns
+    const ytdIndex = history.findIndex((h) => h.date.startsWith(currentYearStr));
+    const ytdBase = ytdIndex > 0 ? closes[ytdIndex - 1] : (ytdIndex === 0 ? closes[0] : (len >= 160 ? closes[len - 160] : prevClose));
+
     const r1D = changePercent;
     const r1W = calcReturn(price, len >= 6 ? closes[len - 6] : prevClose);
     const r1M = calcReturn(price, len >= 22 ? closes[len - 22] : prevClose);
     const r3M = calcReturn(price, len >= 64 ? closes[len - 64] : prevClose);
     const r6M = calcReturn(price, len >= 127 ? closes[len - 127] : prevClose);
-    const rYTD = calcReturn(price, len >= 160 ? closes[len - 160] : prevClose);
+    const rYTD = calcReturn(price, ytdBase);
     const r1Y = calcReturn(price, len >= 250 ? closes[0] : prevClose);
 
     const returns = {

@@ -306,7 +306,7 @@ export function SectorHeatmapModal({
         className={cn(
           "bg-slate-950/98 border border-slate-800 text-foreground p-0 overflow-hidden flex flex-col shadow-2xl backdrop-blur-3xl transition-all duration-300 z-50",
           isFullscreen
-            ? "fixed inset-0 w-screen h-screen max-w-none max-h-none rounded-none m-0"
+            ? "!fixed !inset-0 !top-0 !left-0 !translate-x-0 !translate-y-0 !w-screen !h-screen !max-w-none !max-h-none !rounded-none !m-0 !p-0"
             : "sm:max-w-[1550px] w-[97vw] h-[93vh] max-h-[96vh] rounded-3xl"
         )}
       >

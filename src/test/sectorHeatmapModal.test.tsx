@@ -272,4 +272,28 @@ describe('SectorHeatmapModal', () => {
     fireEvent.click(screen.getByRole('button', { name: /Deep Dive Analysis/i }));
     expect(mockDeepDive).toHaveBeenCalledWith(expect.objectContaining({ symbol: 'XLK' }));
   });
+
+  it('toggles true fullscreen layout when clicking the maximize button', () => {
+    render(
+      <SectorHeatmapModal
+        isOpen={true}
+        onClose={vi.fn()}
+        sectors={mockSectors}
+      />
+    );
+
+    const expandBtn = screen.getByTitle('Expand to Full Window');
+    expect(expandBtn).toBeInTheDocument();
+
+    // Click maximize
+    fireEvent.click(expandBtn);
+
+    // Should now have exit fullscreen title and clear translation classes
+    expect(screen.getByTitle('Exit Fullscreen')).toBeInTheDocument();
+    const dialogContent = document.querySelector('[role="dialog"]');
+    expect(dialogContent?.className).toContain('!translate-x-0');
+    expect(dialogContent?.className).toContain('!translate-y-0');
+    expect(dialogContent?.className).toContain('!top-0');
+    expect(dialogContent?.className).toContain('!left-0');
+  });
 });
