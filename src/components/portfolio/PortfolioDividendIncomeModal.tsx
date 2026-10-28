@@ -40,6 +40,8 @@ import {
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
+
 interface PortfolioDividendIncomeModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -622,7 +624,9 @@ export function PortfolioDividendIncomeModal({
                                 </span>
                                 {h.paymentMonths.length > 0 && (
                                   <span className="text-[9px] text-muted-foreground/80 block">
-                                    {h.paymentMonths.map((m) => MONTH_NAMES[m - 1]).join('/')}
+                                    {h.paymentMonths
+                                      .map((m) => (m >= 1 && m <= 12 ? MONTH_NAMES[m - 1] : String(m)))
+                                      .join('/')}
                                   </span>
                                 )}
                               </td>
@@ -651,11 +655,11 @@ export function PortfolioDividendIncomeModal({
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-foreground">{gen.symbol}</span>
                           <span className="text-[10px] text-emerald-400 font-bold">
-                            {gen.percentOfTotal.toFixed(1)}%
+                            {(gen.percentOfTotal ?? 0).toFixed(1)}%
                           </span>
                         </div>
                         <span className="text-sm font-black text-emerald-400 block">
-                          ${gen.incomeUSD.toFixed(2)}/yr
+                          ${(gen.incomeUSD ?? 0).toFixed(2)}/yr
                         </span>
                         <span className="text-[9px] text-muted-foreground block truncate">
                           {gen.name}
