@@ -102,6 +102,7 @@ import {
 } from './services/goldMacroService';
 import { fetchSectorsOverview, fetchSectorsHistoryComparison } from './services/sectorsService';
 import { fetchGrowthAndValuationDossier } from './services/growthValuationService';
+import { fetchFastGraphsData, FastGraphsTimeframe, FastGraphsMetricType } from './services/fastGraphsService';
 import { fetchInvestorRelationsDossier } from './services/investorRelationsService';
 import { generateTradeStructures } from './services/tradeStructurerService';
 import { diagnoseEconomicCycle, generateMacroStockPicks } from './services/economicCycleService';
@@ -3721,6 +3722,21 @@ app.get('/api/research/growth-valuation/:ticker', async (req, res) => {
   } catch (error: any) {
     logToFile(`Error fetching growth and valuation for ${req.params.ticker}: ${error.message}`);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/graphs/fast-graphs/:symbol - FAST Graphs fundamental valuation visualizer (Price correlated with earnings & multiples)
+app.get('/api/graphs/fast-graphs/:symbol', async (req, res) => {
+  try {
+    const rawSymbol = req.params.symbol || '';
+    const timeframe = (req.query.timeframe as FastGraphsTimeframe) || '4Y';
+    const metric = (req.query.metric as FastGraphsMetricType) || 'ADJUSTED_EARNINGS';
+    logToFile(`Fetching FAST Graphs fundamental valuation data for ${rawSymbol} (Timeframe: ${timeframe}, Metric: ${metric})...`);
+    const data = await fetchFastGraphsData(rawSymbol, timeframe, metric);
+    res.json(data);
+  } catch (error: any) {
+    logToFile(`Error fetching FAST Graphs data for ${req.params.symbol}: ${error.message}`);
+    res.status(500).json({ error: error.message || 'Failed to generate FAST Graphs valuation data' });
   }
 });
 
