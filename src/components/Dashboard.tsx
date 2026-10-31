@@ -17,6 +17,7 @@ import { PortfolioChart } from './PortfolioChart';
 import { WatchlistCard } from './WatchlistCard';
 import { IdeasCard } from './IdeasCard';
 import { AIIdeaGeneratorModal } from './AIIdeaGeneratorModal';
+import { AppFeatureSearch } from './dashboard/AppFeatureSearch';
 import { BuyingPowerAnalyserModal } from './portfolio/BuyingPowerAnalyserModal';
 import { CriticalDefenseModal, isOptionCall } from './portfolio/CriticalDefenseModal';
 import { PositionAdvisorModal } from './portfolio/PositionAdvisorModal';
@@ -564,6 +565,18 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
           </Button>
         </div>
       </div>
+
+      {/* ================= GLOBAL APP FEATURE & TOOL SEARCH ================= */}
+      <AppFeatureSearch
+        onNavigateTab={onNavigateTab}
+        onOpenBuyingPower={() => setIsBuyingPowerModalOpen(true)}
+        onOpenCriticalDefense={() => setIsDefenseModalOpen(true)}
+        onOpenAIHunter={() => setIsAIModalOpen(true)}
+        onOpenPositionAdvisor={() => setIsPositionAdvisorOpen(true)}
+        onOpenThetaBreakdown={() => setIsThetaModalOpen(true)}
+        onOpenCopilot={() => window.dispatchEvent(new CustomEvent('open-hybrid-copilot'))}
+        onOpenTelegramHub={() => window.dispatchEvent(new CustomEvent('open-telegram-topics'))}
+      />
 
       {/* ================= 1. EXECUTIVE KPI STATS RIBBON (COLLAPSIBLE) ================= */}
       {isBalancesOpen ? (
