@@ -391,5 +391,33 @@ describe('FAST Graphs Fundamental Valuation Visualizer', () => {
       fireEvent.click(screen.getByRole('button', { name: /full page/i }));
       expect(mockToggle).toHaveBeenCalledTimes(1);
     });
+
+    it('renders ticker searchbox in header and triggers onSelectSymbol on submit or selection', async () => {
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const mockSelectSymbol = vi.fn();
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <FastGraphs symbol="SOFI" onSelectSymbol={mockSelectSymbol} />
+        </QueryClientProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('fast-graphs-ticker-search')).toBeDefined();
+      });
+
+      const searchInput = screen.getByTestId('fast-graphs-ticker-search');
+
+      // Focus input to open dropdown
+      fireEvent.focus(searchInput);
+      expect(screen.getByTestId('fast-graphs-search-dropdown')).toBeDefined();
+      expect(screen.getByText('Popular Benchmarks')).toBeDefined();
+
+      // Type NVDA and submit
+      fireEvent.change(searchInput, { target: { value: 'NVDA' } });
+      fireEvent.submit(searchInput.closest('form')!);
+
+      expect(mockSelectSymbol).toHaveBeenCalledWith('NVDA');
+    });
   });
 });

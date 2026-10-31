@@ -73,6 +73,8 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
   const [sourceMode, setSourceMode] = useState<SidePanelSource>('WATCHLIST');
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isFullPageSearchOpen, setIsFullPageSearchOpen] = useState(false);
+  const fullPageSearchRef = useRef<HTMLDivElement>(null);
   // Full Page Chart Mode
   const [isFullPage, setIsFullPage] = useState(false);
   // RSI Indicator Toggle (defaults to false: not shown by default)
@@ -168,7 +170,15 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
     [onSelectSymbol]
   );
 
-  // Escape key handler to exit full page chart mode
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (fullPageSearchRef.current && !fullPageSearchRef.current.contains(e.target as Node)) {
+        setIsFullPageSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isFullPage) {
@@ -1353,21 +1363,86 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
               </div>
 
               {/* Quick Ticker Switcher */}
-              <div className="relative w-36 sm:w-48">
-                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Switch ticker..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && searchQuery.trim()) {
-                      e.preventDefault();
+              <div ref={fullPageSearchRef} className="relative w-44 sm:w-60">
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (searchQuery.trim()) {
                       handleSelectSymbol(searchQuery.trim());
                       setSearchQuery('');
+                      setIsFullPageSearchOpen(false);
                     }
                   }}
-                  className="h-8 pl-8 pr-2 text-xs bg-slate-900 border-border/70 rounded-xl font-mono text-foreground"
-                />
+                  className="relative flex items-center"
+                >
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                  <Input
+                    placeholder="Switch ticker (e.g. SOFI)..."
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setIsFullPageSearchOpen(true);
+                    }}
+                    onFocus={() => setIsFullPageSearchOpen(true)}
+                    className="h-8 pl-8 pr-7 text-xs bg-slate-900 border-border/70 rounded-xl font-mono text-foreground uppercase placeholder:text-muted-foreground/60"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5 cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </form>
+
+                {/* Dropdown in Full Page Top Bar */}
+                {isFullPageSearchOpen && (
+                  <div className="absolute left-0 right-0 top-full mt-1.5 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl p-2 z-50 animate-in fade-in slide-in-from-top-1 text-xs max-h-64 overflow-y-auto">
+                    {searchQuery.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleSelectSymbol(searchQuery.trim());
+                          setSearchQuery('');
+                          setIsFullPageSearchOpen(false);
+                        }}
+                        className="w-full text-left px-2 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold flex items-center justify-between mb-1 transition-colors cursor-pointer"
+                      >
+                        <span>Switch to &quot;{searchQuery.trim().toUpperCase()}&quot;</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+
+                    {/* Quick suggestions from current watchlist/portfolio */}
+                    <div className="space-y-0.5">
+                      {currentList
+                        .filter(item => !searchQuery.trim() || item.symbol.includes(searchQuery.trim().toUpperCase()) || item.name.toUpperCase().includes(searchQuery.trim().toUpperCase()))
+                        .slice(0, 6)
+                        .map(item => (
+                          <button
+                            key={item.symbol}
+                            type="button"
+                            onClick={() => {
+                              handleSelectSymbol(item.symbol);
+                              setSearchQuery('');
+                              setIsFullPageSearchOpen(false);
+                            }}
+                            className={cn(
+                              "w-full text-left px-2 py-1.5 rounded-lg flex items-center justify-between transition-colors cursor-pointer",
+                              selectedSymbol === item.symbol
+                                ? "bg-primary/20 text-primary font-bold"
+                                : "hover:bg-slate-800 text-slate-300"
+                            )}
+                          >
+                            <span className="font-mono font-bold">{item.symbol}</span>
+                            <span className="text-[11px] text-muted-foreground truncate max-w-[120px]">{item.name}</span>
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* View Mode Switcher in Full Page */}

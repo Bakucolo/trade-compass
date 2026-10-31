@@ -31,11 +31,13 @@ import {
   AlertCircle,
   HelpCircle,
   Eye,
-  EyeOff
+  EyeOff,
+  Search
 } from 'lucide-react';
 import { Card } from '../ui/card';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
+import { Input } from '../ui/input';
 import {
   useFastGraphs,
   FastGraphsMetricType,
@@ -67,6 +69,19 @@ const METRIC_OPTIONS: { value: FastGraphsMetricType; label: string }[] = [
   { value: 'EBITDA', label: 'EBITDA' }
 ];
 
+export const POPULAR_FG_TICKERS = [
+  { symbol: 'SOFI', name: 'SoFi Technologies Inc' },
+  { symbol: 'NU', name: 'Nu Holdings Ltd' },
+  { symbol: 'CCK', name: 'Crown Holdings Inc' },
+  { symbol: 'AAPL', name: 'Apple Inc' },
+  { symbol: 'NVDA', name: 'NVIDIA Corporation' },
+  { symbol: 'MSFT', name: 'Microsoft Corporation' },
+  { symbol: 'AMZN', name: 'Amazon.com Inc' },
+  { symbol: 'GOOGL', name: 'Alphabet Inc' },
+  { symbol: 'TSLA', name: 'Tesla Inc' },
+  { symbol: 'SHOP.TO', name: 'Shopify Inc (TSX)' },
+];
+
 export function FastGraphs({
   symbol,
   currentPrice: overridePrice,
@@ -77,6 +92,68 @@ export function FastGraphs({
   className
 }: FastGraphsProps) {
   const cleanSymbol = (symbol || 'SOFI').trim().toUpperCase();
+
+  // Ticker search box state in header
+  const [searchTicker, setSearchTicker] = useState('');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+  const [recentTickers, setRecentTickers] = useState<string[]>(() => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('fast_graphs_recent_tickers') : null;
+      return raw ? JSON.parse(raw) : ['SOFI', 'NU', 'CCK', 'AAPL'];
+    } catch {
+      return ['SOFI', 'NU', 'CCK', 'AAPL'];
+    }
+  });
+
+  const handleClearRecents = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRecentTickers([]);
+    try {
+      localStorage.removeItem('fast_graphs_recent_tickers');
+    } catch {}
+  };
+
+  const handleSelectTicker = (raw: string) => {
+    const sym = raw.trim().toUpperCase();
+    if (!sym) return;
+
+    // Update recents
+    const updated = [sym, ...recentTickers.filter((s) => s !== sym)].slice(0, 8);
+    setRecentTickers(updated);
+    try {
+      localStorage.setItem('fast_graphs_recent_tickers', JSON.stringify(updated));
+    } catch {}
+
+    onSelectSymbol?.(sym);
+    setSearchTicker('');
+    setIsSearchOpen(false);
+  };
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (searchTicker.trim()) {
+      handleSelectTicker(searchTicker);
+    }
+  };
+
+  React.useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setIsSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filteredPopularTickers = useMemo(() => {
+    if (!searchTicker.trim()) return POPULAR_FG_TICKERS;
+    const q = searchTicker.trim().toUpperCase();
+    return POPULAR_FG_TICKERS.filter(
+      (item) => item.symbol.toUpperCase().includes(q) || item.name.toUpperCase().includes(q)
+    );
+  }, [searchTicker]);
 
   // Controls state
   const [timeframe, setTimeframe] = useState<FastGraphsTimeframe>('4Y');
@@ -196,7 +273,7 @@ export function FastGraphs({
       {/* ================= 1. HEADER & METRIC CONTROLS ================= */}
       <div className="glass-card rounded-2xl p-4 sm:p-5 border border-border/70 bg-card/80 backdrop-blur-xl shadow-lg flex flex-col xl:flex-row xl:items-center justify-between gap-4">
         
-        {/* Left: Ticker Summary Header */}
+        {/* Left: Ticker Summary Header & Searchbox */}
         <div className="flex items-center gap-4 flex-wrap">
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">
@@ -230,6 +307,112 @@ export function FastGraphs({
                 At close: {data.lastCloseDate}
               </span>
             </div>
+          </div>
+
+          {/* Quick Ticker Search Box */}
+          <div ref={searchContainerRef} className="relative min-w-[210px] sm:w-64">
+            <form onSubmit={handleSearchSubmit} className="relative flex items-center">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+              <Input
+                data-testid="fast-graphs-ticker-search"
+                value={searchTicker}
+                onChange={(e) => {
+                  setSearchTicker(e.target.value);
+                  setIsSearchOpen(true);
+                }}
+                onFocus={() => setIsSearchOpen(true)}
+                placeholder="Search ticker (e.g. SOFI)..."
+                className="h-9 pl-8 pr-7 text-xs font-mono font-bold bg-slate-900/90 border-border/80 focus:border-amber-500/80 rounded-xl text-foreground placeholder:text-muted-foreground/60 uppercase shadow-inner"
+              />
+              {searchTicker && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTicker('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5 cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </form>
+
+            {/* Dropdown with recents & suggestions */}
+            {isSearchOpen && (
+              <div
+                data-testid="fast-graphs-search-dropdown"
+                className="absolute left-0 right-0 top-full mt-1.5 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl p-2 z-50 animate-in fade-in slide-in-from-top-1 text-xs"
+              >
+                {searchTicker.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => handleSelectTicker(searchTicker)}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold flex items-center justify-between mb-1.5 transition-colors cursor-pointer"
+                  >
+                    <span>Analyze &quot;{searchTicker.trim().toUpperCase()}&quot;</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                )}
+
+                {/* Recents */}
+                {recentTickers.length > 0 && (
+                  <div className="mb-2">
+                    <div className="flex items-center justify-between px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                      <span>Recent Tickers</span>
+                      <button
+                        type="button"
+                        onClick={handleClearRecents}
+                        className="hover:text-foreground text-[10px] lowercase text-muted-foreground"
+                      >
+                        clear
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-1 px-1 pt-0.5">
+                      {recentTickers.map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => handleSelectTicker(t)}
+                          className={cn(
+                            "px-2 py-1 rounded-md text-xs font-mono font-bold transition-colors cursor-pointer",
+                            cleanSymbol === t
+                              ? "bg-amber-500 text-slate-950"
+                              : "bg-slate-800 hover:bg-slate-700 text-slate-200"
+                          )}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Popular FAST Graphs Tickers */}
+                <div>
+                  <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                    Popular Benchmarks
+                  </div>
+                  <div className="space-y-0.5 max-h-44 overflow-y-auto">
+                    {filteredPopularTickers.slice(0, 6).map((item) => (
+                      <button
+                        key={item.symbol}
+                        type="button"
+                        onClick={() => handleSelectTicker(item.symbol)}
+                        className={cn(
+                          "w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between transition-colors cursor-pointer",
+                          cleanSymbol === item.symbol
+                            ? "bg-amber-500/15 text-amber-300 font-bold"
+                            : "hover:bg-slate-800 text-slate-300"
+                        )}
+                      >
+                        <span className="font-mono font-bold">{item.symbol}</span>
+                        <span className="text-[11px] text-muted-foreground truncate max-w-[130px]">
+                          {item.name}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
