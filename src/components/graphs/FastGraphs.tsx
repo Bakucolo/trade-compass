@@ -20,6 +20,7 @@ import {
   Calculator,
   Info,
   Maximize2,
+  Minimize2,
   RefreshCw,
   X,
   Check,
@@ -45,11 +46,13 @@ import {
 } from '@/services/fastGraphsService';
 import { cn } from '@/lib/utils';
 
-interface FastGraphsProps {
+export interface FastGraphsProps {
   symbol: string;
   currentPrice?: number;
   onSelectSymbol?: (symbol: string) => void;
   onNavigateToResearch?: (symbol: string) => void;
+  isFullPage?: boolean;
+  onToggleFullPage?: () => void;
   className?: string;
 }
 
@@ -69,6 +72,8 @@ export function FastGraphs({
   currentPrice: overridePrice,
   onSelectSymbol,
   onNavigateToResearch,
+  isFullPage = false,
+  onToggleFullPage,
   className
 }: FastGraphsProps) {
   const cleanSymbol = (symbol || 'SOFI').trim().toUpperCase();
@@ -273,6 +278,34 @@ export function FastGraphs({
           >
             <RefreshCw className={cn("w-4 h-4", isFetching && "animate-spin text-primary")} />
           </Button>
+
+          {/* Full Page Mode Trigger Button */}
+          {onToggleFullPage && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onToggleFullPage}
+              className={cn(
+                "h-9 px-3 gap-1.5 text-xs font-bold rounded-xl shadow-sm transition-all cursor-pointer border",
+                isFullPage
+                  ? "border-rose-500/50 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 hover:text-white"
+                  : "border-cyan-500/50 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 hover:text-white"
+              )}
+              title={isFullPage ? "Exit Full Page Mode (or press Escape)" : "Expand FAST Graphs to Full Page"}
+            >
+              {isFullPage ? (
+                <>
+                  <Minimize2 className="w-3.5 h-3.5 text-rose-400" />
+                  <span>Exit Full Page</span>
+                </>
+              ) : (
+                <>
+                  <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Full Page</span>
+                </>
+              )}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -506,7 +539,7 @@ export function FastGraphs({
             )}
 
             {/* Recharts SVG Visualization */}
-            <div className="h-[480px] sm:h-[540px] w-full">
+            <div className={cn("w-full transition-all duration-300", isFullPage ? "h-[620px] lg:h-[720px]" : "h-[480px] sm:h-[540px]")}>
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart
                   data={series}

@@ -33,3 +33,4 @@ echo "📋 [Deploy] Current container status:"
 $COMPOSE_CMD ps
 
 echo "🎉 [Deploy] Trade Compass deployed successfully!"
+

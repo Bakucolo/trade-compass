@@ -373,5 +373,23 @@ describe('FAST Graphs Fundamental Valuation Visualizer', () => {
         expect(screen.getByText(/Annualized CAGR:/i)).toBeDefined();
       });
     });
+
+    it('renders Full Page button and triggers onToggleFullPage when clicked', async () => {
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const mockToggle = vi.fn();
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <FastGraphs symbol="SOFI" onToggleFullPage={mockToggle} isFullPage={false} />
+        </QueryClientProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /full page/i })).toBeDefined();
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /full page/i }));
+      expect(mockToggle).toHaveBeenCalledTimes(1);
+    });
   });
 });

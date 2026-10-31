@@ -1019,6 +1019,8 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
               currentPrice={activeItemDetails?.price}
               onSelectSymbol={handleSelectSymbol}
               onNavigateToResearch={onNavigateToResearch}
+              isFullPage={false}
+              onToggleFullPage={() => setIsFullPage(true)}
             />
           </div>
         ) : (
@@ -1368,33 +1370,72 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
                 />
               </div>
 
-              {/* RSI Toggle in Full Page */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowRsi(!showRsi)}
-                className={cn(
-                  "h-8 px-2.5 text-xs font-bold gap-1 rounded-xl transition-all border",
-                  showRsi
-                    ? "bg-purple-500/20 text-purple-300 border-purple-500/50 shadow-sm"
-                    : "bg-slate-900/60 text-muted-foreground border-border/60 hover:text-foreground"
-                )}
-                title={showRsi ? "Hide RSI Indicator" : "Show RSI Indicator (hidden by default)"}
-              >
-                <Activity className="w-3.5 h-3.5 text-purple-400" />
-                <span>RSI: {showRsi ? 'ON' : 'OFF'}</span>
-              </Button>
+              {/* View Mode Switcher in Full Page */}
+              <div className="flex items-center p-1 bg-slate-900 rounded-xl border border-white/10 font-mono text-xs">
+                <button
+                  onClick={() => {
+                    setGraphViewMode('TRADINGVIEW');
+                    localStorage.setItem('graphs_view_mode', 'TRADINGVIEW');
+                  }}
+                  className={cn(
+                    "px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer",
+                    graphViewMode === 'TRADINGVIEW'
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+                  )}
+                >
+                  <LineChart className="w-3.5 h-3.5" />
+                  <span>Technicals</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setGraphViewMode('FAST_GRAPHS');
+                    localStorage.setItem('graphs_view_mode', 'FAST_GRAPHS');
+                  }}
+                  className={cn(
+                    "px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer",
+                    graphViewMode === 'FAST_GRAPHS'
+                      ? "bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 font-black shadow-md"
+                      : "text-amber-400 hover:text-amber-300 hover:bg-amber-500/10"
+                  )}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>FAST Graphs</span>
+                </button>
+              </div>
 
-              {/* Technical Breakdown Button */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsTechModalOpen(true)}
-                className="h-8 px-2.5 text-xs font-semibold border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/10 gap-1.5 hidden md:flex rounded-xl"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Technical Levels</span>
-              </Button>
+              {/* Technical Mode Specific Controls */}
+              {graphViewMode === 'TRADINGVIEW' && (
+                <>
+                  {/* RSI Toggle in Full Page */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowRsi(!showRsi)}
+                    className={cn(
+                      "h-8 px-2.5 text-xs font-bold gap-1 rounded-xl transition-all border",
+                      showRsi
+                        ? "bg-purple-500/20 text-purple-300 border-purple-500/50 shadow-sm"
+                        : "bg-slate-900/60 text-muted-foreground border-border/60 hover:text-foreground"
+                    )}
+                    title={showRsi ? "Hide RSI Indicator" : "Show RSI Indicator (hidden by default)"}
+                  >
+                    <Activity className="w-3.5 h-3.5 text-purple-400" />
+                    <span>RSI: {showRsi ? 'ON' : 'OFF'}</span>
+                  </Button>
+
+                  {/* Technical Breakdown Button */}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsTechModalOpen(true)}
+                    className="h-8 px-2.5 text-xs font-semibold border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/10 gap-1.5 hidden md:flex rounded-xl"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Technical Levels</span>
+                  </Button>
+                </>
+              )}
             </div>
 
             {/* Right: Research & Exit Full Page */}
@@ -1426,16 +1467,29 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
             </div>
           </div>
 
-          {/* Full Page Chart Canvas */}
-          <div className="flex-1 w-full h-[calc(100vh-3.5rem)] relative bg-slate-950">
-            <TradingViewChart
-              key={`fullpage_${selectedSymbol}_${showRsi}`}
-              symbol={selectedSymbol}
-              theme="dark"
-              interval="D"
-              showRsi={showRsi}
-              className="w-full h-full border-0 rounded-none min-h-0"
-            />
+          {/* Full Page Chart Canvas / Content */}
+          <div className="flex-1 w-full h-[calc(100vh-3.5rem)] relative bg-slate-950 overflow-y-auto">
+            {graphViewMode === 'FAST_GRAPHS' ? (
+              <div className="p-4 sm:p-6 max-w-[1920px] mx-auto min-h-full">
+                <FastGraphs
+                  symbol={selectedSymbol}
+                  currentPrice={activeItemDetails?.price}
+                  onSelectSymbol={handleSelectSymbol}
+                  onNavigateToResearch={onNavigateToResearch}
+                  isFullPage={true}
+                  onToggleFullPage={() => setIsFullPage(false)}
+                />
+              </div>
+            ) : (
+              <TradingViewChart
+                key={`fullpage_${selectedSymbol}_${showRsi}`}
+                symbol={selectedSymbol}
+                theme="dark"
+                interval="D"
+                showRsi={showRsi}
+                className="w-full h-full border-0 rounded-none min-h-0"
+              />
+            )}
           </div>
         </div>
       )}
