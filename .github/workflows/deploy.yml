@@ -1,0 +1,50 @@
+name: Auto Deploy to Cloud Server
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-cloud
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Cloud VM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Remote Deployment via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER || 'ubuntu' }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          passphrase: ${{ secrets.SERVER_SSH_PASSPHRASE }}
+          script_stop: true
+          command_timeout: 30m
+          script: |
+            TARGET_DIR="${{ secrets.SERVER_APP_DIR || '~/trade-compass' }}"
+            # Expand tilde if present
+            TARGET_DIR="${TARGET_DIR/#\~/$HOME}"
+            echo "Navigating to $TARGET_DIR..."
+            cd "$TARGET_DIR"
+
+            if [ -f "./scripts/deploy.sh" ]; then
+              chmod +x ./scripts/deploy.sh
+              ./scripts/deploy.sh
+            else
+              echo "Pulling latest code..."
+              git fetch origin main
+              git reset --hard origin/main
+              if [ -f "./scripts/deploy.sh" ]; then
+                chmod +x ./scripts/deploy.sh
+                ./scripts/deploy.sh
+              else
+                docker compose up -d --build
+                docker image prune -f
+                docker compose ps
+              fi
+            fi
