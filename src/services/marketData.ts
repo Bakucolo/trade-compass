@@ -1,5 +1,5 @@
 import { tastytradeAuthService } from './tastytradeAuth';
-import { KNOWN_COMPANY_NAMES, getKnownCompanyName, searchKnownTickers } from './commonTickers';
+import { KNOWN_COMPANY_NAMES, getKnownCompanyName, searchKnownTickers, normalizeTickerSymbol } from './commonTickers';
 
 export const USE_STREAMING = false;
 
@@ -155,14 +155,16 @@ export const marketDataService = {
         const trimmed = (query || '').trim();
         if (!trimmed) return [];
 
-        const cacheKey = trimmed.toLowerCase();
+        const normalized = normalizeTickerSymbol(trimmed);
+        const cacheKey = (normalized || trimmed).toLowerCase();
         const cached = clientSearchCache.get(cacheKey);
         if (cached && Date.now() - cached.timestamp < CLIENT_SEARCH_CACHE_TTL && cached.data.length > 0) {
             return cached.data;
         }
 
         try {
-            const response = await fetchWithTimeout(`${API_URL}/research/search?query=${encodeURIComponent(trimmed)}`, {}, 6000);
+            const searchQuery = normalized || trimmed;
+            const response = await fetchWithTimeout(`${API_URL}/research/search?query=${encodeURIComponent(searchQuery)}`, {}, 6000);
             if (response.ok) {
                 const data = await response.json();
                 if (Array.isArray(data) && data.length > 0) {
@@ -170,9 +172,14 @@ export const marketDataService = {
                         const sym = (item.symbol || '').toUpperCase();
                         const knownName = getKnownCompanyName(sym);
                         const cleanName = (item.name && item.name !== sym) ? item.name : (knownName || item.name || sym);
+                        const isCanadian = /\.(TO|V|NE|CN)$/i.test(sym) || item.stockExchange === 'TOR' || item.stockExchange === 'VAN' || item.stockExchange === 'TSX' || item.stockExchange === 'TSXV';
+                        const exchangeDisplay = item.stockExchange === 'TOR' ? 'TSX' : (item.stockExchange === 'VAN' ? 'TSXV' : item.stockExchange || (isCanadian ? 'TSX' : 'US'));
                         return {
                             ...item,
-                            name: cleanName
+                            name: cleanName,
+                            currency: isCanadian ? 'CAD' : (item.currency || 'USD'),
+                            stockExchange: exchangeDisplay,
+                            exchangeShortName: exchangeDisplay
                         };
                     });
                     clientSearchCache.set(cacheKey, { data: enriched, timestamp: Date.now() });
@@ -184,7 +191,7 @@ export const marketDataService = {
         }
 
         // Instant fallback: Known ticker universe match
-        const localKnown = searchKnownTickers(trimmed, 8);
+        const localKnown = searchKnownTickers(trimmed, 10);
         if (localKnown.length > 0) {
             clientSearchCache.set(cacheKey, { data: localKnown, timestamp: Date.now() });
             return localKnown;
@@ -199,17 +206,19 @@ export const marketDataService = {
                     const data = await fhRes.json();
                     if (data?.result && Array.isArray(data.result) && data.result.length > 0) {
                         const fhResults = data.result
-                            .filter((r: any) => r && r.symbol && !r.symbol.includes('.'))
+                            .filter((r: any) => r && r.symbol && (!r.symbol.includes('.') || /\.(TO|V|NE|CN|L|DE)$/i.test(r.symbol)))
                             .slice(0, 10)
                             .map((r: any) => {
                                 const sym = (r.symbol || '').toUpperCase();
                                 const knownName = getKnownCompanyName(sym);
+                                const isCanadian = /\.(TO|V|NE|CN)$/i.test(sym);
+                                const exchangeDisplay = isCanadian ? (sym.endsWith('.V') ? 'TSXV' : 'TSX') : (r.type || 'US');
                                 return {
                                     symbol: sym,
                                     name: r.description || knownName || r.displaySymbol || sym,
-                                    currency: 'USD',
-                                    stockExchange: r.type || 'US',
-                                    exchangeShortName: r.type || 'US'
+                                    currency: isCanadian ? 'CAD' : 'USD',
+                                    stockExchange: exchangeDisplay,
+                                    exchangeShortName: exchangeDisplay
                                 };
                             });
                         clientSearchCache.set(cacheKey, { data: fhResults, timestamp: Date.now() });
@@ -221,16 +230,18 @@ export const marketDataService = {
             }
         }
 
-        // Direct ticker synthesis fallback (e.g. user typed AAPL or NVDA)
-        if (/^[A-Za-z0-9\.\-\=]{1,10}$/.test(trimmed)) {
-            const sym = trimmed.toUpperCase();
+        // Direct ticker synthesis fallback (e.g. user typed AAPL, NVDA, TSX:SHOP, SHOP.TO, YTY)
+        if (/^[A-Za-z0-9\.\-\=\:]{1,15}$/.test(trimmed)) {
+            const sym = normalizeTickerSymbol(trimmed.toUpperCase());
             const knownName = getKnownCompanyName(sym);
+            const isCanadian = /\.(TO|V|NE|CN)$/i.test(sym);
+            const exchangeDisplay = isCanadian ? (sym.endsWith('.V') ? 'TSXV' : 'TSX') : 'US';
             const fallbackResult = [{
                 symbol: sym,
                 name: knownName || sym,
-                currency: 'USD',
-                stockExchange: 'US',
-                exchangeShortName: 'US'
+                currency: isCanadian ? 'CAD' : 'USD',
+                stockExchange: exchangeDisplay,
+                exchangeShortName: exchangeDisplay
             }];
             clientSearchCache.set(cacheKey, { data: fallbackResult, timestamp: Date.now() });
             return fallbackResult;
@@ -241,10 +252,11 @@ export const marketDataService = {
 
     getQuote: async (symbol: string): Promise<StockQuote | null> => {
         const isOccSymbol = /^[A-Z\s]{6}\d{6}[CP]\d{8}$/.test(symbol) || /^[A-Z]+\s*\d{6}[CP]\d{8}$/.test(symbol);
+        const lookupSym = isOccSymbol ? symbol : normalizeTickerSymbol(symbol);
 
         // Check Cache first
-        if (!isOccSymbol && quoteCache.has(symbol)) {
-            const cached = quoteCache.get(symbol)!;
+        if (!isOccSymbol && quoteCache.has(lookupSym)) {
+            const cached = quoteCache.get(lookupSym)!;
             if (Date.now() - cached.timestamp < CACHE_TTL_MS) {
                 return cached.promise;
             }
@@ -256,11 +268,11 @@ export const marketDataService = {
             let tastyPromise = Promise.resolve(null);
 
             if (USE_STREAMING || isOccSymbol) {
-                tastyPromise = fetchFromTastytrade(symbol);
+                tastyPromise = fetchFromTastytrade(lookupSym);
             }
 
             if (!isOccSymbol) {
-                yahooPromise = fetchFromYahoo(symbol);
+                yahooPromise = fetchFromYahoo(lookupSym);
             }
 
             const [yahooData, tastyData] = await Promise.all([yahooPromise, tastyPromise]);

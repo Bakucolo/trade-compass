@@ -218,7 +218,7 @@ import { createAuthRouter } from './routes/authRoutes';
 import { requireAuth } from './auth';
 import { autoCreateAlertsFromText } from './services/thoughtLogAlertService';
 import { SYMBOL_ALIASES, resolveYahooFinanceSymbol, getCanonicalCompanyName } from './services/tickerResolutionService';
-import { KNOWN_COMPANY_NAMES, getKnownCompanyName } from './services/commonTickers';
+import { KNOWN_COMPANY_NAMES, getKnownCompanyName, normalizeTickerSymbol } from './services/commonTickers';
 import { analyzeImpliedExpectations } from './services/impliedExpectationsService';
 export { SYMBOL_ALIASES, resolveYahooFinanceSymbol, getCanonicalCompanyName };
 import {
@@ -5116,7 +5116,15 @@ app.get('/api/research/reports', async (req, res) => {
 app.get('/api/research/reports/symbol/:symbol', async (req, res) => {
   try {
     const { symbol } = req.params;
-    const cleanSymbol = symbol.trim().toUpperCase();
+    let cleanSymbol = normalizeTickerSymbol(symbol);
+    if (!cleanSymbol.includes('.')) {
+      const known = KNOWN_COMPANY_NAMES[cleanSymbol];
+      if (known?.exchange === 'TSXV' && KNOWN_COMPANY_NAMES[`${cleanSymbol}.V`]) {
+        cleanSymbol = `${cleanSymbol}.V`;
+      } else if (known?.exchange === 'TSX' && KNOWN_COMPANY_NAMES[`${cleanSymbol}.TO`]) {
+        cleanSymbol = `${cleanSymbol}.TO`;
+      }
+    }
 
     const reports = await prisma.autonomousReport.findMany({
       where: { symbol: cleanSymbol },
@@ -5488,23 +5496,48 @@ const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 // Generic Symbol Search API (Fast Query2 + Yahoo Finance + Finnhub + Local Known Names)
 app.get('/api/research/search', async (req, res) => {
   try {
-    const query = (req.query.query as string || '').trim();
-    if (!query) return res.json([]);
+    const rawQuery = (req.query.query as string || '').trim();
+    if (!rawQuery) return res.json([]);
 
-    const cacheKey = query.toLowerCase();
+    const normalizedQuery = normalizeTickerSymbol(rawQuery);
+    const cacheKey = (normalizedQuery || rawQuery).toLowerCase();
     const cached = searchCache.get(cacheKey);
     if (cached && Date.now() < cached.expiresAt && cached.results.length > 0) {
       return res.json(cached.results);
     }
 
-  logToFile(`Searching ticker for query: "${query}"`);
+  logToFile(`Searching ticker for query: "${rawQuery}" (normalized: "${normalizedQuery}")`);
   let results: any[] = [];
+
+  // Helper to map and tag Canadian and international exchanges correctly
+  const mapQuoteResult = (q: any) => {
+    const sym = q.symbol.toUpperCase();
+    const rawName = q.shortname || q.longname || q.name;
+    const known = KNOWN_COMPANY_NAMES[sym];
+    const name = (rawName && rawName.trim().length > 0 && rawName.trim() !== sym)
+      ? rawName.trim()
+      : (known?.name || sym);
+    const isCanadian = /\.(TO|V|NE|CN)$/i.test(sym) || q.exchange === 'TOR' || q.exchange === 'VAN' || q.exchDisp === 'Toronto' || q.exchDisp === 'TSX' || q.exchDisp === 'TSXV';
+    const exchangeDisplay = q.exchange === 'TOR' || q.exchDisp === 'Toronto' || q.exchDisp === 'TSX'
+      ? 'TSX'
+      : (q.exchange === 'VAN' || q.exchDisp === 'TSXV' ? 'TSXV' : (q.exchange === 'NEO' ? 'NEO' : (q.exchange === 'CNQ' ? 'CSE' : q.exchDisp || q.exchange || known?.exchange || 'US')));
+
+    return {
+      symbol: sym,
+      name: name,
+      currency: isCanadian ? 'CAD' : (q.currency || 'USD'),
+      stockExchange: exchangeDisplay,
+      exchangeShortName: exchangeDisplay,
+      quoteType: q.quoteType || 'EQUITY'
+    };
+  };
 
   // 1. Direct Yahoo Finance Query2 fetch with fast 2500ms timeout
   const query2Controller = new AbortController();
   const query2Timeout = setTimeout(() => query2Controller.abort(), 2500);
   try {
-    const yqUrl = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=12&newsCount=0`;
+    const targetQuery = normalizedQuery || rawQuery;
+    const yqUrl = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(targetQuery)}&quotesCount=20&newsCount=0`;
     const yqRes = await fetch(yqUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -5518,25 +5551,10 @@ app.get('/api/research/search', async (req, res) => {
       const quotes = data?.quotes || [];
       results = quotes
         .filter((q: any) => q && q.symbol && typeof q.symbol === 'string' && q.quoteType !== 'OPTION')
-        .map((q: any) => {
-          const sym = q.symbol.toUpperCase();
-          const rawName = q.shortname || q.longname || q.name;
-          const known = KNOWN_COMPANY_NAMES[sym];
-          const name = (rawName && rawName.trim().length > 0 && rawName.trim() !== sym)
-            ? rawName.trim()
-            : (known?.name || sym);
-          return {
-            symbol: sym,
-            name: name,
-            currency: 'USD',
-            stockExchange: q.exchDisp || q.exchange || known?.exchange || 'US',
-            exchangeShortName: q.exchange || q.exchDisp || known?.exchange || 'US',
-            quoteType: q.quoteType || 'EQUITY'
-          };
-        });
+        .map(mapQuoteResult);
     }
   } catch (err: any) {
-    logToFile(`Direct Yahoo query2 error for "${query}": ${err?.message || err}`);
+    logToFile(`Direct Yahoo query2 error for "${rawQuery}": ${err?.message || err}`);
   } finally {
     clearTimeout(query2Timeout);
   }
@@ -5544,30 +5562,17 @@ app.get('/api/research/search', async (req, res) => {
   // 2. Fallback to yahooFinance.search if Query2 returned 0 results
   if (results.length === 0) {
     try {
-      const searchPromise = yahooFinance.search(query, { newsCount: 0, quotesCount: 10 }) as Promise<any>;
+      const targetQuery = normalizedQuery || rawQuery;
+      const searchPromise = yahooFinance.search(targetQuery, { newsCount: 0, quotesCount: 15 }) as Promise<any>;
       const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Yahoo search timeout')), 1800));
       const searchData: any = await Promise.race([searchPromise, timeoutPromise]);
       const quotes = searchData?.quotes || [];
 
       results = quotes
         .filter((q: any) => q && q.symbol && typeof q.symbol === 'string' && q.quoteType !== 'OPTION')
-        .map((q: any) => {
-          const sym = q.symbol.toUpperCase();
-          const rawName = q.shortname || q.longname || q.name;
-          const known = KNOWN_COMPANY_NAMES[sym];
-          const name = (rawName && rawName.trim().length > 0 && rawName.trim() !== sym)
-            ? rawName.trim()
-            : (known?.name || sym);
-          return {
-            symbol: sym,
-            name: name,
-            currency: 'USD',
-            stockExchange: q.exchange || q.exchDisp || known?.exchange || 'US',
-            exchangeShortName: q.exchDisp || q.exchange || known?.exchange || 'US'
-          };
-        });
+        .map(mapQuoteResult);
     } catch (err: any) {
-      logToFile(`Yahoo search fallback error for "${query}": ${err?.message || err}`);
+      logToFile(`Yahoo search fallback error for "${rawQuery}": ${err?.message || err}`);
     }
   }
 
@@ -5576,13 +5581,14 @@ app.get('/api/research/search', async (req, res) => {
     const finnhubKey = process.env.VITE_FINNHUB_API_KEY || process.env.FINNHUB_API_KEY;
     if (finnhubKey) {
       try {
-        logToFile(`Trying Finnhub search fallback for "${query}"...`);
-        const fhRes = await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(query)}&token=${finnhubKey}`);
+        logToFile(`Trying Finnhub search fallback for "${rawQuery}"...`);
+        const targetQuery = normalizedQuery || rawQuery;
+        const fhRes = await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(targetQuery)}&token=${finnhubKey}`);
         if (fhRes.ok) {
           const data: any = await fhRes.json();
           if (data?.result && Array.isArray(data.result)) {
             results = data.result
-              .filter((r: any) => r && r.symbol && !r.symbol.includes('.'))
+              .filter((r: any) => r && r.symbol && (!r.symbol.includes('.') || /\.(TO|V|NE|CN|L|DE)$/i.test(r.symbol)))
               .slice(0, 10)
               .map((r: any) => {
                 const sym = r.symbol.toUpperCase();
@@ -5591,35 +5597,39 @@ app.get('/api/research/search', async (req, res) => {
                 const name = (rawName && rawName.trim().length > 0 && rawName.trim() !== sym)
                   ? rawName.trim()
                   : (known?.name || sym);
+                const isCanadian = /\.(TO|V|NE|CN)$/i.test(sym);
+                const exchangeDisplay = isCanadian ? (sym.endsWith('.V') ? 'TSXV' : 'TSX') : (r.type || known?.exchange || 'US');
                 return {
                   symbol: sym,
                   name: name,
-                  currency: 'USD',
-                  stockExchange: r.type || known?.exchange || 'US',
-                  exchangeShortName: r.type || known?.exchange || 'US'
+                  currency: isCanadian ? 'CAD' : 'USD',
+                  stockExchange: exchangeDisplay,
+                  exchangeShortName: exchangeDisplay
                 };
               });
           }
         }
       } catch (fhErr: any) {
-        logToFile(`Finnhub search error for "${query}": ${fhErr?.message || fhErr}`);
+        logToFile(`Finnhub search error for "${rawQuery}": ${fhErr?.message || fhErr}`);
       }
     }
   }
 
   // 4. Enrich with Local Known Universe and Database Holdings
-  const qUpper = query.toUpperCase();
-  const qLower = query.toLowerCase();
+  const qUpper = rawQuery.toUpperCase();
+  const qNorm = normalizedQuery.toUpperCase();
+  const qLower = rawQuery.toLowerCase();
 
   // If results are empty or few, search known dictionary
   if (results.length < 5) {
     for (const [sym, info] of Object.entries(KNOWN_COMPANY_NAMES)) {
       if (results.some((r) => r.symbol === sym)) continue;
-      if (sym === qUpper || sym.startsWith(qUpper) || info.name.toLowerCase().includes(qLower)) {
+      if (sym === qUpper || sym === qNorm || sym.startsWith(qUpper) || sym.startsWith(qNorm) || info.name.toLowerCase().includes(qLower)) {
+        const isCanadian = /\.(TO|V|NE|CN)$/i.test(sym);
         results.push({
           symbol: sym,
           name: info.name,
-          currency: 'USD',
+          currency: isCanadian ? 'CAD' : 'USD',
           stockExchange: info.exchange,
           exchangeShortName: info.exchange
         });
@@ -5635,7 +5645,8 @@ app.get('/api/research/search', async (req, res) => {
         where: {
           OR: [
             { symbol: { contains: qUpper } },
-            { description: { contains: query } }
+            { symbol: { contains: qNorm } },
+            { description: { contains: rawQuery } }
           ]
         },
         select: { symbol: true, description: true },
@@ -5658,16 +5669,18 @@ app.get('/api/research/search', async (req, res) => {
     }
   }
 
-  // 5. Final fallback for ticker-like queries (e.g. "AAPL", "BTC-USD")
-  if (results.length === 0 && /^[A-Za-z0-9\.\-\=]{1,10}$/.test(query)) {
-    const cleanSym = query.toUpperCase();
+  // 5. Final fallback for ticker-like queries (e.g. "AAPL", "SHOP.TO", "TSX:RY")
+  if (results.length === 0 && /^[A-Za-z0-9\.\-\=\:]{1,15}$/.test(rawQuery)) {
+    const cleanSym = normalizeTickerSymbol(rawQuery.toUpperCase());
     const known = KNOWN_COMPANY_NAMES[cleanSym];
+    const isCanadian = /\.(TO|V|NE|CN)$/i.test(cleanSym);
+    const exchangeDisplay = isCanadian ? (cleanSym.endsWith('.V') ? 'TSXV' : 'TSX') : (known?.exchange || 'US');
     results = [{
       symbol: cleanSym,
       name: known?.name || cleanSym,
-      currency: 'USD',
-      stockExchange: known?.exchange || 'US',
-      exchangeShortName: known?.exchange || 'US'
+      currency: isCanadian ? 'CAD' : 'USD',
+      stockExchange: exchangeDisplay,
+      exchangeShortName: exchangeDisplay
     }];
   }
 
@@ -5683,28 +5696,129 @@ app.get('/api/research/search', async (req, res) => {
   }
 });
 
+// Helper to query direct Yahoo Chart API for resilient price & exchange resolution
+async function fetchDirectYahooChartQuote(sym: string): Promise<{ price: number; change: number; changePercent: number; currency: string; exchange: string; name?: string } | null> {
+  try {
+    const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      signal: AbortSignal.timeout(3500)
+    });
+    if (res.ok) {
+      const json: any = await res.json();
+      const meta = json?.chart?.result?.[0]?.meta;
+      if (meta && meta.regularMarketPrice != null && meta.regularMarketPrice > 0) {
+        const prevClose = meta.previousClose || meta.chartPreviousClose || meta.regularMarketPrice;
+        const change = meta.regularMarketPrice - prevClose;
+        const changePercent = prevClose > 0 ? (change / prevClose) * 100 : 0;
+        const isCanadian = /\.(TO|V|NE|CN)$/i.test(sym) || meta.currency === 'CAD';
+        return {
+          price: meta.regularMarketPrice,
+          change,
+          changePercent,
+          currency: isCanadian ? 'CAD' : (meta.currency || 'USD'),
+          exchange: meta.exchangeName === 'TOR' || sym.endsWith('.TO') ? 'TSX' : (meta.exchangeName === 'VAN' || sym.endsWith('.V') ? 'TSXV' : (meta.exchangeName || (isCanadian ? 'TSX' : 'US'))),
+          name: meta.shortName || meta.symbol
+        };
+      }
+    }
+  } catch {}
+  return null;
+}
+
 // Helper to fetch enriched fundamental data for a single symbol
 async function fetchEnrichedSymbolData(symbol: string) {
-  const cleanSymbol = symbol.trim().toUpperCase();
-  try {
-    const summary = await yahooFinance.quoteSummary(cleanSymbol, {
-      modules: ['price', 'summaryProfile', 'defaultKeyStatistics', 'financialData', 'summaryDetail']
-    });
+  let cleanSymbol = normalizeTickerSymbol(symbol);
 
-    const price = summary?.price;
+  // If symbol has no dot, check if known dictionary points to Canadian market (e.g. YTY -> YTY.V)
+  if (!cleanSymbol.includes('.')) {
+    const known = KNOWN_COMPANY_NAMES[cleanSymbol];
+    if (known?.exchange === 'TSXV' && KNOWN_COMPANY_NAMES[`${cleanSymbol}.V`]) {
+      cleanSymbol = `${cleanSymbol}.V`;
+    } else if (known?.exchange === 'TSX' && KNOWN_COMPANY_NAMES[`${cleanSymbol}.TO`]) {
+      cleanSymbol = `${cleanSymbol}.TO`;
+    }
+  }
+
+  try {
+    let summary: any = null;
+    try {
+      summary = await yahooFinance.quoteSummary(cleanSymbol, {
+        modules: ['price', 'summaryProfile', 'defaultKeyStatistics', 'financialData', 'summaryDetail']
+      }, { validateResult: false });
+    } catch (e: any) {
+      summary = null;
+    }
+
+    // If initial symbol lookup returned no price and has no suffix, try candidate Canadian suffixes
+    if ((!summary || summary?.price?.regularMarketPrice == null || summary.price.regularMarketPrice === 0) && !cleanSymbol.includes('.')) {
+      const canadianCandidates = [`${cleanSymbol}.TO`, `${cleanSymbol}.V`, `${cleanSymbol}.NE`, `${cleanSymbol}.CN`];
+      for (const cand of canadianCandidates) {
+        try {
+          const candSummary: any = await yahooFinance.quoteSummary(cand, {
+            modules: ['price', 'summaryProfile', 'defaultKeyStatistics', 'financialData', 'summaryDetail']
+          }, { validateResult: false });
+          if (candSummary?.price?.regularMarketPrice != null && candSummary.price.regularMarketPrice > 0) {
+            cleanSymbol = cand;
+            summary = candSummary;
+            break;
+          }
+        } catch {}
+      }
+    }
+
+    let price = summary?.price;
     const profile = summary?.summaryProfile;
     const stats = summary?.defaultKeyStatistics;
     const financials = summary?.financialData;
     const detail = summary?.summaryDetail;
 
+    let regularPrice = price?.regularMarketPrice ?? 0;
+    let regularChange = price?.regularMarketChange ?? 0;
+    let regularChangePercent = price?.regularMarketChangePercent ?? 0;
+    const isCanadian = /\.(TO|V|NE|CN)$/i.test(cleanSymbol) || price?.currency === 'CAD';
+    let currency = isCanadian ? 'CAD' : (price?.currency || 'USD');
+    let exchange = price?.exchangeName === 'TOR' || cleanSymbol.endsWith('.TO')
+      ? 'TSX'
+      : (price?.exchangeName === 'VAN' || cleanSymbol.endsWith('.V') ? 'TSXV' : (price?.exchangeName || (isCanadian ? 'TSX' : 'US')));
+
+    // If quoteSummary has no price, fallback to direct chart API
+    if (regularPrice === 0) {
+      const chartQuote = await fetchDirectYahooChartQuote(cleanSymbol);
+      if (chartQuote && chartQuote.price > 0) {
+        regularPrice = chartQuote.price;
+        regularChange = chartQuote.change;
+        regularChangePercent = chartQuote.changePercent;
+        currency = chartQuote.currency;
+        exchange = chartQuote.exchange;
+      } else if (!cleanSymbol.includes('.')) {
+        // Try chart on candidates
+        for (const cand of [`${cleanSymbol}.TO`, `${cleanSymbol}.V`, `${cleanSymbol}.NE`]) {
+          const candChart = await fetchDirectYahooChartQuote(cand);
+          if (candChart && candChart.price > 0) {
+            cleanSymbol = cand;
+            regularPrice = candChart.price;
+            regularChange = candChart.change;
+            regularChangePercent = candChart.changePercent;
+            currency = candChart.currency;
+            exchange = candChart.exchange;
+            break;
+          }
+        }
+      }
+    }
+
+    const companyName = price?.shortName || price?.longName || KNOWN_COMPANY_NAMES[cleanSymbol]?.name || cleanSymbol;
+
     return {
       symbol: cleanSymbol,
-      name: price?.shortName || price?.longName || cleanSymbol,
-      price: price?.regularMarketPrice ?? 0,
-      change: price?.regularMarketChange ?? 0,
-      changePercent: price?.regularMarketChangePercent ?? 0,
-      sector: profile?.sector || 'General',
+      name: companyName,
+      price: regularPrice,
+      change: regularChange,
+      changePercent: regularChangePercent,
+      sector: profile?.sector || KNOWN_COMPANY_NAMES[cleanSymbol]?.sector || 'General',
       industry: profile?.industry || 'N/A',
+      currency,
+      exchange,
       marketCap: price?.marketCap ?? detail?.marketCap ?? null,
       pe: detail?.trailingPE ?? detail?.forwardPE ?? null,
       ps: detail?.priceToSalesTrailing12Months ?? null,
@@ -5719,14 +5833,17 @@ async function fetchEnrichedSymbolData(symbol: string) {
     };
   } catch (err: any) {
     logToFile(`Enrichment failed for ${cleanSymbol}: ${err.message}`);
+    const isCanadian = /\.(TO|V|NE|CN)$/i.test(cleanSymbol);
     return {
       symbol: cleanSymbol,
-      name: cleanSymbol,
+      name: KNOWN_COMPANY_NAMES[cleanSymbol]?.name || cleanSymbol,
       price: 0,
       change: 0,
       changePercent: 0,
-      sector: 'N/A',
+      sector: KNOWN_COMPANY_NAMES[cleanSymbol]?.sector || 'N/A',
       industry: 'N/A',
+      currency: isCanadian ? 'CAD' : 'USD',
+      exchange: isCanadian ? (cleanSymbol.endsWith('.V') ? 'TSXV' : 'TSX') : 'US',
       marketCap: null,
       pe: null,
       ps: null,
@@ -5855,7 +5972,15 @@ app.post('/api/watchlists/:id/symbols', async (req, res) => {
       return res.status(400).json({ error: 'Symbol is required.' });
     }
 
-    const cleanSymbol = symbol.trim().toUpperCase();
+    let cleanSymbol = normalizeTickerSymbol(symbol);
+    if (!cleanSymbol.includes('.')) {
+      const known = KNOWN_COMPANY_NAMES[cleanSymbol];
+      if (known?.exchange === 'TSXV' && KNOWN_COMPANY_NAMES[`${cleanSymbol}.V`]) {
+        cleanSymbol = `${cleanSymbol}.V`;
+      } else if (known?.exchange === 'TSX' && KNOWN_COMPANY_NAMES[`${cleanSymbol}.TO`]) {
+        cleanSymbol = `${cleanSymbol}.TO`;
+      }
+    }
 
     // Check if already in watchlist
     const existing = await prisma.watchlistItem.findUnique({
@@ -5897,8 +6022,8 @@ app.post('/api/watchlists/:id/symbols/bulk', async (req, res) => {
     const cleanSymbols = Array.from(
       new Set(
         symbols
-          .map((s) => (typeof s === 'string' ? s.trim().toUpperCase() : ''))
-          .filter((s) => s.length > 0 && s.length <= 10)
+          .map((s) => (typeof s === 'string' ? normalizeTickerSymbol(s) : ''))
+          .filter((s) => s.length > 0 && s.length <= 15)
       )
     );
 
@@ -5962,8 +6087,8 @@ app.post('/api/watchlists/bulk-create', async (req, res) => {
       ? Array.from(
           new Set(
             symbols
-              .map((s) => (typeof s === 'string' ? s.trim().toUpperCase() : ''))
-              .filter((s) => s.length > 0 && s.length <= 10)
+              .map((s) => (typeof s === 'string' ? normalizeTickerSymbol(s) : ''))
+              .filter((s) => s.length > 0 && s.length <= 15)
           )
         )
       : [];
@@ -6048,16 +6173,16 @@ app.post('/api/watchlists/resolve-bulk', async (req, res) => {
         }
 
         // 2. Separate symbol/name from remaining notes
-        // Clean punctuation like colons, parentheses
+        // Clean punctuation like parentheses while preserving colon in prefixes like TSX:SHOP
         const cleanTokens = working
-          .replace(/[():;=]/g, ' ')
+          .replace(/[();=]/g, ' ')
           .split(/\s+/)
           .map(t => t.trim())
           .filter(Boolean);
 
         if (cleanTokens.length === 0) continue;
 
-        const symbolOrNameCandidate = cleanTokens[0];
+        const symbolOrNameCandidate = normalizeTickerSymbol(cleanTokens[0]);
         const remainingNotes = cleanTokens.slice(1).join(' ').trim();
 
         entriesToProcess.push({
@@ -6080,7 +6205,7 @@ app.post('/api/watchlists/resolve-bulk', async (req, res) => {
     // Parallel Resolution of Symbols (Ticker or Name lookup)
     const resolvedItems = await Promise.all(
       cappedEntries.map(async (entry) => {
-        let sym = entry.symbolOrName.toUpperCase().replace(/[^A-Z0-9\.\^\-]/g, '');
+        let sym = normalizeTickerSymbol(entry.symbolOrName);
         let companyName = entry.symbolOrName;
         let sector = 'Equities';
 
@@ -6136,6 +6261,17 @@ app.post('/api/watchlists/resolve-bulk', async (req, res) => {
             }
           } catch (err: any) {
             errorMsg = err?.message || 'Symbol not found on market';
+          }
+        }
+
+        if (!isValid) {
+          const directChart = await fetchDirectYahooChartQuote(sym);
+          if (directChart && directChart.price > 0) {
+            currentPrice = directChart.price;
+            dayChangePercent = directChart.changePercent;
+            companyName = directChart.name || companyName;
+            isValid = true;
+            errorMsg = undefined;
           }
         }
 
@@ -6204,7 +6340,15 @@ app.post('/api/watchlists/ai-topic-lookup', async (req, res) => {
 app.delete('/api/watchlists/:id/symbols/:symbol', async (req, res) => {
   try {
     const { id, symbol } = req.params;
-    const cleanSymbol = symbol.trim().toUpperCase();
+    let cleanSymbol = normalizeTickerSymbol(symbol);
+    if (!cleanSymbol.includes('.')) {
+      const known = KNOWN_COMPANY_NAMES[cleanSymbol];
+      if (known?.exchange === 'TSXV' && KNOWN_COMPANY_NAMES[`${cleanSymbol}.V`]) {
+        cleanSymbol = `${cleanSymbol}.V`;
+      } else if (known?.exchange === 'TSX' && KNOWN_COMPANY_NAMES[`${cleanSymbol}.TO`]) {
+        cleanSymbol = `${cleanSymbol}.TO`;
+      }
+    }
 
     await prisma.watchlistItem.deleteMany({
       where: {
@@ -6492,7 +6636,15 @@ app.post('/api/alerts', async (req, res) => {
     if (!symbol || typeof symbol !== 'string') {
       return res.status(400).json({ error: 'Symbol is required.' });
     }
-    const cleanSymbol = symbol.trim().toUpperCase();
+    let cleanSymbol = normalizeTickerSymbol(symbol);
+    if (!cleanSymbol.includes('.')) {
+      const known = KNOWN_COMPANY_NAMES[cleanSymbol];
+      if (known?.exchange === 'TSXV' && KNOWN_COMPANY_NAMES[`${cleanSymbol}.V`]) {
+        cleanSymbol = `${cleanSymbol}.V`;
+      } else if (known?.exchange === 'TSX' && KNOWN_COMPANY_NAMES[`${cleanSymbol}.TO`]) {
+        cleanSymbol = `${cleanSymbol}.TO`;
+      }
+    }
     const numTarget = Number(targetPrice);
 
     if (isNaN(numTarget) || numTarget <= 0) {
@@ -6966,7 +7118,15 @@ app.post('/api/notes', async (req, res) => {
     if (!symbol || typeof symbol !== 'string') {
       return res.status(400).json({ error: 'Symbol is required.' });
     }
-    const cleanSymbol = symbol.trim().toUpperCase();
+    let cleanSymbol = normalizeTickerSymbol(symbol);
+    if (!cleanSymbol.includes('.')) {
+      const known = KNOWN_COMPANY_NAMES[cleanSymbol];
+      if (known?.exchange === 'TSXV' && KNOWN_COMPANY_NAMES[`${cleanSymbol}.V`]) {
+        cleanSymbol = `${cleanSymbol}.V`;
+      } else if (known?.exchange === 'TSX' && KNOWN_COMPANY_NAMES[`${cleanSymbol}.TO`]) {
+        cleanSymbol = `${cleanSymbol}.TO`;
+      }
+    }
     const cleanContent = typeof content === 'string' ? content : '';
     const cleanTags = tags ? String(tags).trim() : null;
     const cleanSentiment = sentiment ? String(sentiment).toUpperCase() : null;
@@ -7257,7 +7417,15 @@ app.post('/api/ideas', async (req, res) => {
       return res.status(400).json({ error: 'Symbol is required.' });
     }
 
-    const cleanSymbol = symbol.trim().toUpperCase();
+    let cleanSymbol = normalizeTickerSymbol(symbol);
+    if (!cleanSymbol.includes('.')) {
+      const known = KNOWN_COMPANY_NAMES[cleanSymbol];
+      if (known?.exchange === 'TSXV' && KNOWN_COMPANY_NAMES[`${cleanSymbol}.V`]) {
+        cleanSymbol = `${cleanSymbol}.V`;
+      } else if (known?.exchange === 'TSX' && KNOWN_COMPANY_NAMES[`${cleanSymbol}.TO`]) {
+        cleanSymbol = `${cleanSymbol}.TO`;
+      }
+    }
 
     // Auto-fetch entry price if missing
     let resolvedEntry = entryPrice ? Number(entryPrice) : null;

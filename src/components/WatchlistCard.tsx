@@ -25,6 +25,7 @@ import {
   useAddSymbolToWatchlist,
   useRemoveSymbolFromWatchlist,
 } from '@/services/watchlistService';
+import { normalizeTickerSymbol } from '@/services/commonTickers';
 import { marketDataService } from '@/services/marketData';
 import { useStockNotesMap } from '@/services/noteService';
 import { getCompanyStyleAndThemes, STYLE_CONFIG, getThemeBadgeStyle } from '@/services/stockThematics';
@@ -150,8 +151,9 @@ export function WatchlistCard({ onNavigateToWatchlist, onNavigateToResearch, onN
 
   // Add ticker to active watchlist
   const handleAddSymbol = async (symbolToAdd?: string) => {
-    const sym = (symbolToAdd || newSymbolInput).trim().toUpperCase();
-    if (!sym || !activeWatchlist?.id) return;
+    const rawSym = (symbolToAdd || newSymbolInput).trim().toUpperCase();
+    if (!rawSym || !activeWatchlist?.id) return;
+    const sym = normalizeTickerSymbol(rawSym);
 
     setIsAdding(true);
     try {

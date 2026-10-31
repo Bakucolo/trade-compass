@@ -62,6 +62,7 @@ import {
   useRemoveSymbolFromWatchlist,
   EnrichedStockItem,
 } from '@/services/watchlistService';
+import { normalizeTickerSymbol } from '@/services/commonTickers';
 import { marketDataService } from '@/services/marketData';
 import { useResearchDossier, useAIAnalysis } from '@/services/researchData';
 import { useAlerts } from '@/services/alertService';
@@ -185,14 +186,14 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
       try {
         const results = await marketDataService.searchSymbols(trimmed);
         if (isMounted) {
-          setSuggestions((results || []).slice(0, 5));
+          setSuggestions((results || []).slice(0, 10));
         }
       } catch (err) {
         console.warn('Suggestion search failed', err);
       } finally {
         if (isMounted) setIsSearchingSuggestions(false);
       }
-    }, 300);
+    }, 250);
 
     return () => {
       isMounted = false;
@@ -202,8 +203,10 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
 
   // Quick addition action
   const handleAddTicker = async (tickerToAdd?: string) => {
-    const symbol = (tickerToAdd || newTickerInput).trim().toUpperCase();
-    if (!symbol || !selectedWatchlistId) return;
+    const rawSymbol = (tickerToAdd || newTickerInput).trim().toUpperCase();
+    if (!rawSymbol || !selectedWatchlistId) return;
+
+    const symbol = normalizeTickerSymbol(rawSymbol);
 
     try {
       await addSymbolMutation.mutateAsync({
@@ -626,51 +629,109 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
       </div>
 
       {/* Quick Add Search Bar & Table Controls */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+      <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-4">
         {/* Quick Add Stock Box */}
-        <div className="lg:col-span-7 space-y-2">
-          <div className="relative">
-            <div className="flex items-center gap-2">
-              <div className="relative flex-1">
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-primary/70" />
-                <Input
-                  placeholder={`Add symbol to "${activeWatchlist?.name || 'Watchlist'}" (e.g. AAPL, NVDA, TSLA, ORA)... Press Enter`}
-                  value={newTickerInput}
-                  onChange={(e) => setNewTickerInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handleAddTicker();
-                    }
+        <div className="flex-1 w-full space-y-2">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Dedicated prominent search input with ample min-width and attached suggestions */}
+            <div className="relative flex-1 min-w-[280px] sm:min-w-[340px]" style={{ minWidth: '280px' }}>
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-primary pointer-events-none" />
+              <Input
+                placeholder={`Search or add ticker (e.g. SHOP.TO, RY.TO, AAPL, NVDA, YTY)... Press Enter`}
+                value={newTickerInput}
+                onChange={(e) => setNewTickerInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleAddTicker();
+                  }
+                }}
+                autoComplete="off"
+                spellCheck="false"
+                style={{ minWidth: '280px', width: '100%' }}
+                className="pl-10 pr-10 h-11 bg-card/90 border-primary/40 focus:border-primary text-foreground text-sm font-semibold shadow-inner placeholder:text-muted-foreground/70 selection:bg-primary/30"
+              />
+              {isSearchingSuggestions ? (
+                <Loader2 className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-primary pointer-events-none" />
+              ) : newTickerInput ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewTickerInput('');
+                    setSuggestions([]);
                   }}
-                  className="pl-10 pr-10 h-11 bg-card/70 border-primary/20 focus:border-primary text-sm font-medium shadow-inner"
-                />
-                {isSearchingSuggestions && (
-                  <Loader2 className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-primary" />
-                )}
-              </div>
-              <Button
-                variant="glow"
-                className="h-11 px-4 gap-1.5 font-semibold bg-primary text-primary-foreground shrink-0"
-                onClick={() => handleAddTicker()}
-                disabled={addSymbolMutation.isPending || !newTickerInput.trim()}
-              >
-                {addSymbolMutation.isPending ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <>
-                    <Plus className="w-4 h-4" /> Add Stock
-                  </>
-                )}
-              </Button>
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+                  title="Clear search text"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              ) : null}
 
+              {/* Suggestions Dropdown anchored directly to search box */}
+              {suggestions.length > 0 && (
+                <div className="absolute z-30 top-full left-0 right-0 mt-1.5 bg-popover/95 backdrop-blur-xl border border-primary/30 rounded-xl shadow-2xl overflow-hidden p-1.5 max-h-[320px] overflow-y-auto">
+                  {suggestions.map((item) => {
+                    const isCanadian = item.symbol.endsWith('.TO') || item.symbol.endsWith('.V') || item.stockExchange === 'TSX' || item.stockExchange === 'TSXV' || item.stockExchange === 'TOR' || item.stockExchange === 'VAN';
+                    const exchangeLabel = item.stockExchange === 'TOR' ? 'TSX' : (item.stockExchange === 'VAN' ? 'TSXV' : item.stockExchange || (isCanadian ? 'TSX' : 'US'));
+
+                    return (
+                      <button
+                        key={item.symbol}
+                        onClick={() => handleAddTicker(item.symbol)}
+                        className="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-primary/15 rounded-lg text-left transition-colors group"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="font-mono font-bold text-foreground text-sm group-hover:text-primary transition-colors">
+                            {item.symbol}
+                          </span>
+                          <span className="text-xs text-muted-foreground truncate max-w-[200px] sm:max-w-[280px]">
+                            {item.name}
+                          </span>
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-[10px] px-1.5 py-0 font-mono shrink-0 font-semibold",
+                              isCanadian
+                                ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                                : "bg-muted text-muted-foreground"
+                            )}
+                          >
+                            {exchangeLabel}
+                          </Badge>
+                        </div>
+                        <span className="text-xs text-primary font-semibold flex items-center gap-1 shrink-0 ml-2">
+                          <Plus className="w-3.5 h-3.5" /> Add
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <Button
+              variant="glow"
+              className="h-11 px-4 gap-1.5 font-semibold bg-primary text-primary-foreground shrink-0 shadow-sm"
+              onClick={() => handleAddTicker()}
+              disabled={addSymbolMutation.isPending || !newTickerInput.trim()}
+            >
+              {addSymbolMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  <Plus className="w-4 h-4" /> Add Stock
+                </>
+              )}
+            </Button>
+
+            <div className="flex items-center gap-1.5 shrink-0">
               <Button
                 variant="outline"
-                className="h-11 px-3.5 gap-1.5 font-semibold border-purple-500/40 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 shadow-sm shrink-0 group"
+                className="h-11 px-3 gap-1.5 font-semibold border-purple-500/40 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 shadow-sm group"
                 onClick={() => setIsAiThematicModalOpen(true)}
                 title={`AI Agent: Look up and add stocks related to "${activeWatchlist?.name || 'this topic'}"`}
               >
                 <Bot className="w-4 h-4 text-purple-400 group-hover:scale-110 transition-transform animate-pulse" />
-                <span className="hidden sm:inline">AI Expand Topic</span>
+                <span className="hidden sm:inline">AI Expand</span>
                 <Badge className="bg-purple-500/20 text-purple-200 border-purple-500/40 text-[9px] px-1 py-0 ml-0.5">
                   Agent
                 </Badge>
@@ -678,7 +739,7 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
 
               <Button
                 variant="outline"
-                className="h-11 px-3 gap-1.5 font-semibold border-primary/30 bg-primary/5 hover:bg-primary/15 text-primary shrink-0"
+                className="h-11 px-3 gap-1.5 font-semibold border-primary/30 bg-primary/5 hover:bg-primary/15 text-primary"
                 onClick={() => setIsBulkModalOpen(true)}
                 title="Open Bulk Input Window for multiple tickers & price alerts"
               >
@@ -688,38 +749,17 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
 
               <Button
                 variant="outline"
-                className="h-11 px-3.5 gap-1.5 font-semibold border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 shadow-sm shrink-0 group"
+                className="h-11 px-3 gap-1.5 font-semibold border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 shadow-sm group"
                 onClick={() => setIsOddLotModalOpen(true)}
-                title="Odd Lots Tender Agent - Find tender offers with Rule 13e-4 odd lot priority and save to Odd Lots watchlist"
+                title="Odd Lots Tender Agent - Find tender offers with Rule 13e-4 odd lot priority"
               >
                 <Sparkles className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform animate-pulse" />
-                <span className="hidden sm:inline">Odd Lots Agent</span>
+                <span className="hidden sm:inline">Odd Lots</span>
                 <Badge className="bg-amber-500/20 text-amber-200 border-amber-500/40 text-[9px] px-1 py-0 ml-0.5">
                   Tenders
                 </Badge>
               </Button>
             </div>
-
-            {/* Suggestions Dropdown */}
-            {suggestions.length > 0 && (
-              <div className="absolute z-20 top-full left-0 right-16 mt-1.5 bg-popover/95 backdrop-blur-xl border border-primary/20 rounded-xl shadow-2xl overflow-hidden p-1">
-                {suggestions.map((item) => (
-                  <button
-                    key={item.symbol}
-                    onClick={() => handleAddTicker(item.symbol)}
-                    className="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-primary/10 rounded-lg text-left transition-colors"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono font-bold text-foreground text-sm">{item.symbol}</span>
-                      <span className="text-xs text-muted-foreground truncate max-w-[260px]">{item.name}</span>
-                    </div>
-                    <span className="text-xs text-primary font-semibold flex items-center gap-1">
-                      <Plus className="w-3 h-3" /> Add
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
 
           {/* Quick-Add Preset Ticker Pills */}
@@ -727,7 +767,7 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
             <span className="text-xs text-muted-foreground flex items-center gap-1 font-medium">
               <Sparkles className="w-3 h-3 text-primary" /> Popular:
             </span>
-            {['AAPL', 'NVDA', 'TSLA', 'MSFT', 'AMZN', 'ORA', 'PLTR', 'FSLR'].map((ticker) => {
+            {['AAPL', 'NVDA', 'SHOP.TO', 'RY.TO', 'TSLA', 'MSFT', 'AMZN', 'ORA', 'PLTR'].map((ticker) => {
               const isAlreadyAdded = items.some((i) => i.symbol === ticker);
               return (
                 <button
@@ -749,14 +789,14 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
         </div>
 
         {/* In-Table Filter */}
-        <div className="lg:col-span-5 flex items-center justify-end gap-2">
-          <div className="relative w-full">
+        <div className="w-full xl:w-72 shrink-0">
+          <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="Filter in this watchlist..."
               value={tableFilter}
               onChange={(e) => setTableFilter(e.target.value)}
-              className="pl-9 h-11 bg-card/50 border-border text-sm"
+              className="pl-9 h-11 bg-card/50 border-border text-foreground text-sm"
             />
           </div>
         </div>
@@ -929,6 +969,14 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
                           <div>
                             <div className="font-bold text-foreground group-hover:text-primary transition-colors flex items-center gap-1.5 flex-wrap">
                               <span className="font-mono text-base">{item.symbol}</span>
+                              {(item.symbol.endsWith('.TO') || item.symbol.endsWith('.V') || item.currency === 'CAD') && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-[9px] px-1.5 py-0 bg-amber-500/15 text-amber-300 border-amber-500/30 font-mono font-bold"
+                                >
+                                  {item.symbol.endsWith('.V') ? 'TSXV' : 'TSX'}
+                                </Badge>
+                              )}
                               {stockNote && (
                                 <Badge
                                   variant="outline"
@@ -978,7 +1026,7 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
                       {/* Last Price */}
                       <td className="p-4 text-right">
                         <span className="font-mono font-bold text-foreground text-base">
-                          ${safeFixed(item.price)}
+                          {item.currency === 'CAD' ? 'C$' : '$'}{safeFixed(item.price)}
                         </span>
                       </td>
 
@@ -997,7 +1045,7 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
                             {formatChangePercent(item.changePercent)}
                           </Badge>
                           <span className={cn("text-[10px] font-mono mt-0.5", isPositive ? "text-success" : "text-destructive")}>
-                            {isPositive ? '+' : ''}${safeFixed(item.change)}
+                            {isPositive ? '+' : '-'}{item.currency === 'CAD' ? 'C$' : '$'}{safeFixed(Math.abs(item.change))}
                           </span>
                         </div>
                       </td>

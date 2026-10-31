@@ -37,6 +37,8 @@ export interface EnrichedStockItem {
   fiftyTwoWeekHigh: number | null;
   fiftyTwoWeekLow: number | null;
   volume: number | null;
+  currency?: string | null;
+  exchange?: string | null;
   error?: string | null;
 }
 

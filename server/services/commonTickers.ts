@@ -182,10 +182,118 @@ export const KNOWN_COMPANY_NAMES: Record<string, { name: string; exchange: strin
   'T': { name: 'AT&T Inc.', exchange: 'NYSE', sector: 'Telecommunications' },
   'VZ': { name: 'Verizon Communications Inc.', exchange: 'NYSE', sector: 'Telecommunications' },
   'TMUS': { name: 'T-Mobile US, Inc.', exchange: 'NASDAQ', sector: 'Telecommunications' },
+
+  // Canadian / Toronto Stock Exchange Leaders & Micro Caps
+  'SHOP.TO': { name: 'Shopify Inc.', exchange: 'TSX', sector: 'Technology' },
+  'RY.TO': { name: 'Royal Bank of Canada', exchange: 'TSX', sector: 'Financial Services' },
+  'TD.TO': { name: 'Toronto-Dominion Bank', exchange: 'TSX', sector: 'Financial Services' },
+  'BMO.TO': { name: 'Bank of Montreal', exchange: 'TSX', sector: 'Financial Services' },
+  'BNS.TO': { name: 'Bank of Nova Scotia', exchange: 'TSX', sector: 'Financial Services' },
+  'CM.TO': { name: 'Canadian Imperial Bank of Commerce', exchange: 'TSX', sector: 'Financial Services' },
+  'ENB.TO': { name: 'Enbridge Inc.', exchange: 'TSX', sector: 'Energy' },
+  'CNR.TO': { name: 'Canadian National Railway', exchange: 'TSX', sector: 'Industrials' },
+  'CP.TO': { name: 'Canadian Pacific Kansas City', exchange: 'TSX', sector: 'Industrials' },
+  'CNQ.TO': { name: 'Canadian Natural Resources', exchange: 'TSX', sector: 'Energy' },
+  'SU.TO': { name: 'Suncor Energy Inc.', exchange: 'TSX', sector: 'Energy' },
+  'ATZ.TO': { name: 'Aritzia Inc.', exchange: 'TSX', sector: 'Consumer Discretionary' },
+  'CSU.TO': { name: 'Constellation Software Inc.', exchange: 'TSX', sector: 'Technology' },
+  'DOL.TO': { name: 'Dollarama Inc.', exchange: 'TSX', sector: 'Consumer Defensive' },
+  'WCN.TO': { name: 'Waste Connections, Inc.', exchange: 'TSX', sector: 'Industrials' },
+  'TRI.TO': { name: 'Thomson Reuters Corporation', exchange: 'TSX', sector: 'Financial' },
+  'QSR.TO': { name: 'Restaurant Brands International', exchange: 'TSX', sector: 'Consumer' },
+  'MFC.TO': { name: 'Manulife Financial Corporation', exchange: 'TSX', sector: 'Financial Services' },
+  'SLF.TO': { name: 'Sun Life Financial Inc.', exchange: 'TSX', sector: 'Financial Services' },
+  'POW.TO': { name: 'Power Corporation of Canada', exchange: 'TSX', sector: 'Financial Services' },
+  'GIB-A.TO': { name: 'CGI Inc.', exchange: 'TSX', sector: 'Technology' },
+  'OTEX.TO': { name: 'Open Text Corporation', exchange: 'TSX', sector: 'Technology' },
+  'BAM.TO': { name: 'Brookfield Asset Management', exchange: 'TSX', sector: 'Financial Services' },
+  'BN.TO': { name: 'Brookfield Corporation', exchange: 'TSX', sector: 'Financial Services' },
+  'CCO.TO': { name: 'Cameco Corporation', exchange: 'TSX', sector: 'Energy' },
+  'L.TO': { name: 'Loblaw Companies Limited', exchange: 'TSX', sector: 'Consumer Defensive' },
+  'WN.TO': { name: 'George Weston Limited', exchange: 'TSX', sector: 'Consumer Defensive' },
+  'Y.TO': { name: 'Yellow Pages Limited', exchange: 'TSX', sector: 'Communication' },
+  'YTY.V': { name: 'Wi2Wi Corporation', exchange: 'TSXV', sector: 'Technology' },
+  'YTY': { name: 'Wi2Wi Corporation', exchange: 'TSXV', sector: 'Technology' },
+  'CTS.TO': { name: 'Converge Technology Solutions', exchange: 'TSX', sector: 'Technology' },
+  'XIU.TO': { name: 'iShares S&P/TSX 60 Index ETF', exchange: 'TSX', sector: 'ETF' },
+  'XIC.TO': { name: 'iShares Core S&P/TSX Capped Composite ETF', exchange: 'TSX', sector: 'ETF' },
+  'VFV.TO': { name: 'Vanguard S&P 500 Index ETF (CAD)', exchange: 'TSX', sector: 'ETF' },
+  'VDY.TO': { name: 'Vanguard Canadian High Dividend Yield ETF', exchange: 'TSX', sector: 'ETF' },
+  'XEI.TO': { name: 'iShares S&P/TSX Composite High Dividend ETF', exchange: 'TSX', sector: 'ETF' },
 };
+
+/**
+ * Normalizes user ticker input across common exchange notations (especially Toronto / TSX / TSXV)
+ */
+export function normalizeTickerSymbol(symbol: string): string {
+  if (!symbol) return '';
+  let sym = symbol.trim().toUpperCase();
+
+  // If already standard Yahoo format for Canadian/international markets, return directly
+  if (sym.endsWith('.TO') || sym.endsWith('.V') || sym.endsWith('.NE') || sym.endsWith('.CN')) {
+    return sym;
+  }
+
+  // Handle prefix patterns like TSX:SHOP, TSE:SHOP, TSXV:YTY, etc.
+  if (/^(?:TSX|TSE|TOR|TTO)[:\/\-\.]([A-Z0-9\.\-]+)$/i.test(sym)) {
+    const match = sym.match(/^(?:TSX|TSE|TOR|TTO)[:\/\-\.]([A-Z0-9\.\-]+)$/i);
+    if (match) {
+      const core = match[1].replace(/[:\/\-]/g, '.');
+      return core.endsWith('.TO') ? core : `${core}.TO`;
+    }
+  }
+
+  if (/^(?:TSXV|TSX-V|TSX_V|VAN|TSXVENTURE)[:\/\-\.]([A-Z0-9\.\-]+)$/i.test(sym)) {
+    const match = sym.match(/^(?:TSXV|TSX-V|TSX_V|VAN|TSXVENTURE)[:\/\-\.]([A-Z0-9\.\-]+)$/i);
+    if (match) {
+      const core = match[1].replace(/[:\/\-]/g, '.');
+      return core.endsWith('.V') ? core : `${core}.V`;
+    }
+  }
+
+  if (/^(?:NEO|NEOE|NEOEX)[:\/\-\.]([A-Z0-9\.\-]+)$/i.test(sym)) {
+    const match = sym.match(/^(?:NEO|NEOE|NEOEX)[:\/\-\.]([A-Z0-9\.\-]+)$/i);
+    if (match) {
+      const core = match[1];
+      return core.endsWith('.NE') ? core : `${core}.NE`;
+    }
+  }
+
+  if (/^(?:CSE|CNQ)[:\/\-\.]([A-Z0-9\.\-]+)$/i.test(sym)) {
+    const match = sym.match(/^(?:CSE|CNQ)[:\/\-\.]([A-Z0-9\.\-]+)$/i);
+    if (match) {
+      const core = match[1];
+      return core.endsWith('.CN') ? core : `${core}.CN`;
+    }
+  }
+
+  // Handle suffix patterns like SHOP:TSX, SHOP.TSX, SHOP-TSX, SHOP:TO, SHOP-TO, etc.
+  if (/^([A-Z0-9\.\-]+)[:\/\-\.](?:TSX|TSE|TOR|TO)$/i.test(sym)) {
+    const match = sym.match(/^([A-Z0-9\.\-]+)[:\/\-\.](?:TSX|TSE|TOR|TO)$/i);
+    if (match) return `${match[1]}.TO`;
+  }
+
+  if (/^([A-Z0-9\.\-]+)[:\/\-\.](?:TSXV|TSX-V|TSX_V|VAN|V)$/i.test(sym)) {
+    const match = sym.match(/^([A-Z0-9\.\-]+)[:\/\-\.](?:TSXV|TSX-V|TSX_V|VAN|V)$/i);
+    if (match) return `${match[1]}.V`;
+  }
+
+  if (/^([A-Z0-9\.\-]+)[:\/\-\.](?:NEO|NE)$/i.test(sym)) {
+    const match = sym.match(/^([A-Z0-9\.\-]+)[:\/\-\.](?:NEO|NE)$/i);
+    if (match) return `${match[1]}.NE`;
+  }
+
+  if (/^([A-Z0-9\.\-]+)[:\/\-\.](?:CSE|CNQ|CN)$/i.test(sym)) {
+    const match = sym.match(/^([A-Z0-9\.\-]+)[:\/\-\.](?:CSE|CNQ|CN)$/i);
+    if (match) return `${match[1]}.CN`;
+  }
+
+  return sym;
+}
 
 export function getKnownCompanyName(symbol: string): string | undefined {
   if (!symbol) return undefined;
   const clean = symbol.trim().toUpperCase();
-  return KNOWN_COMPANY_NAMES[clean]?.name;
+  const normalized = normalizeTickerSymbol(clean);
+  return KNOWN_COMPANY_NAMES[clean]?.name || KNOWN_COMPANY_NAMES[normalized]?.name;
 }
