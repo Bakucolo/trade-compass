@@ -1438,8 +1438,19 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
               )}
             </div>
 
-            {/* Right: Research & Exit Full Page */}
+            {/* Right: AI Copilot, Research & Exit Full Page */}
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.dispatchEvent(new CustomEvent('open-hybrid-copilot'))}
+                className="h-8 px-3 text-xs font-bold bg-indigo-500/15 hover:bg-indigo-500/25 border-indigo-500/40 text-indigo-300 hover:text-white gap-1.5 rounded-xl cursor-pointer"
+                title="Open TradeFlow Hybrid AI Copilot"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+                <span className="hidden sm:inline">AI Copilot</span>
+              </Button>
+
               <Button
                 variant="outline"
                 size="sm"

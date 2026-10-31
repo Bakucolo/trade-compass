@@ -62,9 +62,10 @@ const navItems: NavItem[] = [
 interface SidebarProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
+  onOpenCopilot?: () => void;
 }
 
-export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
+export function Sidebar({ activeTab, onTabChange, onOpenCopilot }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [isActivityDrawerOpen, setIsActivityDrawerOpen] = useState(false);
   const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
@@ -190,20 +191,26 @@ export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
         {/* AI Copilot Quick Launcher Button */}
         <div className="px-2 pb-1.5">
           <button
-            onClick={() => window.dispatchEvent(new CustomEvent('open-hybrid-copilot'))}
+            onClick={() => {
+              if (onOpenCopilot) {
+                onOpenCopilot();
+              } else {
+                window.dispatchEvent(new CustomEvent('open-hybrid-copilot'));
+              }
+            }}
             className={cn(
-              "w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all border",
-              "bg-gradient-to-r from-indigo-950/40 to-purple-950/40 border-indigo-500/30 text-indigo-300 hover:border-indigo-500/60 hover:text-white shadow-[0_0_10px_rgba(99,102,241,0.15)]"
+              "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-bold transition-all border cursor-pointer group",
+              "bg-gradient-to-r from-indigo-950/60 via-purple-950/50 to-pink-950/30 border-indigo-500/40 text-indigo-200 hover:border-indigo-400 hover:text-white shadow-[0_0_12px_rgba(99,102,241,0.2)] hover:shadow-[0_0_18px_rgba(99,102,241,0.35)]"
             )}
-            title="Open Hybrid AI Copilot (LangGraph)"
+            title="Open TradeFlow Hybrid AI Copilot"
           >
             <div className="relative shrink-0">
-              <Sparkles className="w-4 h-4 text-indigo-400" />
+              <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
             </div>
             {!collapsed && (
               <div className="flex items-center justify-between flex-1 min-w-0">
-                <span className="truncate">AI Copilot</span>
-                <span className="text-[9px] bg-indigo-500/30 text-indigo-200 border border-indigo-500/40 px-1.5 py-0.2 rounded-md font-mono">
+                <span className="truncate font-bold tracking-wide">AI Copilot</span>
+                <span className="text-[9px] bg-indigo-500/30 text-indigo-200 border border-indigo-500/40 px-1.5 py-0.5 rounded-md font-mono font-semibold">
                   HYBRID
                 </span>
               </div>

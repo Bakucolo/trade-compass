@@ -3,7 +3,6 @@ import { useSearchParams } from 'react-router-dom';
 import { Sidebar } from '@/components/Sidebar';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { PageSkeleton } from '@/components/PageSkeleton';
-import { HybridAgentFloatingTrigger } from '@/components/HybridAgentFloatingTrigger';
 
 // Code-Split Dynamic Route Chunks for ultra-fast startup and zero-stutter navigation
 const Dashboard = lazy(() => import('@/components/Dashboard').then(m => ({ default: m.Dashboard })));
@@ -212,7 +211,11 @@ const Index = () => {
 
   return (
     <div className="flex min-h-screen bg-background relative">
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
+      <Sidebar
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        onOpenCopilot={() => setIsCopilotOpen(true)}
+      />
       <main className="flex-1 overflow-y-auto">
         <div className="p-6 lg:p-8">
           <ErrorBoundary fallbackTitle={`${activeTab.toUpperCase()} View`}>
@@ -222,9 +225,6 @@ const Index = () => {
           </ErrorBoundary>
         </div>
       </main>
-
-      {/* Floating AI Financial Copilot Launcher */}
-      <HybridAgentFloatingTrigger onOpen={() => setIsCopilotOpen(true)} />
 
       {/* Slide-out / Fullscreen Hybrid Copilot Drawer (Dynamically loaded on demand) */}
       <Suspense fallback={null}>
