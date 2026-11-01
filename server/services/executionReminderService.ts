@@ -531,11 +531,15 @@ export async function checkAndDispatchDueReminders(
 
       const alertText = formatDueReminderTelegramAlert(reminder);
 
+      const isAssistant = ['ASSISTANT', 'TASK', 'TODO', 'REMINDER'].includes(reminder.symbol.toUpperCase()) || Boolean(reminder.notes && reminder.notes.includes('ASSISTANT'));
+
       const targetChatId = reminder.chatId
         || process.env.TELEGRAM_CHAT_ID;
       const targetThreadId = reminder.messageThreadId !== null && reminder.messageThreadId !== undefined
         ? reminder.messageThreadId
-        : (process.env.TELEGRAM_EXECUTION_THREAD_ID ? Number(process.env.TELEGRAM_EXECUTION_THREAD_ID) : undefined);
+        : (isAssistant
+            ? (process.env.TELEGRAM_ASSISTANT_THREAD_ID ? Number(process.env.TELEGRAM_ASSISTANT_THREAD_ID) : undefined)
+            : (process.env.TELEGRAM_EXECUTION_THREAD_ID ? Number(process.env.TELEGRAM_EXECUTION_THREAD_ID) : undefined));
 
       if (process.env.TELEGRAM_BOT_TOKEN && targetChatId) {
         await sendTelegramMessage({
@@ -546,23 +550,23 @@ export async function checkAndDispatchDueReminders(
         }).catch((sendErr: any) => {
           customLog(`[ExecutionReminder] Dispatch error for ${reminder.symbol}: ${sendErr.message}`);
         });
-        customLog(`[ExecutionReminder] Dispatched due reminder for $${reminder.symbol} to chat ${targetChatId} (thread ${targetThreadId})`);
+        customLog(`[ExecutionReminder] Dispatched due reminder for ${reminder.symbol} to chat ${targetChatId} (thread ${targetThreadId})`);
       }
 
-      // Also create ThoughtLog in Execution folder
+      // Also create ThoughtLog in Assistant or Execution folder
       try {
         await prisma.thoughtLog.create({
           data: {
-            title: `⏰ Triggered Reminder: $${reminder.symbol} - ${reminder.task}`,
-            content: `Scheduled Execution Task triggered at ${now.toLocaleTimeString()}:\n${reminder.task}`,
-            folder: 'Execution',
-            tags: `Telegram, Execution, Reminder, Triggered, ${reminder.symbol}`,
-            symbols: reminder.symbol,
+            title: isAssistant ? `🔔 Assistant Reminder: ${reminder.task}` : `⏰ Triggered Reminder: $${reminder.symbol} - ${reminder.task}`,
+            content: `Scheduled ${isAssistant ? 'Assistant' : 'Execution'} Reminder triggered at ${now.toLocaleTimeString()}:\n${reminder.task}`,
+            folder: isAssistant ? 'Assistant' : 'Execution',
+            tags: isAssistant ? `Telegram, Assistant, Reminder, Triggered` : `Telegram, Execution, Reminder, Triggered, ${reminder.symbol}`,
+            symbols: isAssistant ? null : reminder.symbol,
             sentiment: 'NEUTRAL',
             isPinned: false,
             isFulfilled: true,
             agentOutput: alertText,
-            agentActionType: 'ADD_CONTEXT',
+            agentActionType: isAssistant ? 'TASK' : 'ADD_CONTEXT',
             createdAt: now,
           },
         });
@@ -682,6 +686,17 @@ export function formatDueReminderTelegramAlert(reminder: ExecutionReminderItem):
     minute: '2-digit',
     hour12: true,
   });
+
+  const isAssistant = ['ASSISTANT', 'TASK', 'TODO', 'REMINDER'].includes(reminder.symbol.toUpperCase()) || Boolean(reminder.notes && reminder.notes.includes('ASSISTANT'));
+
+  if (isAssistant) {
+    return `🔔 *ASSISTANT REMINDER ALERT!* ⏰
+
+📌 *Task:* **${reminder.task}**
+🗓️ *Scheduled Time:* ${dueTimeStr}
+${reminder.sourceMessage ? `📝 *Original Request:* _"${reminder.sourceMessage}"_\n` : ''}
+💡 _Reply \`done ${reminder.id.slice(0, 8)}\` or \`done ${reminder.task.split(' ')[0]}\` to mark complete, or \`snooze ${reminder.id.slice(0, 8)} 30m\` to postpone._`;
+  }
 
   return `⏰ *EXECUTION REMINDER DUE*
 

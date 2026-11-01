@@ -29,6 +29,7 @@ import {
   Layers,
   ChevronRight,
   Globe,
+  CheckSquare,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from '@/components/ui/use-toast';
@@ -184,6 +185,18 @@ const TOPICS_CONFIG: TopicConfigItem[] = [
     commands: ['AAPL short put 300', 'NVDA covered call 130 ai', 'TSLA short put 210 assignment'],
     metricsKey: 'trade',
   },
+  {
+    id: 'ASSISTANT',
+    name: 'Personal Assistant & Reminders',
+    description: 'Natural language to-dos, timed reminders, countdown alarms & daily briefings',
+    icon: CheckSquare,
+    threadKey: 'assistantThreadId',
+    configEndpoint: '/api/telegram/config-assistant-thread',
+    color: 'text-violet-400 bg-violet-500/10',
+    borderColor: 'border-violet-500/30',
+    commands: ['tasks', 'today', 'buy groceries tomorrow at 5pm', 'done 1', 'snooze 2 2h', 'summary'],
+    metricsKey: 'assistant',
+  },
 ];
 
 export function TelegramTopicsModal({ isOpen, onClose }: TelegramTopicsModalProps) {
@@ -326,6 +339,8 @@ export function TelegramTopicsModal({ isOpen, onClose }: TelegramTopicsModalProp
         return `${metrics.app?.appIdeasCount || 0} Open Items`;
       case 'MACRO':
         return 'Institutional Dossier & 7 Pillars Active';
+      case 'ASSISTANT':
+        return `${metrics.assistant?.assistantTasksCount || 0} Active Tasks & Reminders`;
       default:
         return 'Active';
     }

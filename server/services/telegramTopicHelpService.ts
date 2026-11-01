@@ -15,6 +15,7 @@ export type TelegramTopicType =
   | 'TICKER'
   | 'CALENDAR'
   | 'COPILOT'
+  | 'ASSISTANT'
   | 'GENERAL';
 
 /**
@@ -557,11 +558,48 @@ Add \`pdf\` to any inquiry to receive a styled institutional PDF dossier:
 • \`status\` — Check active broker gateway, routing cascade, and context depth.`;
 }
 
+export function getAssistantTopicHelp(): string {
+  return `🤖 *Personal Assistant & Reminders — Instructions & Tools*
+
+Your personal executive assistant for managing to-dos, tasks, and scheduling timely reminders via Telegram (Text & Voice Notes!):
+
+📌 *1. Creating Tasks & Reminders*
+Send what you need to do naturally, with or without a date/time:
+• \`Buy groceries tomorrow at 5pm\`
+• \`Call accountant on Friday at 10am\`
+• \`Remind me to check crypto in 2 hours\`
+• \`Review NVDA earnings tonight at 8pm\`
+• \`Prepare quarterly tax forms by Nov 15\`
+• \`Clean the office desk\` _(creates an open to-do item)_
+• \`todo review contract terms\`
+• 🎙️ *Voice Notes:* Speak your reminder into Telegram and it transcribes and schedules automatically!
+
+📋 *2. Listing & Inspecting Tasks*
+• \`tasks\` or \`list\` or \`todos\` — View your numbered checklist with due dates and countdowns.
+• \`today\` or \`agenda\` — Everything due or scheduled for today.
+• \`summary\` or \`briefing\` — High-level status overview of pending & completed items.
+
+✅ *3. Completing Tasks*
+• \`done 1\` or \`complete 1\` — Marks item #1 as finished!
+• \`done groceries\` — Marks matching task by name.
+• \`clear done\` — Sweeps and cleans all finished tasks.
+
+🗑️ *4. Managing & Snoozing*
+• \`del 1\` or \`delete 1\` (or \`remove 1\`) — Deletes the task.
+• \`snooze 1 30m\` or \`snooze 1 1h\` — Postpones a reminder.
+• \`snooze 1 tomorrow 9am\` — Reschedules to tomorrow morning.
+
+⏰ *5. Automatic Alarm & Notification*
+When a reminder's time arrives, your Assistant will immediately send an alarm message right here in this topic!`;
+}
+
 /**
  * Resolves the help instructions for a given topic
  */
 export function getHelpMessageForTopic(topic: TelegramTopicType): string {
   switch (topic) {
+    case 'ASSISTANT':
+      return getAssistantTopicHelp();
     case 'TRADE':
       return getTradeTopicHelp();
     case 'BALANCES':

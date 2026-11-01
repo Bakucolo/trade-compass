@@ -206,6 +206,10 @@ import {
   setTelegramAppThreadId,
   setTelegramIdeasThreadId,
   setTelegramTradeThreadId,
+  setTelegramTickerThreadId,
+  setTelegramCalendarThreadId,
+  setTelegramCopilotThreadId,
+  setTelegramAssistantThreadId,
   isTelegramBriefingRequest,
 } from './services/telegramBufferConsumerService';
 import { getTopicsSummaryMetrics } from './services/telegramTopicsManagementService';
@@ -8858,6 +8862,62 @@ app.post('/api/telegram/config-trade-thread', (req, res) => {
       return res.status(400).json({ error: 'threadId is required' });
     }
     const success = setTelegramTradeThreadId(threadId);
+    res.json({ success, threadId: String(threadId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/telegram/config-ticker-thread - Update Telegram ticker topic thread ID
+app.post('/api/telegram/config-ticker-thread', (req, res) => {
+  try {
+    const { threadId } = req.body;
+    if (threadId === undefined || threadId === null) {
+      return res.status(400).json({ error: 'threadId is required' });
+    }
+    const success = setTelegramTickerThreadId(threadId);
+    res.json({ success, threadId: String(threadId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/telegram/config-calendar-thread - Update Telegram calendar topic thread ID
+app.post('/api/telegram/config-calendar-thread', (req, res) => {
+  try {
+    const { threadId } = req.body;
+    if (threadId === undefined || threadId === null) {
+      return res.status(400).json({ error: 'threadId is required' });
+    }
+    const success = setTelegramCalendarThreadId(threadId);
+    res.json({ success, threadId: String(threadId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/telegram/config-copilot-thread - Update Telegram copilot topic thread ID
+app.post('/api/telegram/config-copilot-thread', (req, res) => {
+  try {
+    const { threadId } = req.body;
+    if (threadId === undefined || threadId === null) {
+      return res.status(400).json({ error: 'threadId is required' });
+    }
+    const success = setTelegramCopilotThreadId(threadId);
+    res.json({ success, threadId: String(threadId) });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/telegram/config-assistant-thread - Update Telegram assistant topic thread ID
+app.post('/api/telegram/config-assistant-thread', (req, res) => {
+  try {
+    const { threadId } = req.body;
+    if (threadId === undefined || threadId === null) {
+      return res.status(400).json({ error: 'threadId is required' });
+    }
+    const success = setTelegramAssistantThreadId(threadId);
     res.json({ success, threadId: String(threadId) });
   } catch (error: any) {
     res.status(500).json({ error: error.message });

@@ -133,6 +133,16 @@ export function setGenericTopicThreadId(topicName: string, threadId: string | nu
     case 'IDEA':
       envKey = 'TELEGRAM_IDEAS_THREAD_ID';
       break;
+    case 'ASSISTANT':
+    case 'ASSITANT':
+    case 'TASK':
+    case 'TASKS':
+    case 'TODO':
+    case 'TODOS':
+    case 'REMINDER':
+    case 'REMINDERS':
+      envKey = 'TELEGRAM_ASSISTANT_THREAD_ID';
+      break;
     default:
       return false;
   }
@@ -179,6 +189,7 @@ export async function getTopicsSummaryMetrics(prisma: PrismaClient) {
     activeAlertsCount,
     ideasCount,
     appIdeasCount,
+    assistantTasksCount,
   ] = await Promise.all([
     (prisma as any).broker?.count ? (prisma as any).broker.count().catch(() => 0) : 0,
     (prisma as any).holding?.findMany ? (prisma as any).holding.findMany({ select: { assetType: true, quantity: true, marketValue: true } }).catch(() => []) : [],
@@ -189,6 +200,7 @@ export async function getTopicsSummaryMetrics(prisma: PrismaClient) {
     ((prisma as any).priceAlert || (prisma as any).alert)?.count ? ((prisma as any).priceAlert || (prisma as any).alert).count({ where: { status: 'ACTIVE' } }).catch(() => 0) : 0,
     (prisma as any).thoughtLog?.count ? (prisma as any).thoughtLog.count({ where: { folder: 'Ideas' } }).catch(() => 0) : 0,
     (prisma as any).appIdea?.count ? (prisma as any).appIdea.count({ where: { isFulfilled: false } }).catch(() => 0) : 0,
+    (prisma as any).executionReminder?.count ? (prisma as any).executionReminder.count({ where: { symbol: { in: ['ASSISTANT', 'TASK', 'TODO', 'REMINDER'] }, status: { in: ['PENDING', 'TRIGGERED'] } } }).catch(() => 0) : 0,
   ]);
 
   let totalValue = 0;
@@ -236,6 +248,9 @@ export async function getTopicsSummaryMetrics(prisma: PrismaClient) {
     },
     app: {
       appIdeasCount,
+    },
+    assistant: {
+      assistantTasksCount,
     },
   };
 }
@@ -335,6 +350,11 @@ Live status, telemetry & commands across all 11 integrated topics:
 • Status: ${formatThread(status.copilotThreadId)}
 • Intelligence: *Quantitative Multi-Factor Financial AI, Multi-Broker Telemetry, Option Chains & Human-in-the-Loop Safe Execution*
 • Commands: Ask any financial/trading question, \`draft limit buy 10 AAPL @ 220\`, \`broker ibkr\`, \`broker tasty\`, \`status\`, \`pdf\`, \`reset\`
+
+🤖 *15. Personal Assistant & Reminders*
+• Status: ${formatThread(process.env.TELEGRAM_ASSISTANT_THREAD_ID)}
+• Tasks: *${metrics.assistant?.assistantTasksCount || 0} active to-dos & reminders*
+• Commands: \`Buy groceries tomorrow 5pm\`, \`tasks\`, \`today\`, \`done 1\`, \`snooze 1 30m\`, \`clear done\`, \`summary\`
 
 ───────────────────────
 ⚙️ *Management Shortcuts:*
