@@ -460,5 +460,73 @@ describe('FAST Graphs Fundamental Valuation Visualizer', () => {
 
       expect(mockSelectSymbol).toHaveBeenCalledWith('AAPL');
     });
+
+    it('renders Chart Lines button and allows removing and restoring lines to eliminate scale distortion', async () => {
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <FastGraphs symbol="SOFI" />
+        </QueryClientProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /chart lines/i })).toBeDefined();
+      });
+
+      // Open Chart Lines popover menu
+      fireEvent.click(screen.getByRole('button', { name: /chart lines/i }));
+
+      expect(screen.getByText('Chart Lines & Scaling')).toBeDefined();
+      expect(screen.getByText(/Remove any line to prevent chart distortion/i)).toBeDefined();
+
+      // Find remove buttons for lines
+      const removeButtons = screen.getAllByRole('button', { name: /remove/i });
+      expect(removeButtons.length).toBeGreaterThan(0);
+
+      // Click remove on the first line (Normal P/E)
+      fireEvent.click(removeButtons[0]);
+
+      // Should display "1 Hidden" badge
+      expect(screen.getByText('1 Hidden')).toBeDefined();
+
+      // Should display "Restore All Lines" in the legend bar
+      expect(screen.getByText(/Restore All Lines \(1 Hidden\)/i)).toBeDefined();
+
+      // Click "Restore All Lines"
+      fireEvent.click(screen.getByText(/Restore All Lines/i));
+
+      // Popover shows all lines restored
+      await waitFor(() => {
+        expect(screen.queryByText('1 Hidden')).toBeNull();
+      });
+    });
+
+    it('displays distortion warning banner when Normal P/E is an extreme outlier and removes it on click', async () => {
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <FastGraphs symbol="SOFI" />
+        </QueryClientProvider>
+      );
+
+      // Normal P/E is ~53.31x and reaches > 2.2x price in mockFastGraphsData
+      await waitFor(() => {
+        expect(screen.getByText(/Chart scale stretched:/i)).toBeDefined();
+        expect(screen.getByRole('button', { name: /Remove Normal P\/E Line/i })).toBeDefined();
+      });
+
+      // Click the remove button in the distortion alert
+      fireEvent.click(screen.getByRole('button', { name: /Remove Normal P\/E Line/i }));
+
+      // The warning banner should be dismissed once the line is removed
+      await waitFor(() => {
+        expect(screen.queryByText(/Chart scale stretched:/i)).toBeNull();
+      });
+
+      // Restore button should be present in bottom legend
+      expect(screen.getByText(/Restore All Lines/i)).toBeDefined();
+    });
   });
 });

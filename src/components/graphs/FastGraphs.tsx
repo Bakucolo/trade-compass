@@ -184,10 +184,15 @@ export function FastGraphs({
     }
   };
 
+  const linesMenuRef = useRef<HTMLDivElement>(null);
+
   React.useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
         setIsSearchOpen(false);
+      }
+      if (linesMenuRef.current && !linesMenuRef.current.contains(e.target as Node)) {
+        setIsLinesMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -198,12 +203,13 @@ export function FastGraphs({
   const [timeframe, setTimeframe] = useState<FastGraphsTimeframe>('4Y');
   const [metric, setMetric] = useState<FastGraphsMetricType>('ADJUSTED_EARNINGS');
 
-  // Legend visibility toggles
+  // Legend & Line visibility toggles (can remove lines to prevent chart scale distortion)
   const [showFairValue, setShowFairValue] = useState(true); // Orange Line
   const [showNormalPe, setShowNormalPe] = useState(true); // Blue Line
-  const [showPrice, setShowPrice] = useState(true); // Black Line
+  const [showPrice, setShowPrice] = useState(true); // White Line
   const [showDividends, setShowDividends] = useState(true); // Green area
   const [showEpsArea, setShowEpsArea] = useState(true); // Dark green earnings area
+  const [isLinesMenuOpen, setIsLinesMenuOpen] = useState(false);
 
   // Rate of Return Tool selection state (point-to-point clicking)
   const [isRorToolActive, setIsRorToolActive] = useState(false);
@@ -246,6 +252,86 @@ export function FastGraphs({
     if (!rorStartPoint || !rorEndPoint || !graphKey) return null;
     return calculatePointToPointReturn(rorStartPoint, rorEndPoint, graphKey, investedAmount);
   }, [rorStartPoint, rorEndPoint, graphKey, investedAmount]);
+
+  // Dynamic YAxis domain calculated strictly from visible/active lines and areas to prevent distortion
+  const dynamicYDomain = useMemo<[number | 'auto', number | 'auto']>(() => {
+    if (!series || series.length === 0) return ['auto', 'auto'];
+    let maxVal = 0;
+
+    series.forEach((pt) => {
+      if (showPrice && typeof pt.price === 'number' && !isNaN(pt.price)) {
+        if (pt.price > maxVal) maxVal = pt.price;
+      }
+      if (showFairValue && typeof pt.fairValuePrice === 'number' && !isNaN(pt.fairValuePrice)) {
+        if (pt.fairValuePrice > maxVal) maxVal = pt.fairValuePrice;
+      }
+      if (showNormalPe && typeof pt.normalPrice === 'number' && !isNaN(pt.normalPrice)) {
+        if (pt.normalPrice > maxVal) maxVal = pt.normalPrice;
+      }
+      if (showEpsArea && showFairValue && typeof pt.fairValuePrice === 'number' && !isNaN(pt.fairValuePrice)) {
+        if (pt.fairValuePrice > maxVal) maxVal = pt.fairValuePrice;
+      }
+      if (showDividends && typeof pt.dividend === 'number' && !isNaN(pt.dividend)) {
+        if (pt.dividend > maxVal) maxVal = pt.dividend;
+      }
+    });
+
+    if (maxVal <= 0) return ['auto', 'auto'];
+
+    // Provide 12% headroom so the highest line never touches the top border
+    const ceiling = Math.ceil(maxVal * 1.12);
+    return [0, ceiling];
+  }, [series, showPrice, showFairValue, showNormalPe, showEpsArea, showDividends]);
+
+  // Outlier detection: identify when an extreme multiple line is distorting the chart scale
+  const lineDistortion = useMemo(() => {
+    if (!series || series.length === 0) return null;
+
+    let maxPrice = 0;
+    let maxNormal = 0;
+    let maxFairValue = 0;
+
+    series.forEach((pt) => {
+      if (typeof pt.price === 'number' && pt.price > maxPrice) maxPrice = pt.price;
+      if (typeof pt.normalPrice === 'number' && pt.normalPrice > maxNormal) maxNormal = pt.normalPrice;
+      if (typeof pt.fairValuePrice === 'number' && pt.fairValuePrice > maxFairValue) maxFairValue = pt.fairValuePrice;
+    });
+
+    if (showNormalPe && maxPrice > 0 && maxNormal > maxPrice * 2.2) {
+      return {
+        type: 'normalPe' as const,
+        name: `Normal P/E (${graphKey?.normalPeRatio}x)`,
+        maxVal: maxNormal,
+        priceMax: maxPrice,
+        ratio: (maxNormal / maxPrice).toFixed(1),
+        remove: () => setShowNormalPe(false)
+      };
+    }
+
+    if (showFairValue && maxPrice > 0 && maxFairValue > maxPrice * 2.2) {
+      return {
+        type: 'fairValue' as const,
+        name: `Fair Value (${graphKey?.fairValueRatio}x)`,
+        maxVal: maxFairValue,
+        priceMax: maxPrice,
+        ratio: (maxFairValue / maxPrice).toFixed(1),
+        remove: () => setShowFairValue(false)
+      };
+    }
+
+    return null;
+  }, [series, showNormalPe, showFairValue, graphKey]);
+
+  // Number of hidden lines
+  const hiddenCount = useMemo(() => {
+    let count = 0;
+    if (!showFairValue) count++;
+    if (!showNormalPe) count++;
+    if (!showPrice) count++;
+    if (!showEpsArea) count++;
+    if (dividendTrends?.hasDividends && !showDividends) count++;
+    return count;
+  }, [showFairValue, showNormalPe, showPrice, showEpsArea, showDividends, dividendTrends?.hasDividends]);
 
   // Handle chart click for Rate of Return tool
   const handleChartClick = (e: any) => {
@@ -686,8 +772,8 @@ export function FastGraphs({
           })}
         </div>
 
-        {/* Interactive Rate of Return Tool Toggle */}
-        <div className="flex items-center gap-2">
+        {/* Interactive Controls: Rate of Return + Chart Lines / Scale Distortion Controls */}
+        <div className="flex items-center gap-2 flex-wrap">
           <Button
             size="sm"
             variant="outline"
@@ -704,7 +790,7 @@ export function FastGraphs({
               }
             }}
             className={cn(
-              "h-8 text-xs font-bold gap-1.5 rounded-xl border transition-all",
+              "h-8 text-xs font-bold gap-1.5 rounded-xl border transition-all cursor-pointer",
               isRorToolActive
                 ? "bg-amber-500/20 text-amber-300 border-amber-500/60 shadow-sm"
                 : "border-border/70 hover:border-amber-500/40 text-muted-foreground hover:text-amber-300"
@@ -720,11 +806,270 @@ export function FastGraphs({
               size="sm"
               variant="ghost"
               onClick={resetRorTool}
-              className="h-8 text-xs text-muted-foreground hover:text-foreground"
+              className="h-8 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
             >
               Reset
             </Button>
           )}
+
+          {/* Chart Lines / Remove Outlier Line Controls */}
+          <div className="relative" ref={linesMenuRef}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setIsLinesMenuOpen(!isLinesMenuOpen)}
+              className={cn(
+                "h-8 text-xs font-bold gap-1.5 rounded-xl border transition-all cursor-pointer",
+                hiddenCount > 0
+                  ? "bg-amber-500/15 text-amber-300 border-amber-500/50 hover:bg-amber-500/25"
+                  : "border-border/70 hover:border-border text-muted-foreground hover:text-foreground"
+              )}
+              title="Remove or restore chart lines to eliminate scale distortion"
+            >
+              <Layers className="w-3.5 h-3.5 text-blue-400" />
+              <span>Chart Lines</span>
+              {hiddenCount > 0 ? (
+                <Badge className="bg-amber-500 text-slate-950 font-black text-[10px] px-1.5 py-0">
+                  {hiddenCount} Hidden
+                </Badge>
+              ) : (
+                <ChevronDown className="w-3 h-3 opacity-60" />
+              )}
+            </Button>
+
+            {/* Lines Visibility Menu Popover */}
+            {isLinesMenuOpen && (
+              <div className="absolute right-0 top-full mt-2 w-80 bg-slate-950/95 border border-border/80 rounded-2xl p-3.5 shadow-2xl backdrop-blur-2xl z-40 animate-fade-in font-sans space-y-3">
+                <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                  <div>
+                    <div className="font-bold text-xs text-foreground flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Chart Lines & Scaling</span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">Remove any line to prevent chart distortion</p>
+                  </div>
+                  {hiddenCount > 0 && (
+                    <button
+                      onClick={() => {
+                        setShowFairValue(true);
+                        setShowNormalPe(true);
+                        setShowPrice(true);
+                        setShowEpsArea(true);
+                        setShowDividends(true);
+                      }}
+                      className="text-[10px] text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer"
+                    >
+                      Reset All
+                    </button>
+                  )}
+                </div>
+
+                {/* Line Items */}
+                <div className="space-y-1.5 text-xs font-mono">
+                  {/* Normal P/E Line (Blue) */}
+                  <div className="flex items-center justify-between p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/5 transition-colors">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-blue-500 shrink-0" />
+                      <div>
+                        <span className={cn("font-bold text-xs", showNormalPe ? "text-blue-300" : "text-muted-foreground line-through")}>
+                          Normal P/E ({graphKey?.normalPeRatio}x)
+                        </span>
+                        <span className="block text-[10px] text-muted-foreground font-sans">Blue historical multiple line</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowNormalPe(!showNormalPe)}
+                      className={cn(
+                        "px-2 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer border",
+                        showNormalPe
+                          ? "bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-rose-500/25"
+                          : "bg-blue-500/20 text-blue-300 border-blue-500/40 hover:bg-blue-500/30"
+                      )}
+                      title={showNormalPe ? "Remove Normal P/E line to fit chart scale" : "Show Normal P/E line"}
+                    >
+                      {showNormalPe ? (
+                        <>
+                          <X className="w-3 h-3 text-rose-400" />
+                          <span>Remove</span>
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="w-3 h-3 text-blue-400" />
+                          <span>Show</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Fair Value Line (Orange) */}
+                  <div className="flex items-center justify-between p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/5 transition-colors">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-orange-500 shrink-0" />
+                      <div>
+                        <span className={cn("font-bold text-xs", showFairValue ? "text-orange-300" : "text-muted-foreground line-through")}>
+                          Fair Value ({graphKey?.fairValueRatio}x)
+                        </span>
+                        <span className="block text-[10px] text-muted-foreground font-sans">Orange valuation line</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowFairValue(!showFairValue)}
+                      className={cn(
+                        "px-2 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer border",
+                        showFairValue
+                          ? "bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-rose-500/25"
+                          : "bg-orange-500/20 text-orange-300 border-orange-500/40 hover:bg-orange-500/30"
+                      )}
+                      title={showFairValue ? "Remove Fair Value line" : "Show Fair Value line"}
+                    >
+                      {showFairValue ? (
+                        <>
+                          <X className="w-3 h-3 text-rose-400" />
+                          <span>Remove</span>
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="w-3 h-3 text-orange-400" />
+                          <span>Show</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Market Price (White) */}
+                  <div className="flex items-center justify-between p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/5 transition-colors">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-0.5 bg-white shrink-0" />
+                      <div>
+                        <span className={cn("font-bold text-xs", showPrice ? "text-white" : "text-muted-foreground line-through")}>
+                          Market Price (${data.currentPrice})
+                        </span>
+                        <span className="block text-[10px] text-muted-foreground font-sans">White monthly stock price</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowPrice(!showPrice)}
+                      className={cn(
+                        "px-2 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer border",
+                        showPrice
+                          ? "bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-rose-500/25"
+                          : "bg-white/20 text-white border-white/40 hover:bg-white/30"
+                      )}
+                    >
+                      {showPrice ? (
+                        <>
+                          <X className="w-3 h-3 text-rose-400" />
+                          <span>Remove</span>
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="w-3 h-3 text-white" />
+                          <span>Show</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Earnings Volume Area (Green) */}
+                  <div className="flex items-center justify-between p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/5 transition-colors">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded bg-emerald-700 shrink-0" />
+                      <div>
+                        <span className={cn("font-bold text-xs", showEpsArea ? "text-emerald-300" : "text-muted-foreground line-through")}>
+                          Earnings Volume Area
+                        </span>
+                        <span className="block text-[10px] text-muted-foreground font-sans">Dark green earnings power fill</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowEpsArea(!showEpsArea)}
+                      className={cn(
+                        "px-2 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer border",
+                        showEpsArea
+                          ? "bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-rose-500/25"
+                          : "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30"
+                      )}
+                    >
+                      {showEpsArea ? (
+                        <>
+                          <X className="w-3 h-3 text-rose-400" />
+                          <span>Remove</span>
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="w-3 h-3 text-emerald-400" />
+                          <span>Show</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Dividends (Light Green) */}
+                  {dividendTrends?.hasDividends && (
+                    <div className="flex items-center justify-between p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/5 transition-colors">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded bg-emerald-500 shrink-0" />
+                        <div>
+                          <span className={cn("font-bold text-xs", showDividends ? "text-emerald-300" : "text-muted-foreground line-through")}>
+                            Dividends Declared
+                          </span>
+                          <span className="block text-[10px] text-muted-foreground font-sans">Light green dividend area</span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setShowDividends(!showDividends)}
+                        className={cn(
+                          "px-2 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer border",
+                          showDividends
+                            ? "bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-rose-500/25"
+                            : "bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30"
+                        )}
+                      >
+                        {showDividends ? (
+                          <>
+                            <X className="w-3 h-3 text-rose-400" />
+                            <span>Remove</span>
+                          </>
+                        ) : (
+                          <>
+                            <Eye className="w-3 h-3 text-emerald-400" />
+                            <span>Show</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Quick Auto-Fit Action */}
+                <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      let maxP = 0;
+                      series.forEach(p => { if (typeof p.price === 'number' && p.price > maxP) maxP = p.price; });
+                      if (maxP > 0) {
+                        let maxNorm = 0;
+                        let maxFV = 0;
+                        series.forEach(p => {
+                          if (typeof p.normalPrice === 'number' && p.normalPrice > maxNorm) maxNorm = p.normalPrice;
+                          if (typeof p.fairValuePrice === 'number' && p.fairValuePrice > maxFV) maxFV = p.fairValuePrice;
+                        });
+                        if (maxNorm > maxP * 2.2) setShowNormalPe(false);
+                        if (maxFV > maxP * 2.2) setShowFairValue(false);
+                      }
+                      setIsLinesMenuOpen(false);
+                    }}
+                    className="w-full text-xs font-bold text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-xl h-7 cursor-pointer"
+                  >
+                    <Sparkles className="w-3 h-3 text-amber-400 mr-1" />
+                    Auto-Fit Scale (Remove Outliers)
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -875,6 +1220,26 @@ export function FastGraphs({
               </div>
             )}
 
+            {/* Scale Distortion Warning Banner with Quick Remove Line Action */}
+            {lineDistortion && (
+              <div className="mb-3 p-2.5 px-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between flex-wrap gap-2 animate-fade-in shadow-sm">
+                <div className="flex items-center gap-2 text-xs">
+                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span className="text-amber-200">
+                    <strong>Chart scale stretched:</strong> {lineDistortion.name} reaches ${lineDistortion.maxVal.toFixed(0)} ({lineDistortion.ratio}x stock price), which flattens the chart lines.
+                  </span>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={lineDistortion.remove}
+                  className="h-6 px-2.5 text-[11px] font-bold bg-amber-500 text-slate-950 hover:bg-amber-400 rounded-lg shrink-0 gap-1 cursor-pointer shadow"
+                >
+                  <X className="w-3 h-3" />
+                  <span>Remove {lineDistortion.type === 'normalPe' ? 'Normal P/E' : 'Fair Value'} Line</span>
+                </Button>
+              </div>
+            )}
+
             {/* Recharts SVG Visualization */}
             <div className={cn("w-full transition-all duration-300", isFullPage ? "h-[620px] lg:h-[720px]" : "h-[480px] sm:h-[540px]")}>
               <ResponsiveContainer width="100%" height="100%">
@@ -911,7 +1276,7 @@ export function FastGraphs({
                     stroke="#94a3b8"
                     fontSize={11}
                     tickFormatter={(val) => `$${val}`}
-                    domain={['auto', 'auto']}
+                    domain={dynamicYDomain}
                     orientation="left"
                     tickLine={false}
                   />
@@ -1008,7 +1373,7 @@ export function FastGraphs({
                   />
 
                   {/* 1. Dark Green Fill Area representing Earnings Power (Under Orange Line) */}
-                  {showEpsArea && (
+                  {showEpsArea && showFairValue && (
                     <Area
                       type="monotone"
                       dataKey="fairValuePrice"
@@ -1169,63 +1534,99 @@ export function FastGraphs({
               </div>
             </div>
 
-            {/* ================= LEGEND TOGGLES ================= */}
+            {/* ================= LEGEND & LINE REMOVAL TOGGLES ================= */}
             <div className="mt-4 pt-3 border-t border-border/60 flex items-center justify-between flex-wrap gap-2 text-xs">
-              <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2.5 flex-wrap">
                 {/* Fair Value Ratio Toggle */}
                 <button
                   onClick={() => setShowFairValue(!showFairValue)}
                   className={cn(
-                    "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold transition-all",
+                    "group flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold transition-all cursor-pointer",
                     showFairValue
-                      ? "bg-orange-500/15 text-orange-400 border-orange-500/40"
-                      : "bg-muted/30 text-muted-foreground/60 border-transparent opacity-60"
+                      ? "bg-orange-500/15 text-orange-400 border-orange-500/40 hover:bg-orange-500/25"
+                      : "bg-muted/20 text-muted-foreground/50 border-white/5 line-through hover:text-muted-foreground"
                   )}
+                  title={showFairValue ? "Click to remove Fair Value line from chart" : "Click to restore Fair Value line"}
                 >
-                  <span className="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block" />
+                  {showFairValue ? (
+                    <Eye className="w-3 h-3 text-orange-400 group-hover:scale-110 transition-transform shrink-0" />
+                  ) : (
+                    <EyeOff className="w-3 h-3 text-muted-foreground/60 shrink-0" />
+                  )}
+                  <span className="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block shrink-0" />
                   <span>Fair Value Ratio ({graphKey?.fairValueRatio}x)</span>
+                  {showFairValue && (
+                    <span className="text-[10px] text-orange-400/70 group-hover:text-rose-400 font-bold ml-0.5 transition-colors" title="Remove line">✕</span>
+                  )}
                 </button>
 
                 {/* Normal PE Toggle */}
                 <button
                   onClick={() => setShowNormalPe(!showNormalPe)}
                   className={cn(
-                    "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold transition-all",
+                    "group flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold transition-all cursor-pointer",
                     showNormalPe
-                      ? "bg-blue-500/15 text-blue-400 border-blue-500/40"
-                      : "bg-muted/30 text-muted-foreground/60 border-transparent opacity-60"
+                      ? "bg-blue-500/15 text-blue-400 border-blue-500/40 hover:bg-blue-500/25"
+                      : "bg-muted/20 text-muted-foreground/50 border-white/5 line-through hover:text-muted-foreground"
                   )}
+                  title={showNormalPe ? "Click to remove Normal P/E line (fixes chart scale distortion)" : "Click to restore Normal P/E line"}
                 >
-                  <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block" />
+                  {showNormalPe ? (
+                    <Eye className="w-3 h-3 text-blue-400 group-hover:scale-110 transition-transform shrink-0" />
+                  ) : (
+                    <EyeOff className="w-3 h-3 text-muted-foreground/60 shrink-0" />
+                  )}
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block shrink-0" />
                   <span>Normal P/E ({graphKey?.normalPeRatio}x)</span>
+                  {showNormalPe && (
+                    <span className="text-[10px] text-blue-400/70 group-hover:text-rose-400 font-bold ml-0.5 transition-colors" title="Remove line">✕</span>
+                  )}
                 </button>
 
                 {/* Price Toggle */}
                 <button
                   onClick={() => setShowPrice(!showPrice)}
                   className={cn(
-                    "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold transition-all",
+                    "group flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold transition-all cursor-pointer",
                     showPrice
-                      ? "bg-white/10 text-white border-white/30"
-                      : "bg-muted/30 text-muted-foreground/60 border-transparent opacity-60"
+                      ? "bg-white/10 text-white border-white/30 hover:bg-white/20"
+                      : "bg-muted/20 text-muted-foreground/50 border-white/5 line-through hover:text-muted-foreground"
                   )}
+                  title={showPrice ? "Click to remove Price line" : "Click to restore Price line"}
                 >
-                  <span className="w-2.5 h-0.5 bg-white inline-block" />
+                  {showPrice ? (
+                    <Eye className="w-3 h-3 text-white group-hover:scale-110 transition-transform shrink-0" />
+                  ) : (
+                    <EyeOff className="w-3 h-3 text-muted-foreground/60 shrink-0" />
+                  )}
+                  <span className="w-2.5 h-0.5 bg-white inline-block shrink-0" />
                   <span>Price</span>
+                  {showPrice && (
+                    <span className="text-[10px] text-white/70 group-hover:text-rose-400 font-bold ml-0.5 transition-colors" title="Remove line">✕</span>
+                  )}
                 </button>
 
                 {/* Earnings Area Toggle */}
                 <button
                   onClick={() => setShowEpsArea(!showEpsArea)}
                   className={cn(
-                    "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold transition-all",
+                    "group flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold transition-all cursor-pointer",
                     showEpsArea
-                      ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/40"
-                      : "bg-muted/30 text-muted-foreground/60 border-transparent opacity-60"
+                      ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/25"
+                      : "bg-muted/20 text-muted-foreground/50 border-white/5 line-through hover:text-muted-foreground"
                   )}
+                  title={showEpsArea ? "Click to remove Earnings Area" : "Click to restore Earnings Area"}
                 >
-                  <span className="w-2.5 h-2.5 rounded bg-emerald-700 inline-block" />
+                  {showEpsArea ? (
+                    <Eye className="w-3 h-3 text-emerald-400 group-hover:scale-110 transition-transform shrink-0" />
+                  ) : (
+                    <EyeOff className="w-3 h-3 text-muted-foreground/60 shrink-0" />
+                  )}
+                  <span className="w-2.5 h-2.5 rounded bg-emerald-700 inline-block shrink-0" />
                   <span>Earnings Volume Area</span>
+                  {showEpsArea && (
+                    <span className="text-[10px] text-emerald-400/70 group-hover:text-rose-400 font-bold ml-0.5 transition-colors" title="Remove area">✕</span>
+                  )}
                 </button>
 
                 {/* Dividends Toggle */}
@@ -1233,21 +1634,49 @@ export function FastGraphs({
                   <button
                     onClick={() => setShowDividends(!showDividends)}
                     className={cn(
-                      "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold transition-all",
+                      "group flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold transition-all cursor-pointer",
                       showDividends
-                        ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
-                        : "bg-muted/30 text-muted-foreground/60 border-transparent opacity-60"
+                        ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25"
+                        : "bg-muted/20 text-muted-foreground/50 border-white/5 line-through hover:text-muted-foreground"
                     )}
+                    title={showDividends ? "Click to remove Dividends Area" : "Click to restore Dividends Area"}
                   >
-                    <span className="w-2.5 h-2.5 rounded bg-emerald-500 inline-block" />
+                    {showDividends ? (
+                      <Eye className="w-3 h-3 text-emerald-300 group-hover:scale-110 transition-transform shrink-0" />
+                    ) : (
+                      <EyeOff className="w-3 h-3 text-muted-foreground/60 shrink-0" />
+                    )}
+                    <span className="w-2.5 h-2.5 rounded bg-emerald-500 inline-block shrink-0" />
                     <span>Dividends Declared</span>
+                    {showDividends && (
+                      <span className="text-[10px] text-emerald-300/70 group-hover:text-rose-400 font-bold ml-0.5 transition-colors" title="Remove dividends">✕</span>
+                    )}
                   </button>
                 )}
               </div>
 
-              <div className="text-[11px] text-muted-foreground font-mono flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                <span>Click 2 points on chart for Rate of Return</span>
+              <div className="flex items-center gap-3">
+                {hiddenCount > 0 && (
+                  <button
+                    onClick={() => {
+                      setShowFairValue(true);
+                      setShowNormalPe(true);
+                      setShowPrice(true);
+                      setShowEpsArea(true);
+                      setShowDividends(true);
+                    }}
+                    className="text-[11px] text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1 underline underline-offset-2 transition-colors cursor-pointer"
+                    title="Restore all hidden lines to the chart"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span>Restore All Lines ({hiddenCount} Hidden)</span>
+                  </button>
+                )}
+
+                <div className="text-[11px] text-muted-foreground font-mono flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                  <span>Click 2 points on chart for Rate of Return</span>
+                </div>
               </div>
             </div>
           </div>
