@@ -32,12 +32,14 @@ import {
   HelpCircle,
   Eye,
   EyeOff,
-  Search
+  Search,
+  Loader2
 } from 'lucide-react';
 import { Card } from '../ui/card';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Input } from '../ui/input';
+import { marketDataService, StockSearchResult } from '@/services/marketData';
 import {
   useFastGraphs,
   FastGraphsMetricType,
@@ -106,6 +108,40 @@ export function FastGraphs({
     }
   });
 
+  // Dynamic company suggestions state (same as Watchlist searchbox)
+  const [searchSuggestions, setSearchSuggestions] = useState<StockSearchResult[]>([]);
+  const [isSearchingSuggestions, setIsSearchingSuggestions] = useState(false);
+
+  // Debounced live company search as user types
+  React.useEffect(() => {
+    const trimmed = searchTicker.trim();
+    if (trimmed.length < 1) {
+      setSearchSuggestions([]);
+      setIsSearchingSuggestions(false);
+      return;
+    }
+
+    let isMounted = true;
+    const timer = setTimeout(async () => {
+      setIsSearchingSuggestions(true);
+      try {
+        const results = await marketDataService.searchSymbols(trimmed);
+        if (isMounted) {
+          setSearchSuggestions((results || []).slice(0, 10));
+        }
+      } catch (err) {
+        console.warn('FastGraphs suggestion search failed', err);
+      } finally {
+        if (isMounted) setIsSearchingSuggestions(false);
+      }
+    }, 200);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [searchTicker]);
+
   const handleClearRecents = (e: React.MouseEvent) => {
     e.stopPropagation();
     setRecentTickers([]);
@@ -127,13 +163,24 @@ export function FastGraphs({
 
     onSelectSymbol?.(sym);
     setSearchTicker('');
+    setSearchSuggestions([]);
     setIsSearchOpen(false);
   };
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchTicker.trim()) {
-      handleSelectTicker(searchTicker);
+      const trimmed = searchTicker.trim().toUpperCase();
+      const exactMatch = searchSuggestions.find(
+        (s) => s.symbol.toUpperCase() === trimmed
+      );
+      if (exactMatch) {
+        handleSelectTicker(exactMatch.symbol);
+      } else if (searchSuggestions.length > 0) {
+        handleSelectTicker(searchSuggestions[0].symbol);
+      } else {
+        handleSelectTicker(trimmed);
+      }
     }
   };
 
@@ -146,14 +193,6 @@ export function FastGraphs({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-  const filteredPopularTickers = useMemo(() => {
-    if (!searchTicker.trim()) return POPULAR_FG_TICKERS;
-    const q = searchTicker.trim().toUpperCase();
-    return POPULAR_FG_TICKERS.filter(
-      (item) => item.symbol.toUpperCase().includes(q) || item.name.toUpperCase().includes(q)
-    );
-  }, [searchTicker]);
 
   // Controls state
   const [timeframe, setTimeframe] = useState<FastGraphsTimeframe>('4Y');
@@ -310,9 +349,9 @@ export function FastGraphs({
           </div>
 
           {/* Quick Ticker Search Box */}
-          <div ref={searchContainerRef} className="relative min-w-[210px] sm:w-64">
+          <div ref={searchContainerRef} className="relative min-w-[220px] sm:w-72 md:w-80">
             <form onSubmit={handleSearchSubmit} className="relative flex items-center">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-primary pointer-events-none" />
               <Input
                 data-testid="fast-graphs-ticker-search"
                 value={searchTicker}
@@ -321,96 +360,211 @@ export function FastGraphs({
                   setIsSearchOpen(true);
                 }}
                 onFocus={() => setIsSearchOpen(true)}
-                placeholder="Search ticker (e.g. SOFI)..."
-                className="h-9 pl-8 pr-7 text-xs font-mono font-bold bg-slate-900/90 border-border/80 focus:border-amber-500/80 rounded-xl text-foreground placeholder:text-muted-foreground/60 uppercase shadow-inner"
+                placeholder="Search company or ticker (e.g. AAPL, SOFI, Shopify)..."
+                autoComplete="off"
+                spellCheck="false"
+                className="h-9 pl-9 pr-8 text-xs font-medium bg-slate-900/90 border-border/80 focus:border-amber-500/80 rounded-xl text-foreground placeholder:text-muted-foreground/60 shadow-inner"
               />
-              {searchTicker && (
+              {isSearchingSuggestions ? (
+                <Loader2 className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 animate-spin text-primary pointer-events-none" />
+              ) : searchTicker ? (
                 <button
                   type="button"
-                  onClick={() => setSearchTicker('')}
+                  onClick={() => {
+                    setSearchTicker('');
+                    setSearchSuggestions([]);
+                  }}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5 cursor-pointer"
+                  title="Clear search text"
                 >
-                  <X className="w-3 h-3" />
+                  <X className="w-3.5 h-3.5" />
                 </button>
-              )}
+              ) : null}
             </form>
 
-            {/* Dropdown with recents & suggestions */}
+            {/* Dropdown with recents & dynamic company suggestions (like Watchlist searchbox) */}
             {isSearchOpen && (
               <div
                 data-testid="fast-graphs-search-dropdown"
-                className="absolute left-0 right-0 top-full mt-1.5 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl p-2 z-50 animate-in fade-in slide-in-from-top-1 text-xs"
+                className="absolute left-0 right-0 sm:right-auto sm:w-[380px] top-full mt-1.5 bg-slate-900/98 backdrop-blur-xl border border-primary/30 rounded-xl shadow-2xl p-1.5 z-50 animate-in fade-in slide-in-from-top-1 text-xs max-h-[380px] overflow-y-auto"
               >
-                {searchTicker.trim() && (
-                  <button
-                    type="button"
-                    onClick={() => handleSelectTicker(searchTicker)}
-                    className="w-full text-left px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold flex items-center justify-between mb-1.5 transition-colors cursor-pointer"
-                  >
-                    <span>Analyze &quot;{searchTicker.trim().toUpperCase()}&quot;</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                )}
+                {/* When user is typing a query */}
+                {searchTicker.trim() ? (
+                  <div className="space-y-1">
+                    {/* Direct Analyze Button */}
+                    <button
+                      type="button"
+                      onClick={() => handleSelectTicker(searchTicker)}
+                      className="w-full text-left px-3 py-2 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold flex items-center justify-between transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Search className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Analyze &quot;{searchTicker.trim().toUpperCase()}&quot; directly</span>
+                      </div>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
 
-                {/* Recents */}
-                {recentTickers.length > 0 && (
-                  <div className="mb-2">
-                    <div className="flex items-center justify-between px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                      <span>Recent Tickers</span>
-                      <button
-                        type="button"
-                        onClick={handleClearRecents}
-                        className="hover:text-foreground text-[10px] lowercase text-muted-foreground"
-                      >
-                        clear
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap gap-1 px-1 pt-0.5">
-                      {recentTickers.map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          onClick={() => handleSelectTicker(t)}
-                          className={cn(
-                            "px-2 py-1 rounded-md text-xs font-mono font-bold transition-colors cursor-pointer",
-                            cleanSymbol === t
-                              ? "bg-amber-500 text-slate-950"
-                              : "bg-slate-800 hover:bg-slate-700 text-slate-200"
+                    {/* Searching status indicator */}
+                    {isSearchingSuggestions && searchSuggestions.length === 0 && (
+                      <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
+                        <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                        <span>Loading companies for &quot;{searchTicker}&quot;...</span>
+                      </div>
+                    )}
+
+                    {/* Dynamic Company Suggestions */}
+                    {searchSuggestions.length > 0 && (
+                      <div>
+                        <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+                          <span>Matching Companies ({searchSuggestions.length})</span>
+                          {isSearchingSuggestions && (
+                            <Loader2 className="w-3 h-3 animate-spin text-primary" />
                           )}
-                        >
-                          {t}
-                        </button>
-                      ))}
+                        </div>
+                        <div className="space-y-0.5 mt-0.5">
+                          {searchSuggestions.map((item) => {
+                            const isCanadian =
+                              item.symbol.endsWith('.TO') ||
+                              item.symbol.endsWith('.V') ||
+                              item.stockExchange === 'TSX' ||
+                              item.stockExchange === 'TSXV' ||
+                              item.stockExchange === 'TOR' ||
+                              item.stockExchange === 'VAN';
+                            const exchangeLabel =
+                              item.stockExchange === 'TOR'
+                                ? 'TSX'
+                                : item.stockExchange === 'VAN'
+                                ? 'TSXV'
+                                : item.stockExchange || (isCanadian ? 'TSX' : 'US');
+
+                            return (
+                              <button
+                                key={item.symbol}
+                                type="button"
+                                onClick={() => handleSelectTicker(item.symbol)}
+                                className={cn(
+                                  "w-full flex items-center justify-between px-3 py-2 rounded-lg text-left transition-colors group cursor-pointer",
+                                  cleanSymbol === item.symbol
+                                    ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40"
+                                    : "hover:bg-primary/15 text-foreground"
+                                )}
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <span className="font-mono font-bold text-sm text-foreground group-hover:text-amber-400 transition-colors">
+                                    {item.symbol}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground truncate max-w-[170px] sm:max-w-[210px]">
+                                    {item.name}
+                                  </span>
+                                  <Badge
+                                    variant="outline"
+                                    className={cn(
+                                      "text-[10px] px-1.5 py-0 font-mono shrink-0 font-semibold",
+                                      isCanadian
+                                        ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                                        : "bg-slate-800 text-slate-300 border-slate-700"
+                                    )}
+                                  >
+                                    {exchangeLabel}
+                                  </Badge>
+                                </div>
+                                <span className="text-xs text-primary font-semibold flex items-center gap-1 shrink-0 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  Open <ArrowRight className="w-3 h-3" />
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* No Results Fallback */}
+                    {!isSearchingSuggestions && searchSuggestions.length === 0 && (
+                      <div className="py-3 px-2 text-center text-xs text-muted-foreground">
+                        No companies found matching &quot;{searchTicker}&quot;. Press Enter to analyze ticker directly.
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* When input is empty / initial focus */
+                  <div className="space-y-2">
+                    {/* Recent Tickers */}
+                    {recentTickers.length > 0 && (
+                      <div>
+                        <div className="flex items-center justify-between px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                          <span>Recent Tickers</span>
+                          <button
+                            type="button"
+                            onClick={handleClearRecents}
+                            className="hover:text-foreground text-[10px] lowercase text-muted-foreground transition-colors"
+                          >
+                            clear
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-1 px-1 pt-0.5">
+                          {recentTickers.map((t) => (
+                            <button
+                              key={t}
+                              type="button"
+                              onClick={() => handleSelectTicker(t)}
+                              className={cn(
+                                "px-2 py-1 rounded-md text-xs font-mono font-bold transition-colors cursor-pointer",
+                                cleanSymbol === t
+                                  ? "bg-amber-500 text-slate-950"
+                                  : "bg-slate-800 hover:bg-slate-700 text-slate-200"
+                              )}
+                            >
+                              {t}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Popular Benchmarks with Company Names */}
+                    <div>
+                      <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                        Popular Benchmarks
+                      </div>
+                      <div className="space-y-0.5 max-h-48 overflow-y-auto">
+                        {POPULAR_FG_TICKERS.map((item) => {
+                          const isCanadian = item.symbol.endsWith('.TO');
+                          return (
+                            <button
+                              key={item.symbol}
+                              type="button"
+                              onClick={() => handleSelectTicker(item.symbol)}
+                              className={cn(
+                                "w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between transition-colors cursor-pointer group",
+                                cleanSymbol === item.symbol
+                                  ? "bg-amber-500/15 text-amber-300 font-bold"
+                                  : "hover:bg-slate-800 text-slate-300"
+                              )}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="font-mono font-bold text-xs">{item.symbol}</span>
+                                <span className="text-[11px] text-muted-foreground truncate max-w-[180px]">
+                                  {item.name}
+                                </span>
+                              </div>
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  "text-[10px] px-1 py-0 font-mono shrink-0",
+                                  isCanadian
+                                    ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                                    : "bg-slate-800 text-slate-400 border-slate-700"
+                                )}
+                              >
+                                {isCanadian ? 'TSX' : 'US'}
+                              </Badge>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
                 )}
-
-                {/* Popular FAST Graphs Tickers */}
-                <div>
-                  <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                    Popular Benchmarks
-                  </div>
-                  <div className="space-y-0.5 max-h-44 overflow-y-auto">
-                    {filteredPopularTickers.slice(0, 6).map((item) => (
-                      <button
-                        key={item.symbol}
-                        type="button"
-                        onClick={() => handleSelectTicker(item.symbol)}
-                        className={cn(
-                          "w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between transition-colors cursor-pointer",
-                          cleanSymbol === item.symbol
-                            ? "bg-amber-500/15 text-amber-300 font-bold"
-                            : "hover:bg-slate-800 text-slate-300"
-                        )}
-                      >
-                        <span className="font-mono font-bold">{item.symbol}</span>
-                        <span className="text-[11px] text-muted-foreground truncate max-w-[130px]">
-                          {item.name}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
               </div>
             )}
           </div>

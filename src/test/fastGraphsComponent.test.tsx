@@ -9,6 +9,7 @@ import {
   FastGraphsResponse
 } from '../services/fastGraphsService';
 import { FastGraphs } from '../components/graphs/FastGraphs';
+import { marketDataService } from '../services/marketData';
 
 // Mock recharts responsive container for jsdom test environment
 vi.mock('recharts', async () => {
@@ -418,6 +419,46 @@ describe('FAST Graphs Fundamental Valuation Visualizer', () => {
       fireEvent.submit(searchInput.closest('form')!);
 
       expect(mockSelectSymbol).toHaveBeenCalledWith('NVDA');
+    });
+
+    it('loads and displays matching companies dynamically as user types (matching Watchlist searchbox)', async () => {
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const mockSelectSymbol = vi.fn();
+
+      const searchSpy = vi.spyOn(marketDataService, 'searchSymbols').mockResolvedValue([
+        { symbol: 'AAPL', name: 'Apple Inc', stockExchange: 'NASDAQ' },
+        { symbol: 'SHOP.TO', name: 'Shopify Inc', stockExchange: 'TSX' },
+      ]);
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <FastGraphs symbol="SOFI" onSelectSymbol={mockSelectSymbol} />
+        </QueryClientProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('fast-graphs-ticker-search')).toBeDefined();
+      });
+
+      const searchInput = screen.getByTestId('fast-graphs-ticker-search');
+      fireEvent.focus(searchInput);
+
+      // Type "appl"
+      fireEvent.change(searchInput, { target: { value: 'appl' } });
+
+      // Wait for debounced search and company rendering
+      await waitFor(() => {
+        expect(searchSpy).toHaveBeenCalledWith('appl');
+        expect(screen.getByText('Matching Companies (2)')).toBeDefined();
+        expect(screen.getByText('Apple Inc')).toBeDefined();
+        expect(screen.getByText('Shopify Inc')).toBeDefined();
+        expect(screen.getByText('TSX')).toBeDefined();
+      });
+
+      // Click on Apple Inc
+      fireEvent.click(screen.getByText('Apple Inc'));
+
+      expect(mockSelectSymbol).toHaveBeenCalledWith('AAPL');
     });
   });
 });

@@ -35,12 +35,14 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Crosshair,
-  BrainCircuit
+  BrainCircuit,
+  Loader2
 } from 'lucide-react';
 import { Card } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Input } from './ui/input';
+import { marketDataService, StockSearchResult } from '@/services/marketData';
 import { TradingViewChart } from './graphs/TradingViewChart';
 import { FastGraphs } from './graphs/FastGraphs';
 import { TechnicalAnalysisModal } from './graphs/TechnicalAnalysisModal';
@@ -75,6 +77,38 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
   const [searchQuery, setSearchQuery] = useState('');
   const [isFullPageSearchOpen, setIsFullPageSearchOpen] = useState(false);
   const fullPageSearchRef = useRef<HTMLDivElement>(null);
+  const [fullPageCompanySuggestions, setFullPageCompanySuggestions] = useState<StockSearchResult[]>([]);
+  const [isFullPageSearching, setIsFullPageSearching] = useState(false);
+
+  // Debounced live company search for full page searchbox
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (!isFullPage || trimmed.length < 1) {
+      setFullPageCompanySuggestions([]);
+      setIsFullPageSearching(false);
+      return;
+    }
+
+    let isMounted = true;
+    const timer = setTimeout(async () => {
+      setIsFullPageSearching(true);
+      try {
+        const results = await marketDataService.searchSymbols(trimmed);
+        if (isMounted) {
+          setFullPageCompanySuggestions((results || []).slice(0, 10));
+        }
+      } catch (err) {
+        console.warn('Full page suggestion search failed', err);
+      } finally {
+        if (isMounted) setIsFullPageSearching(false);
+      }
+    }, 200);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [searchQuery, isFullPage]);
   // Full Page Chart Mode
   const [isFullPage, setIsFullPage] = useState(false);
   // RSI Indicator Toggle (defaults to false: not shown by default)
@@ -1363,84 +1397,162 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
               </div>
 
               {/* Quick Ticker Switcher */}
-              <div ref={fullPageSearchRef} className="relative w-44 sm:w-60">
+              <div ref={fullPageSearchRef} className="relative w-48 sm:w-72">
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
                     if (searchQuery.trim()) {
-                      handleSelectSymbol(searchQuery.trim());
+                      const trimmed = searchQuery.trim().toUpperCase();
+                      const match = fullPageCompanySuggestions.find(s => s.symbol.toUpperCase() === trimmed);
+                      if (match) {
+                        handleSelectSymbol(match.symbol);
+                      } else if (fullPageCompanySuggestions.length > 0) {
+                        handleSelectSymbol(fullPageCompanySuggestions[0].symbol);
+                      } else {
+                        handleSelectSymbol(trimmed);
+                      }
                       setSearchQuery('');
+                      setFullPageCompanySuggestions([]);
                       setIsFullPageSearchOpen(false);
                     }
                   }}
                   className="relative flex items-center"
                 >
-                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-primary pointer-events-none" />
                   <Input
-                    placeholder="Switch ticker (e.g. SOFI)..."
+                    placeholder="Search company or ticker..."
                     value={searchQuery}
                     onChange={(e) => {
                       setSearchQuery(e.target.value);
                       setIsFullPageSearchOpen(true);
                     }}
                     onFocus={() => setIsFullPageSearchOpen(true)}
-                    className="h-8 pl-8 pr-7 text-xs bg-slate-900 border-border/70 rounded-xl font-mono text-foreground uppercase placeholder:text-muted-foreground/60"
+                    autoComplete="off"
+                    spellCheck="false"
+                    className="h-8 pl-8 pr-7 text-xs bg-slate-900 border-border/70 rounded-xl text-foreground placeholder:text-muted-foreground/60"
                   />
-                  {searchQuery && (
+                  {isFullPageSearching ? (
+                    <Loader2 className="w-3 h-3 absolute right-2.5 top-1/2 -translate-y-1/2 animate-spin text-primary pointer-events-none" />
+                  ) : searchQuery ? (
                     <button
                       type="button"
-                      onClick={() => setSearchQuery('')}
+                      onClick={() => {
+                        setSearchQuery('');
+                        setFullPageCompanySuggestions([]);
+                      }}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5 cursor-pointer"
                     >
                       <X className="w-3 h-3" />
                     </button>
-                  )}
+                  ) : null}
                 </form>
 
-                {/* Dropdown in Full Page Top Bar */}
+                {/* Dropdown in Full Page Top Bar with live company results */}
                 {isFullPageSearchOpen && (
-                  <div className="absolute left-0 right-0 top-full mt-1.5 bg-slate-900/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl p-2 z-50 animate-in fade-in slide-in-from-top-1 text-xs max-h-64 overflow-y-auto">
+                  <div className="absolute left-0 right-0 sm:right-auto sm:w-80 top-full mt-1.5 bg-slate-900/98 backdrop-blur-xl border border-primary/30 rounded-xl shadow-2xl p-1.5 z-50 animate-in fade-in slide-in-from-top-1 text-xs max-h-72 overflow-y-auto">
                     {searchQuery.trim() && (
                       <button
                         type="button"
                         onClick={() => {
                           handleSelectSymbol(searchQuery.trim());
                           setSearchQuery('');
+                          setFullPageCompanySuggestions([]);
                           setIsFullPageSearchOpen(false);
                         }}
-                        className="w-full text-left px-2 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold flex items-center justify-between mb-1 transition-colors cursor-pointer"
+                        className="w-full text-left px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold flex items-center justify-between mb-1 transition-colors cursor-pointer"
                       >
-                        <span>Switch to &quot;{searchQuery.trim().toUpperCase()}&quot;</span>
+                        <span>Analyze &quot;{searchQuery.trim().toUpperCase()}&quot; directly</span>
                         <ArrowRight className="w-3.5 h-3.5" />
                       </button>
                     )}
 
-                    {/* Quick suggestions from current watchlist/portfolio */}
-                    <div className="space-y-0.5">
-                      {currentList
-                        .filter(item => !searchQuery.trim() || item.symbol.includes(searchQuery.trim().toUpperCase()) || item.name.toUpperCase().includes(searchQuery.trim().toUpperCase()))
-                        .slice(0, 6)
-                        .map(item => (
-                          <button
-                            key={item.symbol}
-                            type="button"
-                            onClick={() => {
-                              handleSelectSymbol(item.symbol);
-                              setSearchQuery('');
-                              setIsFullPageSearchOpen(false);
-                            }}
-                            className={cn(
-                              "w-full text-left px-2 py-1.5 rounded-lg flex items-center justify-between transition-colors cursor-pointer",
-                              selectedSymbol === item.symbol
-                                ? "bg-primary/20 text-primary font-bold"
-                                : "hover:bg-slate-800 text-slate-300"
-                            )}
-                          >
-                            <span className="font-mono font-bold">{item.symbol}</span>
-                            <span className="text-[11px] text-muted-foreground truncate max-w-[120px]">{item.name}</span>
-                          </button>
-                        ))}
-                    </div>
+                    {/* Searching status */}
+                    {isFullPageSearching && fullPageCompanySuggestions.length === 0 && (
+                      <div className="flex items-center justify-center gap-2 py-3 text-xs text-muted-foreground">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                        <span>Loading companies...</span>
+                      </div>
+                    )}
+
+                    {/* Live company suggestions from API */}
+                    {fullPageCompanySuggestions.length > 0 ? (
+                      <div>
+                        <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+                          <span>Matching Companies ({fullPageCompanySuggestions.length})</span>
+                          {isFullPageSearching && <Loader2 className="w-3 h-3 animate-spin text-primary" />}
+                        </div>
+                        <div className="space-y-0.5 mt-0.5">
+                          {fullPageCompanySuggestions.map((item) => {
+                            const isCanadian = item.symbol.endsWith('.TO') || item.symbol.endsWith('.V');
+                            return (
+                              <button
+                                key={item.symbol}
+                                type="button"
+                                onClick={() => {
+                                  handleSelectSymbol(item.symbol);
+                                  setSearchQuery('');
+                                  setFullPageCompanySuggestions([]);
+                                  setIsFullPageSearchOpen(false);
+                                }}
+                                className={cn(
+                                  "w-full text-left px-2 py-1.5 rounded-lg flex items-center justify-between transition-colors cursor-pointer group",
+                                  selectedSymbol === item.symbol
+                                    ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30"
+                                    : "hover:bg-primary/15 text-foreground"
+                                )}
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="font-mono font-bold text-xs text-foreground group-hover:text-amber-400">{item.symbol}</span>
+                                  <span className="text-[11px] text-muted-foreground truncate max-w-[140px] sm:max-w-[170px]">{item.name}</span>
+                                </div>
+                                <Badge
+                                  variant="outline"
+                                  className={cn(
+                                    "text-[9px] px-1 py-0 font-mono shrink-0",
+                                    isCanadian
+                                      ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                                      : "bg-slate-800 text-slate-300 border-slate-700"
+                                  )}
+                                >
+                                  {isCanadian ? 'TSX' : (item.stockExchange || 'US')}
+                                </Badge>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                      /* Fallback suggestions from current watchlist/portfolio when not typing or before API loads */
+                      <div className="space-y-0.5">
+                        <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                          From Current List
+                        </div>
+                        {currentList
+                          .filter(item => !searchQuery.trim() || item.symbol.includes(searchQuery.trim().toUpperCase()) || item.name.toUpperCase().includes(searchQuery.trim().toUpperCase()))
+                          .slice(0, 6)
+                          .map(item => (
+                            <button
+                              key={item.symbol}
+                              type="button"
+                              onClick={() => {
+                                handleSelectSymbol(item.symbol);
+                                setSearchQuery('');
+                                setFullPageCompanySuggestions([]);
+                                setIsFullPageSearchOpen(false);
+                              }}
+                              className={cn(
+                                "w-full text-left px-2 py-1.5 rounded-lg flex items-center justify-between transition-colors cursor-pointer",
+                                selectedSymbol === item.symbol
+                                  ? "bg-primary/20 text-primary font-bold"
+                                  : "hover:bg-slate-800 text-slate-300"
+                              )}
+                            >
+                              <span className="font-mono font-bold">{item.symbol}</span>
+                              <span className="text-[11px] text-muted-foreground truncate max-w-[130px]">{item.name}</span>
+                            </button>
+                          ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
