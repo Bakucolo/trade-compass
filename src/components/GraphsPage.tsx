@@ -75,6 +75,8 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
   const [sourceMode, setSourceMode] = useState<SidePanelSource>('WATCHLIST');
   const [isPanelCollapsed, setIsPanelCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isFullPage, setIsFullPage] = useState(false);
+  const [showRsi, setShowRsi] = useState(false);
   const [isFullPageSearchOpen, setIsFullPageSearchOpen] = useState(false);
   const fullPageSearchRef = useRef<HTMLDivElement>(null);
   const [fullPageCompanySuggestions, setFullPageCompanySuggestions] = useState<StockSearchResult[]>([]);
@@ -109,10 +111,6 @@ export function GraphsPage({ onNavigateToResearch, onSelectSymbol, initialSymbol
       clearTimeout(timer);
     };
   }, [searchQuery, isFullPage]);
-  // Full Page Chart Mode
-  const [isFullPage, setIsFullPage] = useState(false);
-  // RSI Indicator Toggle (defaults to false: not shown by default)
-  const [showRsi, setShowRsi] = useState(false);
 
   // Active Graph View Mode: TradingView Technicals vs FAST Graphs (Fundamentals)
   type GraphViewMode = 'TRADINGVIEW' | 'FAST_GRAPHS';
