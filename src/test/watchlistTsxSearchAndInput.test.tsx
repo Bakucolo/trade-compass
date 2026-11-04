@@ -231,5 +231,90 @@ describe('Toronto Stock Exchange (TSX) Normalization & Searchbox Visibility', ()
       // Price should be formatted with C$ prefix for Canadian currency
       expect(screen.getByText('C$0.13')).toBeDefined();
     });
+
+    it('adds the first company shown in the list when pressing Enter without clicking', async () => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+
+      const searchSpy = vi.spyOn(marketDataService, 'searchSymbols').mockResolvedValue([
+        { symbol: 'AAPL', name: 'Apple Inc.', stockExchange: 'NASDAQ' },
+        { symbol: 'AAPL.NE', name: 'Apple Inc. CDR', stockExchange: 'NEO' },
+      ]);
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <WatchlistPage />
+        </QueryClientProvider>
+      );
+
+      const searchInput = screen.getByPlaceholderText(/Search or add ticker/i) as HTMLInputElement;
+
+      // User types "apple"
+      fireEvent.change(searchInput, { target: { value: 'apple' } });
+
+      // Wait for suggestions dropdown to display with the companies
+      await waitFor(() => {
+        expect(screen.getByText('Apple Inc.')).toBeDefined();
+        expect(screen.getByText('AAPL')).toBeDefined();
+      });
+
+      // User hits Enter directly instead of clicking with mouse
+      fireEvent.keyDown(searchInput, { key: 'Enter', code: 'Enter' });
+
+      // Verify that AAPL (first company in the list) was added to the watchlist
+      await waitFor(() => {
+        expect(mockAddSymbolMutateAsync).toHaveBeenCalledWith({
+          watchlistId: 'wl-1',
+          symbol: 'AAPL',
+        });
+      });
+
+      // Search input should be cleared so the user can immediately add the next company
+      expect(searchInput.value).toBe('');
+      searchSpy.mockRestore();
+    });
+
+    it('allows arrow down navigation to select the second company and add it on Enter', async () => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+
+      const searchSpy = vi.spyOn(marketDataService, 'searchSymbols').mockResolvedValue([
+        { symbol: 'MSFT', name: 'Microsoft Corp.', stockExchange: 'NASDAQ' },
+        { symbol: 'MSFT.NE', name: 'Microsoft Corp CDR', stockExchange: 'NEO' },
+      ]);
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <WatchlistPage />
+        </QueryClientProvider>
+      );
+
+      const searchInput = screen.getByPlaceholderText(/Search or add ticker/i) as HTMLInputElement;
+
+      fireEvent.change(searchInput, { target: { value: 'msft' } });
+
+      await waitFor(() => {
+        expect(screen.getByText('Microsoft Corp.')).toBeDefined();
+        expect(screen.getByText('Microsoft Corp CDR')).toBeDefined();
+      });
+
+      // Arrow down to the 2nd company
+      fireEvent.keyDown(searchInput, { key: 'ArrowDown', code: 'ArrowDown' });
+
+      // Press Enter
+      fireEvent.keyDown(searchInput, { key: 'Enter', code: 'Enter' });
+
+      // Verify MSFT.NE was added
+      await waitFor(() => {
+        expect(mockAddSymbolMutateAsync).toHaveBeenCalledWith({
+          watchlistId: 'wl-1',
+          symbol: 'MSFT.NE',
+        });
+      });
+
+      searchSpy.mockRestore();
+    });
   });
 });

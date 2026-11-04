@@ -56,6 +56,7 @@ export function WatchlistCard({ onNavigateToWatchlist, onNavigateToResearch, onN
   const [newSymbolInput, setNewSymbolInput] = useState('');
   const [suggestions, setSuggestions] = useState<Array<{ symbol: string; name: string; exchange?: string }>>([]);
   const [isSearchingSuggestions, setIsSearchingSuggestions] = useState(false);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState<number>(0);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
 
@@ -118,6 +119,7 @@ export function WatchlistCard({ onNavigateToWatchlist, onNavigateToResearch, onN
     const query = newSymbolInput.trim();
     if (query.length < 1) {
       setSuggestions([]);
+      setSelectedSuggestionIndex(0);
       return;
     }
 
@@ -128,6 +130,7 @@ export function WatchlistCard({ onNavigateToWatchlist, onNavigateToResearch, onN
         const results = await marketDataService.searchSymbols(query);
         if (isMounted) {
           setSuggestions((results || []).slice(0, 6));
+          setSelectedSuggestionIndex(0);
         }
       } catch (err) {
         console.warn('Live ticker search failed', err);
@@ -149,10 +152,37 @@ export function WatchlistCard({ onNavigateToWatchlist, onNavigateToResearch, onN
     }
   }, [isAddMode]);
 
-  // Add ticker to active watchlist
+  // Add ticker to active watchlist (defaults to top matching company shown in list on Enter)
   const handleAddSymbol = async (symbolToAdd?: string) => {
-    const rawSym = (symbolToAdd || newSymbolInput).trim().toUpperCase();
-    if (!rawSym || !activeWatchlist?.id) return;
+    const trimmedInput = newSymbolInput.trim();
+    if (!trimmedInput && !symbolToAdd) return;
+    if (!activeWatchlist?.id) return;
+
+    let targetSymbol = symbolToAdd;
+
+    if (!targetSymbol) {
+      if (suggestions.length > 0) {
+        const activeIdx = (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < suggestions.length)
+          ? selectedSuggestionIndex
+          : 0;
+        targetSymbol = suggestions[activeIdx]?.symbol;
+      } else if (trimmedInput) {
+        try {
+          const results = await marketDataService.searchSymbols(trimmedInput);
+          if (results && results.length > 0) {
+            targetSymbol = results[0].symbol;
+          } else {
+            targetSymbol = trimmedInput;
+          }
+        } catch {
+          targetSymbol = trimmedInput;
+        }
+      }
+    }
+
+    if (!targetSymbol) return;
+
+    const rawSym = targetSymbol.trim().toUpperCase();
     const sym = normalizeTickerSymbol(rawSym);
 
     setIsAdding(true);
@@ -168,6 +198,7 @@ export function WatchlistCard({ onNavigateToWatchlist, onNavigateToResearch, onN
 
       setNewSymbolInput('');
       setSuggestions([]);
+      setSelectedSuggestionIndex(0);
       setIsAddMode(false);
     } catch (err: any) {
       toast.error(`Failed to add ${sym}: ${err.message}`);
@@ -340,11 +371,23 @@ export function WatchlistCard({ onNavigateToWatchlist, onNavigateToResearch, onN
                   value={newSymbolInput}
                   onChange={(e) => setNewSymbolInput(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
+                    if (e.key === 'ArrowDown') {
+                      if (suggestions.length > 0) {
+                        e.preventDefault();
+                        setSelectedSuggestionIndex((prev) => (prev + 1) % suggestions.length);
+                      }
+                    } else if (e.key === 'ArrowUp') {
+                      if (suggestions.length > 0) {
+                        e.preventDefault();
+                        setSelectedSuggestionIndex((prev) => (prev - 1 + suggestions.length) % suggestions.length);
+                      }
+                    } else if (e.key === 'Enter') {
                       e.preventDefault();
                       handleAddSymbol();
                     } else if (e.key === 'Escape') {
                       setIsAddMode(false);
+                      setSuggestions([]);
+                      setSelectedSuggestionIndex(0);
                     }
                   }}
                   placeholder={`Add ticker to "${activeWatchlist?.name || 'Watchlist'}" (e.g. NVDA, PLTR, BTC-USD)...`}
@@ -359,7 +402,7 @@ export function WatchlistCard({ onNavigateToWatchlist, onNavigateToResearch, onN
                 size="sm"
                 disabled={!newSymbolInput.trim() || isAdding}
                 onClick={() => handleAddSymbol()}
-                className="h-8 px-3 text-xs font-semibold bg-primary text-primary-foreground gap-1"
+                className="h-8 px-3 text-xs font-semibold bg-primary text-primary-foreground gap-1 cursor-pointer"
               >
                 {isAdding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
                 <span>Add</span>
@@ -368,34 +411,62 @@ export function WatchlistCard({ onNavigateToWatchlist, onNavigateToResearch, onN
 
             {/* Live Autocomplete Dropdown */}
             {suggestions.length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-1 z-30 bg-slate-950/95 border border-border/80 rounded-xl shadow-2xl overflow-hidden backdrop-blur-xl divide-y divide-border/40">
+              <div
+                role="listbox"
+                className="absolute left-0 right-0 top-full mt-1 z-30 bg-slate-950/95 border border-border/80 rounded-xl shadow-2xl overflow-hidden backdrop-blur-xl divide-y divide-border/40"
+              >
                 <div className="px-3 py-1.5 bg-accent/20 text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
-                  <span>Matching Symbols</span>
-                  <span>Click to add</span>
+                  <span>Press <kbd className="px-1 py-0.5 rounded bg-primary/20 text-primary border border-primary/40 font-bold">↵ Enter</kbd> for top match</span>
+                  <span>{suggestions.length} {suggestions.length === 1 ? 'match' : 'matches'}</span>
                 </div>
-                {suggestions.map((s) => (
-                  <div
-                    key={s.symbol}
-                    onClick={() => handleAddSymbol(s.symbol)}
-                    className="flex items-center justify-between px-3 py-2 hover:bg-primary/15 cursor-pointer transition-colors group"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="font-mono font-bold text-xs text-foreground group-hover:text-primary transition-colors">
-                        {s.symbol}
-                      </span>
-                      <span className="text-[11px] text-muted-foreground truncate max-w-[200px]">
-                        {s.name}
-                      </span>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 px-2 text-[10px] font-semibold text-primary hover:bg-primary hover:text-primary-foreground gap-1"
+                {suggestions.map((s, idx) => {
+                  const isSelected = idx === selectedSuggestionIndex;
+                  return (
+                    <div
+                      key={s.symbol}
+                      role="option"
+                      aria-selected={isSelected}
+                      onClick={() => handleAddSymbol(s.symbol)}
+                      onMouseEnter={() => setSelectedSuggestionIndex(idx)}
+                      className={cn(
+                        "flex items-center justify-between px-3 py-2 cursor-pointer transition-colors group",
+                        isSelected
+                          ? "bg-primary/20 ring-1 ring-primary/50 text-foreground"
+                          : "hover:bg-primary/15"
+                      )}
                     >
-                      <Plus className="w-3 h-3" /> Add
-                    </Button>
-                  </div>
-                ))}
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={cn(
+                          "font-mono font-bold text-xs transition-colors",
+                          isSelected ? "text-primary font-black" : "text-foreground group-hover:text-primary"
+                        )}>
+                          {s.symbol}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground truncate max-w-[200px]">
+                          {s.name}
+                        </span>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant={isSelected ? "default" : "ghost"}
+                        className={cn(
+                          "h-6 px-2 text-[10px] font-semibold gap-1",
+                          isSelected
+                            ? "bg-primary text-primary-foreground font-bold shadow-sm"
+                            : "text-primary hover:bg-primary hover:text-primary-foreground"
+                        )}
+                      >
+                        {isSelected ? (
+                          <span>↵ Enter</span>
+                        ) : (
+                          <>
+                            <Plus className="w-3 h-3" /> Add
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

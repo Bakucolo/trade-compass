@@ -169,14 +169,16 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
   const [isAiThematicModalOpen, setIsAiThematicModalOpen] = useState(false);
 
   // Autocomplete Suggestions
-  const [suggestions, setSuggestions] = useState<Array<{ symbol: string; name: string }>>([]);
+  const [suggestions, setSuggestions] = useState<Array<{ symbol: string; name: string; stockExchange?: string }>>([]);
   const [isSearchingSuggestions, setIsSearchingSuggestions] = useState(false);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState<number>(0);
 
   // Handle live suggestions for ticker input
   useEffect(() => {
     const trimmed = newTickerInput.trim();
     if (trimmed.length < 1) {
       setSuggestions([]);
+      setSelectedSuggestionIndex(0);
       return;
     }
 
@@ -187,6 +189,7 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
         const results = await marketDataService.searchSymbols(trimmed);
         if (isMounted) {
           setSuggestions((results || []).slice(0, 10));
+          setSelectedSuggestionIndex(0);
         }
       } catch (err) {
         console.warn('Suggestion search failed', err);
@@ -201,11 +204,40 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
     };
   }, [newTickerInput]);
 
-  // Quick addition action
+  // Quick addition action (automatically adds the top matching company shown in the list on Enter)
   const handleAddTicker = async (tickerToAdd?: string) => {
-    const rawSymbol = (tickerToAdd || newTickerInput).trim().toUpperCase();
-    if (!rawSymbol || !selectedWatchlistId) return;
+    const trimmedInput = newTickerInput.trim();
+    if (!trimmedInput && !tickerToAdd) return;
+    if (!selectedWatchlistId) return;
 
+    let targetSymbol = tickerToAdd;
+
+    // If no explicit symbol passed (e.g. user pressed Enter in the input):
+    if (!targetSymbol) {
+      if (suggestions.length > 0) {
+        // Pick the top matching company shown in the list (or the arrow-navigated one)
+        const activeIdx = (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < suggestions.length)
+          ? selectedSuggestionIndex
+          : 0;
+        targetSymbol = suggestions[activeIdx]?.symbol;
+      } else if (trimmedInput) {
+        // If suggestions are still loading, resolve the first matching company immediately
+        try {
+          const results = await marketDataService.searchSymbols(trimmedInput);
+          if (results && results.length > 0) {
+            targetSymbol = results[0].symbol;
+          } else {
+            targetSymbol = trimmedInput;
+          }
+        } catch {
+          targetSymbol = trimmedInput;
+        }
+      }
+    }
+
+    if (!targetSymbol) return;
+
+    const rawSymbol = targetSymbol.trim().toUpperCase();
     const symbol = normalizeTickerSymbol(rawSymbol);
 
     try {
@@ -215,6 +247,8 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
       });
       setNewTickerInput('');
       setSuggestions([]);
+      setSelectedSuggestionIndex(0);
+      toast.success(`Added ${symbol} to watchlist!`);
     } catch (err: any) {
       alert(`Failed to add ${symbol}: ${err.message}`);
     }
@@ -641,8 +675,22 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
                 value={newTickerInput}
                 onChange={(e) => setNewTickerInput(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
+                  if (e.key === 'ArrowDown') {
+                    if (suggestions.length > 0) {
+                      e.preventDefault();
+                      setSelectedSuggestionIndex((prev) => (prev + 1) % suggestions.length);
+                    }
+                  } else if (e.key === 'ArrowUp') {
+                    if (suggestions.length > 0) {
+                      e.preventDefault();
+                      setSelectedSuggestionIndex((prev) => (prev - 1 + suggestions.length) % suggestions.length);
+                    }
+                  } else if (e.key === 'Enter') {
+                    e.preventDefault();
                     handleAddTicker();
+                  } else if (e.key === 'Escape') {
+                    setSuggestions([]);
+                    setSelectedSuggestionIndex(0);
                   }
                 }}
                 autoComplete="off"
@@ -658,8 +706,9 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
                   onClick={() => {
                     setNewTickerInput('');
                     setSuggestions([]);
+                    setSelectedSuggestionIndex(0);
                   }}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 p-0.5 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                   title="Clear search text"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -668,19 +717,44 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
 
               {/* Suggestions Dropdown anchored directly to search box */}
               {suggestions.length > 0 && (
-                <div className="absolute z-30 top-full left-0 right-0 mt-1.5 bg-popover/95 backdrop-blur-xl border border-primary/30 rounded-xl shadow-2xl overflow-hidden p-1.5 max-h-[320px] overflow-y-auto">
-                  {suggestions.map((item) => {
+                <div
+                  role="listbox"
+                  className="absolute z-30 top-full left-0 right-0 mt-1.5 bg-popover/95 backdrop-blur-xl border border-primary/30 rounded-xl shadow-2xl overflow-hidden p-1.5 max-h-[320px] overflow-y-auto"
+                >
+                  <div className="px-3 py-1.5 text-[10px] font-mono font-bold text-muted-foreground uppercase flex items-center justify-between border-b border-white/10 mb-1">
+                    <span className="flex items-center gap-1.5">
+                      <span>Press</span>
+                      <kbd className="px-1.5 py-0.5 rounded bg-primary/20 text-primary border border-primary/40 font-bold text-[10px]">↵ Enter</kbd>
+                      <span>to add top match</span>
+                    </span>
+                    <span className="text-[10px] text-muted-foreground/70">{suggestions.length} {suggestions.length === 1 ? 'match' : 'matches'}</span>
+                  </div>
+
+                  {suggestions.map((item, idx) => {
+                    const isSelected = idx === selectedSuggestionIndex;
                     const isCanadian = item.symbol.endsWith('.TO') || item.symbol.endsWith('.V') || item.stockExchange === 'TSX' || item.stockExchange === 'TSXV' || item.stockExchange === 'TOR' || item.stockExchange === 'VAN';
                     const exchangeLabel = item.stockExchange === 'TOR' ? 'TSX' : (item.stockExchange === 'VAN' ? 'TSXV' : item.stockExchange || (isCanadian ? 'TSX' : 'US'));
 
                     return (
                       <button
                         key={item.symbol}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
                         onClick={() => handleAddTicker(item.symbol)}
-                        className="w-full flex items-center justify-between px-3.5 py-2.5 hover:bg-primary/15 rounded-lg text-left transition-colors group"
+                        onMouseEnter={() => setSelectedSuggestionIndex(idx)}
+                        className={cn(
+                          "w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-left transition-colors group cursor-pointer",
+                          isSelected
+                            ? "bg-primary/20 ring-1 ring-primary/50 text-foreground"
+                            : "hover:bg-primary/15"
+                        )}
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
-                          <span className="font-mono font-bold text-foreground text-sm group-hover:text-primary transition-colors">
+                          <span className={cn(
+                            "font-mono font-bold text-sm transition-colors",
+                            isSelected ? "text-primary font-black" : "text-foreground group-hover:text-primary"
+                          )}>
                             {item.symbol}
                           </span>
                           <span className="text-xs text-muted-foreground truncate max-w-[200px] sm:max-w-[280px]">
@@ -699,7 +773,15 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
                           </Badge>
                         </div>
                         <span className="text-xs text-primary font-semibold flex items-center gap-1 shrink-0 ml-2">
-                          <Plus className="w-3.5 h-3.5" /> Add
+                          {isSelected ? (
+                            <span className="flex items-center gap-1 text-[11px] font-mono bg-primary/25 text-primary-foreground px-2 py-0.5 rounded border border-primary/50 shadow-sm font-bold">
+                              ↵ Enter to add
+                            </span>
+                          ) : (
+                            <>
+                              <Plus className="w-3.5 h-3.5" /> Add
+                            </>
+                          )}
                         </span>
                       </button>
                     );
