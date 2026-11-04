@@ -31,9 +31,12 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { useWatchlists, WatchlistSummary } from '@/services/watchlistService';
 
 export interface AppFeatureSearchProps {
   onNavigateTab?: (tab: string) => void;
+  onSelectWatchlist?: (watchlistId: string) => void;
+  watchlists?: WatchlistSummary[];
   onOpenBuyingPower?: () => void;
   onOpenCriticalDefense?: () => void;
   onOpenAIHunter?: () => void;
@@ -48,12 +51,12 @@ export interface FeatureItem {
   id: string;
   title: string;
   description: string;
-  category: 'SECTIONS' | 'TOOLS' | 'ANALYTICS';
+  category: 'SECTIONS' | 'TOOLS' | 'ANALYTICS' | 'WATCHLISTS';
   badge?: string;
   badgeColor?: string;
   icon: React.ComponentType<{ className?: string }>;
   keywords: string[];
-  actionType: 'NAVIGATE' | 'MODAL' | 'CUSTOM';
+  actionType: 'NAVIGATE' | 'MODAL' | 'CUSTOM' | 'WATCHLIST';
   target?: string;
 }
 
@@ -62,6 +65,8 @@ const USAGE_STORAGE_KEY = 'tradeflow_feature_usage';
 
 export function AppFeatureSearch({
   onNavigateTab,
+  onSelectWatchlist,
+  watchlists: propWatchlists,
   onOpenBuyingPower,
   onOpenCriticalDefense,
   onOpenAIHunter,
@@ -71,6 +76,17 @@ export function AppFeatureSearch({
   onOpenTelegramHub,
   className
 }: AppFeatureSearchProps) {
+  // Query watchlists safely (handles test environments lacking QueryClientProvider)
+  let queriedWatchlists: WatchlistSummary[] | undefined;
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const res = useWatchlists();
+    queriedWatchlists = res?.data;
+  } catch {
+    queriedWatchlists = undefined;
+  }
+  const watchlists = propWatchlists ?? queriedWatchlists ?? [];
+
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -118,7 +134,7 @@ export function AppFeatureSearch({
   }, []);
 
   // Feature Catalog Definition
-  const allFeatures: FeatureItem[] = useMemo(() => [
+  const baseFeatures: FeatureItem[] = useMemo(() => [
     // 1. Core Sections
     {
       id: 'fast-graphs',
@@ -378,6 +394,42 @@ export function AppFeatureSearch({
     }
   ], []);
 
+  // Dynamic Watchlist Features
+  const watchlistFeatures: FeatureItem[] = useMemo(() => {
+    return (watchlists || []).map((w) => {
+      const tickerCount = w.items?.length || 0;
+      const tickerSample = (w.items || [])
+        .slice(0, 5)
+        .map((item) => (typeof item === 'string' ? item : (item as { symbol?: string })?.symbol))
+        .filter(Boolean) as string[];
+      const tickersText = tickerSample.length > 0 ? ` (${tickerSample.join(', ')}${tickerCount > 5 ? '…' : ''})` : '';
+
+      return {
+        id: `watchlist-${w.id}`,
+        title: `Watchlist: ${w.name}`,
+        description: `${tickerCount} ${tickerCount === 1 ? 'symbol' : 'symbols'} tracked${tickersText}${w.isDefault ? ' • Default Watchlist' : ''}`,
+        category: 'WATCHLISTS',
+        badge: w.isDefault ? 'DEFAULT' : `${tickerCount} STOCKS`,
+        badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+        icon: LineChart,
+        keywords: [
+          w.name.toLowerCase(),
+          'watchlist',
+          'watchlists',
+          ...tickerSample.map((t) => t.toLowerCase())
+        ],
+        actionType: 'WATCHLIST',
+        target: w.id
+      };
+    });
+  }, [watchlists]);
+
+  // Combined Features Catalog
+  const allFeatures: FeatureItem[] = useMemo(() => [
+    ...baseFeatures,
+    ...watchlistFeatures
+  ], [baseFeatures, watchlistFeatures]);
+
   // Map of features by ID
   const featureMap = useMemo(() => {
     const map = new Map<string, FeatureItem>();
@@ -414,7 +466,25 @@ export function AppFeatureSearch({
     setQuery('');
 
     // Trigger corresponding action
-    if (feature.actionType === 'NAVIGATE' && feature.target && onNavigateTab) {
+    if (feature.actionType === 'WATCHLIST' && feature.target) {
+      const targetWatchlistId = feature.target;
+      try {
+        localStorage.setItem('tradeflow_active_watchlist_id', targetWatchlistId);
+        localStorage.setItem('dashboard_selected_watchlist', targetWatchlistId);
+      } catch (e) {
+        console.warn(e);
+      }
+      window.dispatchEvent(
+        new CustomEvent('select-watchlist', {
+          detail: { id: targetWatchlistId, name: feature.title }
+        })
+      );
+      if (onSelectWatchlist) {
+        onSelectWatchlist(targetWatchlistId);
+      } else if (onNavigateTab) {
+        onNavigateTab('watchlist');
+      }
+    } else if (feature.actionType === 'NAVIGATE' && feature.target && onNavigateTab) {
       onNavigateTab(feature.target);
     } else if (feature.actionType === 'CUSTOM') {
       if (feature.id === 'fast-graphs') {
@@ -489,12 +559,41 @@ export function AppFeatureSearch({
     const q = query.trim().toLowerCase();
     if (!q) return [];
 
-    return allFeatures.filter((f) => {
-      const matchTitle = f.title.toLowerCase().includes(q);
+    const matched = allFeatures.filter((f) => {
+      const cleanTitle = f.title.replace(/^Watchlist:\s*/i, '').toLowerCase();
+      const matchTitle = f.title.toLowerCase().includes(q) || cleanTitle.includes(q);
       const matchDesc = f.description.toLowerCase().includes(q);
       const matchKeywords = f.keywords.some((k) => k.toLowerCase().includes(q));
       const matchCategory = f.category.toLowerCase().includes(q);
       return matchTitle || matchDesc || matchKeywords || matchCategory;
+    });
+
+    // Score & sort so exact title or title-starts-with / watchlist-match ranks first
+    return matched.sort((a, b) => {
+      const rawTitleA = a.title.toLowerCase();
+      const rawTitleB = b.title.toLowerCase();
+      const titleA = rawTitleA.replace(/^watchlist:\s*/i, '').trim();
+      const titleB = rawTitleB.replace(/^watchlist:\s*/i, '').trim();
+
+      // 1. Exact match with clean title or raw title
+      const exactA = titleA === q || rawTitleA === q;
+      const exactB = titleB === q || rawTitleB === q;
+      if (exactA && !exactB) return -1;
+      if (!exactA && exactB) return 1;
+
+      // 2. Starts with query
+      const startsA = titleA.startsWith(q) || rawTitleA.startsWith(q);
+      const startsB = titleB.startsWith(q) || rawTitleB.startsWith(q);
+      if (startsA && !startsB) return -1;
+      if (!startsA && startsB) return 1;
+
+      // 3. Category match priority when typing "watch..."
+      if (q.startsWith('watch')) {
+        if (a.category === 'WATCHLISTS' && b.category !== 'WATCHLISTS') return -1;
+        if (a.category !== 'WATCHLISTS' && b.category === 'WATCHLISTS') return 1;
+      }
+
+      return 0;
     });
   }, [query, allFeatures]);
 
@@ -571,7 +670,7 @@ export function AppFeatureSearch({
             }}
             onFocus={() => setIsOpen(true)}
             onKeyDown={handleKeyDown}
-            placeholder="Search all sections & tools (e.g. FAST Graphs, Watchlist, Scanner, Buying Power, Copilot)..."
+            placeholder="Search all sections, tools & watchlists (e.g. FAST Graphs, Micro caps, Scanner, Buying Power)..."
             className="w-full bg-transparent text-sm sm:text-base font-medium text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
             spellCheck="false"
             autoComplete="off"
@@ -645,8 +744,8 @@ export function AppFeatureSearch({
                         <div className={cn(
                           "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border transition-colors",
                           isSelected
-                            ? "bg-primary text-primary-foreground border-primary"
-                            : "bg-card/80 text-primary border-border/80 group-hover:border-primary/50"
+                            ? (item.category === 'WATCHLISTS' ? "bg-emerald-500 text-slate-950 border-emerald-400" : "bg-primary text-primary-foreground border-primary")
+                            : (item.category === 'WATCHLISTS' ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 group-hover:border-emerald-400" : "bg-card/80 text-primary border-border/80 group-hover:border-primary/50")
                         )}>
                           <Icon className="w-4 h-4" />
                         </div>
@@ -671,7 +770,12 @@ export function AppFeatureSearch({
                       </div>
 
                       <div className="flex items-center gap-2 pl-3 shrink-0">
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-slate-900 border border-white/10 text-muted-foreground uppercase">
+                        <span className={cn(
+                          "text-[10px] font-mono px-2 py-0.5 rounded-md border uppercase font-bold",
+                          item.category === 'WATCHLISTS'
+                            ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-300"
+                            : "bg-slate-900 border-white/10 text-muted-foreground"
+                        )}>
                           {item.category}
                         </span>
                         <ChevronRight className={cn(

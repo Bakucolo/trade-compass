@@ -98,20 +98,65 @@ type SortField =
 type SortDirection = 'asc' | 'desc';
 
 interface WatchlistPageProps {
+  initialWatchlistId?: string | null;
   onNavigateToResearch?: (symbol: string) => void;
 }
 
-export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
+export function WatchlistPage({ initialWatchlistId, onNavigateToResearch }: WatchlistPageProps) {
   // Watchlist query & active selection
   const { data: watchlists = [], isLoading: isWatchlistsLoading, refetch: refetchWatchlists } = useWatchlists();
-  const [selectedWatchlistId, setSelectedWatchlistId] = useState<string | null>(null);
+  const [selectedWatchlistId, setSelectedWatchlistId] = useState<string | null>(() => {
+    return (
+      initialWatchlistId ||
+      localStorage.getItem('tradeflow_active_watchlist_id') ||
+      localStorage.getItem('dashboard_selected_watchlist') ||
+      null
+    );
+  });
 
-  // Auto-select first or default watchlist once loaded
+  // Synchronize with initialWatchlistId prop when changed
+  useEffect(() => {
+    if (initialWatchlistId) {
+      setSelectedWatchlistId(initialWatchlistId);
+      try {
+        localStorage.setItem('tradeflow_active_watchlist_id', initialWatchlistId);
+        localStorage.setItem('dashboard_selected_watchlist', initialWatchlistId);
+      } catch (e) {
+        console.warn(e);
+      }
+    }
+  }, [initialWatchlistId]);
+
+  // Listen for global 'select-watchlist' event (e.g. from Dashboard search bar or quick actions)
+  useEffect(() => {
+    const handleSelectWatchlistEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<{ id?: string; name?: string }>;
+      if (customEvent.detail?.id) {
+        setSelectedWatchlistId(customEvent.detail.id);
+        try {
+          localStorage.setItem('tradeflow_active_watchlist_id', customEvent.detail.id);
+          localStorage.setItem('dashboard_selected_watchlist', customEvent.detail.id);
+        } catch (err) {
+          console.warn(err);
+        }
+      }
+    };
+    window.addEventListener('select-watchlist', handleSelectWatchlistEvent);
+    return () => window.removeEventListener('select-watchlist', handleSelectWatchlistEvent);
+  }, []);
+
+  // Auto-select first or default watchlist once loaded if current selection is invalid
   useEffect(() => {
     if (watchlists.length > 0) {
       if (!selectedWatchlistId || !watchlists.some((w) => w.id === selectedWatchlistId)) {
-        const defaultW = watchlists.find((w) => w.isDefault) || watchlists[0];
-        setSelectedWatchlistId(defaultW.id);
+        const storedId = localStorage.getItem('tradeflow_active_watchlist_id') || localStorage.getItem('dashboard_selected_watchlist');
+        const validStored = storedId && watchlists.find((w) => w.id === storedId);
+        if (validStored) {
+          setSelectedWatchlistId(validStored.id);
+        } else {
+          const defaultW = watchlists.find((w) => w.isDefault) || watchlists[0];
+          setSelectedWatchlistId(defaultW.id);
+        }
       }
     }
   }, [watchlists, selectedWatchlistId]);
@@ -589,7 +634,15 @@ export function WatchlistPage({ onNavigateToResearch }: WatchlistPageProps) {
           return (
             <div
               key={w.id}
-              onClick={() => setSelectedWatchlistId(w.id)}
+              onClick={() => {
+                setSelectedWatchlistId(w.id);
+                try {
+                  localStorage.setItem('tradeflow_active_watchlist_id', w.id);
+                  localStorage.setItem('dashboard_selected_watchlist', w.id);
+                } catch (e) {
+                  console.warn(e);
+                }
+              }}
               className={cn(
                 "group relative flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold cursor-pointer transition-all border",
                 isSelected

@@ -36,12 +36,32 @@ const Index = () => {
   const [graphsTicker, setGraphsTicker] = useState(() => 
     urlSymbol ? urlSymbol.toUpperCase() : 'AAPL'
   );
+  const [watchlistInitialId, setWatchlistInitialId] = useState<string | undefined>(() => {
+    try {
+      return localStorage.getItem('tradeflow_active_watchlist_id') || undefined;
+    } catch {
+      return undefined;
+    }
+  });
   const [logInitialFolder, setLogInitialFolder] = useState<string | undefined>();
   const [isCopilotOpen, setIsCopilotOpen] = useState(false);
 
   const handleNavigateToResearch = (symbol: string) => {
     setResearchTicker(symbol);
     setActiveTab('research');
+  };
+
+  const handleNavigateToWatchlist = (watchlistId?: string) => {
+    if (watchlistId) {
+      setWatchlistInitialId(watchlistId);
+      try {
+        localStorage.setItem('tradeflow_active_watchlist_id', watchlistId);
+        localStorage.setItem('dashboard_selected_watchlist', watchlistId);
+      } catch (e) {
+        console.warn(e);
+      }
+    }
+    setActiveTab('watchlist');
   };
 
   const handleNavigateToGraphs = (symbol?: string) => {
@@ -91,14 +111,23 @@ const Index = () => {
       }
     };
 
+    const handleWatchlistEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<{ id?: string; name?: string }>;
+      if (customEvent.detail?.id) {
+        handleNavigateToWatchlist(customEvent.detail.id);
+      }
+    };
+
     const handleOpenCopilot = () => setIsCopilotOpen(true);
 
     window.addEventListener('select-research-ticker', handleTickerEvent);
     window.addEventListener('select-graphs-ticker', handleGraphsEvent);
+    window.addEventListener('select-watchlist', handleWatchlistEvent);
     window.addEventListener('open-hybrid-copilot', handleOpenCopilot);
     return () => {
       window.removeEventListener('select-research-ticker', handleTickerEvent);
       window.removeEventListener('select-graphs-ticker', handleGraphsEvent);
+      window.removeEventListener('select-watchlist', handleWatchlistEvent);
       window.removeEventListener('open-hybrid-copilot', handleOpenCopilot);
     };
   }, []);
@@ -109,6 +138,7 @@ const Index = () => {
         return (
           <Dashboard
             onNavigateTab={setActiveTab}
+            onSelectWatchlist={handleNavigateToWatchlist}
             onNavigateToResearch={handleNavigateToResearch}
             onNavigateToGraphs={handleNavigateToGraphs}
           />
@@ -157,7 +187,12 @@ const Index = () => {
           />
         );
       case 'watchlist':
-        return <WatchlistPage onNavigateToResearch={handleNavigateToResearch} />;
+        return (
+          <WatchlistPage
+            initialWatchlistId={watchlistInitialId}
+            onNavigateToResearch={handleNavigateToResearch}
+          />
+        );
       case 'log':
         return (
           <LogPage

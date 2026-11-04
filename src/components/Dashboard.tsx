@@ -54,11 +54,12 @@ import { calculatePortfolioTheta } from '@/utils/greeksUtils';
 
 interface DashboardProps {
   onNavigateTab?: (tab: string) => void;
+  onSelectWatchlist?: (watchlistId: string) => void;
   onNavigateToResearch?: (symbol: string) => void;
   onNavigateToGraphs?: (symbol?: string) => void;
 }
 
-export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGraphs }: DashboardProps) {
+export function Dashboard({ onNavigateTab, onSelectWatchlist, onNavigateToResearch, onNavigateToGraphs }: DashboardProps) {
   const [isPrivacyMode, setIsPrivacyMode] = useState<boolean>(() => {
     return localStorage.getItem('isPrivacyMode') === 'true';
   });
@@ -569,6 +570,7 @@ export function Dashboard({ onNavigateTab, onNavigateToResearch, onNavigateToGra
       {/* ================= GLOBAL APP FEATURE & TOOL SEARCH ================= */}
       <AppFeatureSearch
         onNavigateTab={onNavigateTab}
+        onSelectWatchlist={onSelectWatchlist}
         onOpenBuyingPower={() => setIsBuyingPowerModalOpen(true)}
         onOpenCriticalDefense={() => setIsDefenseModalOpen(true)}
         onOpenAIHunter={() => setIsAIModalOpen(true)}

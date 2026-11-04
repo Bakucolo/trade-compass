@@ -3,6 +3,32 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AppFeatureSearch } from '../components/dashboard/AppFeatureSearch';
 
+const mockWatchlists = [
+  {
+    id: 'wl-micro-caps',
+    name: 'Micro caps',
+    isDefault: false,
+    items: [{ symbol: 'POET' }, { symbol: 'NVO' }]
+  },
+  {
+    id: 'wl-tech-growth',
+    name: 'Tech Growth',
+    isDefault: true,
+    items: [{ symbol: 'AAPL' }, { symbol: 'MSFT' }, { symbol: 'NVDA' }]
+  }
+];
+
+vi.mock('@/services/watchlistService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/services/watchlistService')>();
+  return {
+    ...actual,
+    useWatchlists: vi.fn(() => ({
+      data: mockWatchlists,
+      isLoading: false
+    }))
+  };
+});
+
 describe('AppFeatureSearch Component Suite', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -11,7 +37,7 @@ describe('AppFeatureSearch Component Suite', () => {
 
   it('renders search input with placeholder and shortcut pill', () => {
     render(<AppFeatureSearch />);
-    const input = screen.getByPlaceholderText(/Search all sections & tools/i);
+    const input = screen.getByPlaceholderText(/Search all sections/i);
     expect(input).toBeDefined();
     expect(screen.getByText('Ctrl')).toBeDefined();
     expect(screen.getByText('K')).toBeDefined();
@@ -19,7 +45,7 @@ describe('AppFeatureSearch Component Suite', () => {
 
   it('opens dropdown on focus showing most used and recommended features', async () => {
     render(<AppFeatureSearch />);
-    const input = screen.getByPlaceholderText(/Search all sections & tools/i);
+    const input = screen.getByPlaceholderText(/Search all sections/i);
 
     fireEvent.focus(input);
 
@@ -33,7 +59,7 @@ describe('AppFeatureSearch Component Suite', () => {
 
   it('filters features accurately when user types a query', async () => {
     render(<AppFeatureSearch />);
-    const input = screen.getByPlaceholderText(/Search all sections & tools/i);
+    const input = screen.getByPlaceholderText(/Search all sections/i);
 
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: 'buying power' } });
@@ -47,7 +73,7 @@ describe('AppFeatureSearch Component Suite', () => {
   it('navigates to FAST Graphs when FAST Graphs is selected and sets view mode', async () => {
     const mockNavigate = vi.fn();
     render(<AppFeatureSearch onNavigateTab={mockNavigate} />);
-    const input = screen.getByPlaceholderText(/Search all sections & tools/i);
+    const input = screen.getByPlaceholderText(/Search all sections/i);
 
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: 'fast graphs' } });
@@ -66,7 +92,7 @@ describe('AppFeatureSearch Component Suite', () => {
   it('triggers modal callback when an interactive tool is selected', async () => {
     const mockBuyingPower = vi.fn();
     render(<AppFeatureSearch onOpenBuyingPower={mockBuyingPower} />);
-    const input = screen.getByPlaceholderText(/Search all sections & tools/i);
+    const input = screen.getByPlaceholderText(/Search all sections/i);
 
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: 'buying power' } });
@@ -82,7 +108,7 @@ describe('AppFeatureSearch Component Suite', () => {
   it('supports keyboard navigation (ArrowDown and Enter) to select features', async () => {
     const mockNavigate = vi.fn();
     render(<AppFeatureSearch onNavigateTab={mockNavigate} />);
-    const input = screen.getByPlaceholderText(/Search all sections & tools/i);
+    const input = screen.getByPlaceholderText(/Search all sections/i);
 
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: 'scanner' } });
@@ -101,7 +127,7 @@ describe('AppFeatureSearch Component Suite', () => {
     localStorage.setItem('tradeflow_recent_features', JSON.stringify(['watchlist', 'scanner']));
 
     render(<AppFeatureSearch />);
-    const input = screen.getByPlaceholderText(/Search all sections & tools/i);
+    const input = screen.getByPlaceholderText(/Search all sections/i);
 
     fireEvent.focus(input);
 
@@ -115,5 +141,76 @@ describe('AppFeatureSearch Component Suite', () => {
     await waitFor(() => {
       expect(screen.queryByText(/Recent Features/i)).toBeNull();
     });
+  });
+
+  it('searches for a watchlist by name and displays it with WATCHLISTS category', async () => {
+    render(<AppFeatureSearch />);
+    const input = screen.getByPlaceholderText(/Search all sections/i);
+
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: 'Micro caps' } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Watchlist: Micro caps')).toBeDefined();
+      expect(screen.getByText('WATCHLISTS')).toBeDefined();
+      expect(screen.getByText(/2 STOCKS/i)).toBeDefined();
+    });
+  });
+
+  it('navigates directly to selected watchlist on click and dispatches select-watchlist event', async () => {
+    const mockNavigateTab = vi.fn();
+    const mockSelectWatchlist = vi.fn();
+    const eventHandler = vi.fn();
+
+    window.addEventListener('select-watchlist', eventHandler);
+
+    render(
+      <AppFeatureSearch
+        onNavigateTab={mockNavigateTab}
+        onSelectWatchlist={mockSelectWatchlist}
+      />
+    );
+    const input = screen.getByPlaceholderText(/Search all sections/i);
+
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: 'Micro caps' } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Watchlist: Micro caps')).toBeDefined();
+    });
+
+    fireEvent.click(screen.getByText('Watchlist: Micro caps'));
+
+    expect(mockSelectWatchlist).toHaveBeenCalledWith('wl-micro-caps');
+    expect(localStorage.getItem('tradeflow_active_watchlist_id')).toBe('wl-micro-caps');
+    expect(eventHandler).toHaveBeenCalled();
+
+    window.removeEventListener('select-watchlist', eventHandler);
+  });
+
+  it('navigates to watchlist when pressing Enter on searched watchlist result', async () => {
+    const mockNavigateTab = vi.fn();
+    const mockSelectWatchlist = vi.fn();
+
+    render(
+      <AppFeatureSearch
+        onNavigateTab={mockNavigateTab}
+        onSelectWatchlist={mockSelectWatchlist}
+      />
+    );
+    const input = screen.getByPlaceholderText(/Search all sections/i);
+
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: 'Tech Growth' } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Watchlist: Tech Growth')).toBeDefined();
+    });
+
+    // Press Enter to immediately open the top result
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(mockSelectWatchlist).toHaveBeenCalledWith('wl-tech-growth');
+    expect(localStorage.getItem('tradeflow_active_watchlist_id')).toBe('wl-tech-growth');
   });
 });
